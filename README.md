@@ -8,6 +8,23 @@ Canonical compatibility fixtures for Stellar Protocol Canary.
 
 [Documentation](https://stellarcanary.github.io/Protocol-Canary/) | [Protocol-Canary](https://github.com/StellarCanary/Protocol-Canary) | [Action](https://github.com/StellarCanary/ProtocolCanary-Action)
 
+## Quick start
+
+The validator requires **Python 3.11 or newer** — it imports `tomllib`,
+which only became part of the standard library in Python 3.11. On an
+older interpreter it fails immediately with
+`ModuleNotFoundError: No module named 'tomllib'`. Nothing else needs to
+be installed.
+
+```bash
+python3 tools/validate/validate.py    # structural fixture validation
+python3 -m unittest discover tests    # repository test suite
+```
+
+See [Validation](#validation) below (and
+[`CONTRIBUTING.md`](CONTRIBUTING.md#development-setup)) for details,
+including the equivalent `make` targets.
+
 ## Purpose
 
 This repository answers one question: **what exact Stellar protocol
@@ -139,6 +156,9 @@ No fixture asserts a value that isn't traceable to an authoritative
 upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Validation
+
+Requires **Python 3.11+** (the validator uses the stdlib `tomllib`
+module, unavailable before 3.11); CI pins `3.11.16`.
 
 ```bash
 python3 tools/validate/validate.py

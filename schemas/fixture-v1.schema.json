@@ -5,6 +5,20 @@
   "description": "A single compatibility-assertion fixture consumed by StellarCanary/Protocol-Canary's canary-fixtures loader. This schema mirrors that implementation (see Protocol-Canary's docs/fixture-contract.md); it is a convenience for editor/CI linting in this repository, not an independent specification. On any disagreement, Protocol-Canary's implementation is authoritative.",
   "type": "object",
   "required": ["id", "protocol", "surface", "category", "description"],
+  "$comment": "examples mirrors protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml; keep the two in sync.",
+  "examples": [
+    {
+      "id": "p28-xdr-cap85-external-ref-roundtrip",
+      "protocol": 28,
+      "surface": "xdr",
+      "category": "cap-0085",
+      "description": "ContractExecutable using the CAP-0085 CONTRACT_EXECUTABLE_EXTERNAL_REF case round-trips byte-for-byte",
+      "source_reference": "https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md",
+      "type": "ContractExecutable",
+      "kind": "roundtrip",
+      "value_base64": "AAAAAgAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQAAAAhmbGVldC12MQ=="
+    }
+  ],
   "properties": {
     "id": {
       "type": "string",
