@@ -127,6 +127,24 @@ Per-surface body (everything else in the file):
 | `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`) |
 | `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]`, `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
 
+### Unknown top-level fields
+
+Neither `tools/validate/validate.py` nor `schemas/fixture-v1.schema.json` sets
+`additionalProperties: false` at the top level, so an unrecognized top-level
+field is **intentionally permitted today** and does not by itself produce a
+validator error. This permissiveness is deliberate — the fixture contract is
+owned by `Protocol-Canary`'s loader, and a hard failure on unknown fields here
+would reject fixtures using fields that loader supports before this
+repository's schema/validator has caught up.
+
+The practical consequence is that a typo'd field name (e.g. `soure_reference`
+instead of `source_reference`) is silently ignored while the intended field is
+reported as missing — or, if the intended field is also present, nothing is
+reported at all. If you get a confusing "missing field" error, check for a
+misspelled duplicate first. Tightening this (rejecting unknown fields) would be
+a deliberate change requiring a matching update to the test that documents the
+current behavior in `tests/test_validate.py` — never an accidental side effect.
+
 If you need an XDR `type` this repository does not yet support, that is a
 `Protocol-Canary` limitation, not something to work around here — open an
 issue/PR against `Protocol-Canary`'s `canary-xdr` crate first (see its own

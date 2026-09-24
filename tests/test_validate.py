@@ -199,6 +199,45 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
 
+    def test_rejects_non_table_assert_entry(self) -> None:
+        # TOML permits an array element to be a non-table value; validate_rpc_body
+        # has an explicit branch for that case. Mix a well-formed assert table
+        # with a bare string so the malformed entry is the only error reported.
+        bad = """
+id = "p28-rpc-mixed-assert"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "example"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+assert = [
+    { kind = "field-equals", field = "protocolVersion", value = 28 },
+    "not-a-table",
+]
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertIn(
+            "assert[1] must be a table",
+            "\n".join(report.errors),
+        )
+        # The valid entry alongside the malformed one must not itself error.
+        self.assertFalse(any("assert[0]" in e for e in report.errors))
+
+    def test_unknown_top_level_field_is_not_an_error(self) -> None:
+        # Documents current behavior: validate.py performs no top-level
+        # additionalProperties check, so an unrecognized field (e.g. a typo'd
+        # field name) is silently accepted rather than rejected. If this ever
+        # changes, this test should fail and force a deliberate decision.
+        with_unknown = VALID_XDR.replace(
+            'source_reference = "CAP-0083"',
+            'source_reference = "CAP-0083"\nsoure_reference = "typo"',
+        )
+        report = self.run_validation({"a.toml": with_unknown})
+        self.assertEqual(report.errors, [])
+
     def test_rpc_fixture_requires_at_least_one_assert(self) -> None:
         bad = """
 id = "p28-rpc-no-assert"
