@@ -108,12 +108,31 @@ surface = "xdr"                        # required: "xdr" | "rpc" | "soroban"
 category = "cap-0083"                  # required, free-text
 description = "..."                    # required
 source_reference = "CAP-0083"          # optional, should be authoritative
+required_capabilities = []             # optional, see below
+input_file = "..."                     # optional, see below
+# expected_file = "..."                # optional, see below
 
 # surface-specific fields follow — see docs/protocol-28.md and
 # Protocol-Canary's docs/fixture-contract.md for the exact per-surface
 # schema (xdr: type/kind/value_base64; rpc: method/[[assert]]; soroban:
 # source_account/contract_id/function/[expect]).
 ```
+
+The three optional fields above and what they mean:
+
+- **`required_capabilities`** — an array of kebab-case capability strings
+  (e.g. `soroban-contract`, `rpc-client`) a fixture needs; a target project
+  lacking one skips the fixture rather than failing it.
+- **`input_file`** — a path, relative to the fixture file, to externally
+  stored input; the validator checks the file exists.
+- **`expected_file`** — a path, relative to the fixture file, to externally
+  stored expected output; likewise existence-checked.
+
+Neither `input_file` nor `expected_file` is used by any fixture in this
+repository yet (values are inlined via `value_base64`/`expected_base64`),
+but the format supports them. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the fuller field
+table.
 
 ### Assertion vocabulary
 
