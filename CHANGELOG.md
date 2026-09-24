@@ -38,6 +38,12 @@ discussion and diff. New entries must include that link; see
     (SEP-41 `name()` on the reserved native-asset contract), verified live
     against `soroban-testnet.stellar.org`. ([ea8b63b])
 - `docs/protocol-28.md` documenting exactly what this pack checks, what it
+  does not, and why.
+- A fixture-count badge in README.md's badge row, plus `tools/badge/badge.py`,
+  a stdlib-only generator/checker that counts fixtures using the same
+  discovery rule as the validator and rewrites only the marked region of
+  README.md. `make badge` regenerates it; CI runs `--check`, so the number
+  cannot silently drift from the fixture tree.
   does not, and why. ([806549c])
 
 ### Changed

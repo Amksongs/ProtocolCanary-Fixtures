@@ -23,9 +23,10 @@ To add one:
   deterministic input; an explicit expected result using the surface's typed
   assertion vocabulary.
 - **Check it** — run `make validate` (or `python3 tools/validate/validate.py` directly).
-- **Document & test it** — update the relevant `docs/protocol-NN.md` table
-  (and the pack's `README.md` for a new CAP or surface), then run
-  `make test` (or `python3 -m unittest discover tests` directly).
+- **Document, test & refresh it** — update the relevant `docs/protocol-NN.md`
+  table (and the pack's `README.md` for a new CAP or surface), run
+  `make test` (or `python3 -m unittest discover tests` directly), then run
+  `make badge` so README.md's fixture-count badge reflects the new fixture.
 
 1. **Identify the upstream behavior.** Read the CAP text, the upstream XDR
    definition, the upstream implementation, or the official release/API
@@ -66,8 +67,13 @@ To add one:
    and, if you added a new CAP or surface, the pack's `README.md`.
 8. **Run the repository tests**: `make test` — or
    `python3 -m unittest discover tests` directly.
+9. **Refresh the fixture-count badge** in `README.md`: `make badge` — or
+   `python3 tools/badge/badge.py` directly. CI runs
+   `python3 tools/badge/badge.py --check` and fails if the committed badge
+   no longer matches the fixture tree (see
+   [README.md](README.md#fixtures-badge)).
 
-Before pushing, `make check` runs both of the above in one command, in
+Before pushing, `make check` runs all of the above in one command, in
 the same order CI (`.github/workflows/validate.yml`) runs them.
 
 > **Note**: Do not add a `manifest.toml` or similar discovery/enumeration file. The loader recursively treats every `*.toml` file under `--fixtures-dir` as a fixture, so a manifest `.toml` file would be mis-parsed as a malformed fixture and fail the run (see [README.md](README.md#repository-relationship)).
@@ -212,11 +218,13 @@ A changelog entry without one of these links is not ready for review.
 No build system is required. `tools/validate/validate.py` uses only the
 Python 3.11+ standard library (`tomllib`), so there is nothing to install.
 
-For convenience, a `Makefile` wraps the two commands CI runs:
+For convenience, a `Makefile` wraps the commands CI runs:
 
 - `make validate` — structural fixture validation.
+- `make badge` — regenerates README.md's fixture-count badge.
+- `make badge-check` — fails if that badge is stale.
 - `make test` — the repository test suite.
-- `make check` — both, in CI's order, stopping at the first failure.
+- `make check` — all of them, in CI's order, stopping at the first failure.
 
 The underlying commands work identically if run directly, so `make` is
 not a requirement for contributing — it only saves typing.

@@ -26,5 +26,11 @@ jobs:
       - name: Structural fixture validation
         run: python3 tools/validate/validate.py
 
+      - name: Fixtures badge is current
+        # README.md's fixture-count badge is generated from the fixture tree
+        # by tools/badge/badge.py. Fail if a fixture was added or removed
+        # without regenerating it, so the count cannot silently drift.
+        run: python3 tools/badge/badge.py --check
+
       - name: Repository tests
         run: python3 -m unittest discover tests -v
