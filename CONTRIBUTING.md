@@ -38,10 +38,16 @@ To add one:
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
    not "looks right".
-3. **Define a stable ID.** Follow `p<protocol>-<surface>-<slug>` (e.g.
-   `p28-xdr-cap85-external-ref-roundtrip`). IDs are lowercase, unique
-   across the *entire* repository (the loader validates this across all
-   `*.toml` files under a given `--fixtures-dir`, not just one file), and
+3. **Define a stable ID.** Follow the `p<protocol>-<surface>-<slug>`
+   convention (e.g. `p28-xdr-cap85-external-ref-roundtrip`). That shape
+   is a *convention*, not a rule the validator enforces: the schema in
+   [`schemas/fixture-v1.schema.json`](schemas/fixture-v1.schema.json)
+   constrains `id` to the pattern `^[a-z0-9][a-z0-9-]*$` (lowercase
+   alphanumerics and hyphens, starting with an alphanumeric), while
+   `tools/validate/validate.py` additionally rejects an empty `id` or one
+   not already lowercase, and requires IDs to be unique across the
+   *entire* repository (the loader validates this across all `*.toml`
+   files under a given `--fixtures-dir`, not just one file). IDs are
    never renamed just because an implementation detail changed — if the
    semantic assertion itself changes, add a new fixture ID instead of
    silently repurposing an old one.
