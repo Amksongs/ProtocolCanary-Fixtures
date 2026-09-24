@@ -159,6 +159,8 @@ Soroban-pipeline smoke test, not a CAP-specific one.
 
 ## Consuming this pack
 
+For a concise index of the fixtures in this pack, see [`protocol-28/README.md`](../protocol-28/README.md).
+
 ```bash
 stellar-canary check --fixtures-dir <checkout-of-this-repo>/protocol-28 --json
 # or, scanning every protocol pack in the repository at once:
