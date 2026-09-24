@@ -183,6 +183,30 @@ Do not silently delete a fixture that is still referenced by a released
 its header comment with the reason, note it in `CHANGELOG.md`, and remove
 it in a later, separate change once nothing depends on it.
 
+## Updating CHANGELOG.md
+
+Every user-visible change — a new fixture, a validator behavior change, new
+tooling — gets an entry under `CHANGELOG.md`'s `## [Unreleased]` section in
+the same pull request that makes the change.
+
+Each entry must include a link to the pull request that introduced it, so a
+reader can jump straight from the changelog line to the review discussion
+and the diff:
+
+```markdown
+- `p28-xdr-example` — what the fixture checks.
+  ([PR #123](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/123))
+```
+
+If a change is pushed directly to `main` without a pull request, link the
+introducing commit instead:
+
+```markdown
+- Something else. ([abc1234](https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/abc1234))
+```
+
+A changelog entry without one of these links is not ready for review.
+
 ## Development setup
 
 No build system is required. `tools/validate/validate.py` uses only the
