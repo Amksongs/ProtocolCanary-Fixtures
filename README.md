@@ -150,6 +150,32 @@ This is structural validation only — it never executes a compatibility
 check itself. CI (`.github/workflows/validate.yml`) runs it, plus
 `python3 -m unittest discover tests`, on every push and pull request.
 
+The same two commands are also available as Makefile targets, so you can
+run exactly what CI runs without typing the commands out:
+
+| Command | What it does |
+|---|---|
+| `make validate` | Structural fixture validation only. |
+| `make test` | Repository test suite only. |
+| `make check` | Both of the above, in CI's order — the same two steps as `.github/workflows/validate.yml`, stopping at the first failure. |
+
+`make check` is the quickest way to confirm a contribution passes CI
+before you push; each target runs from the repository root and exits
+non-zero on the first failure, just like CI's steps do.
+
+The same two commands are also available as Makefile targets, so you can
+run exactly what CI runs without typing the commands out:
+
+| Command | What it does |
+|---|---|
+| `make validate` | Structural fixture validation only. |
+| `make test` | Repository test suite only. |
+| `make check` | Both of the above, in CI's order — the same two steps as `.github/workflows/validate.yml`, stopping at the first failure. |
+
+`make check` is the quickest way to confirm a contribution passes CI
+before you push; each target runs from the repository root and exits
+non-zero on the first failure, just like CI's steps do.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to add a fixture.
