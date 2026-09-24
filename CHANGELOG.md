@@ -31,6 +31,11 @@ All notable changes to this project are documented in this file.
     against `soroban-testnet.stellar.org`.
 - `docs/protocol-28.md` documenting exactly what this pack checks, what it
   does not, and why.
+- A fixture-count badge in README.md's badge row, plus `tools/badge/badge.py`,
+  a stdlib-only generator/checker that counts fixtures using the same
+  discovery rule as the validator and rewrites only the marked region of
+  README.md. `make badge` regenerates it; CI runs `--check`, so the number
+  cannot silently drift from the fixture tree.
 
 ### Known gaps
 

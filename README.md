@@ -2,7 +2,7 @@
 
 ![ProtocolCanary-Fixtures](assets/ProtocolCanary-Fixtures-banner.svg)
 
-[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 6](https://img.shields.io/badge/fixtures-6-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
 
 Canonical compatibility fixtures for Stellar Protocol Canary.
 
@@ -148,33 +148,57 @@ Validates schema conformance, unique IDs, protocol/surface enums, source
 references, and referenced-file existence for every fixture in the repo.
 This is structural validation only — it never executes a compatibility
 check itself. CI (`.github/workflows/validate.yml`) runs it, plus
-`python3 -m unittest discover tests`, on every push and pull request.
+`python3 -m unittest discover tests` and a fixtures-badge freshness check,
+on every push and pull request.
 
-The same two commands are also available as Makefile targets, so you can
+The commands CI runs are also available as Makefile targets, so you can
 run exactly what CI runs without typing the commands out:
 
 | Command | What it does |
 |---|---|
 | `make validate` | Structural fixture validation only. |
+| `make badge` | Regenerates README.md's fixture-count badge. |
+| `make badge-check` | Fails if that badge is stale (what CI runs). |
 | `make test` | Repository test suite only. |
-| `make check` | Both of the above, in CI's order — the same two steps as `.github/workflows/validate.yml`, stopping at the first failure. |
+| `make check` | All of the above, in CI's order — the same steps as `.github/workflows/validate.yml`, stopping at the first failure. |
 
 `make check` is the quickest way to confirm a contribution passes CI
 before you push; each target runs from the repository root and exits
 non-zero on the first failure, just like CI's steps do.
 
-The same two commands are also available as Makefile targets, so you can
+The commands CI runs are also available as Makefile targets, so you can
 run exactly what CI runs without typing the commands out:
 
 | Command | What it does |
 |---|---|
 | `make validate` | Structural fixture validation only. |
+| `make badge` | Regenerates README.md's fixture-count badge. |
+| `make badge-check` | Fails if that badge is stale (what CI runs). |
 | `make test` | Repository test suite only. |
-| `make check` | Both of the above, in CI's order — the same two steps as `.github/workflows/validate.yml`, stopping at the first failure. |
+| `make check` | All of the above, in CI's order — the same steps as `.github/workflows/validate.yml`, stopping at the first failure. |
 
 `make check` is the quickest way to confirm a contribution passes CI
 before you push; each target runs from the repository root and exits
 non-zero on the first failure, just like CI's steps do.
+
+### Fixtures badge
+
+The badge at the top of this file reports the repository's current total
+fixture count. Its number is **generated, not hand-maintained**:
+
+```bash
+python3 tools/badge/badge.py            # regenerate README.md in place
+python3 tools/badge/badge.py --check    # exit non-zero if the badge is stale
+```
+
+[`tools/badge/badge.py`](tools/badge/badge.py) counts every `*.toml` file
+under the `protocol-*/` packs using the same discovery rule as
+`tools/validate/validate.py`, then rewrites only the region of README.md
+between its `<!-- fixtures-badge:start -->` / `<!-- fixtures-badge:end -->`
+markers (`make badge` / `make badge-check` are the equivalent shortcuts).
+CI runs the `--check` form on every push and pull request, so adding or
+removing a fixture without regenerating the badge fails the build rather
+than silently leaving a stale number at the top of the README.
 
 ## Contributing
 
