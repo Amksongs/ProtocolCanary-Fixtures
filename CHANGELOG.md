@@ -37,6 +37,17 @@ All notable changes to this project are documented in this file.
   README.md. `make badge` regenerates it; CI runs `--check`, so the number
   cannot silently drift from the fixture tree.
 
+### Changed
+
+- `schemas/fixture-v1.schema.json` gained a top-level `examples` array
+  containing one minimal, schema-valid XDR fixture mirroring
+  `protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml`,
+  so schema-aware editors (e.g. Even Better TOML/Taplo) can offer a
+  worked completion example.
+- `protocol-27/README.md` now links its "contribution policy" reference
+  directly to `CONTRIBUTING.md`, where the pack-population verification
+  policy is spelled out.
+
 ### Known gaps
 
 - **CAP-0086 is not covered.** CAP-0086 (sparse-map host functions) has no
