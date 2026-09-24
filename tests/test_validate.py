@@ -181,7 +181,13 @@ class ValidatorTests(unittest.TestCase):
         bad = VALID_XDR.replace('source_reference = "CAP-0083"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertEqual(report.errors, [])
-        self.assertTrue(any("source_reference" in w for w in report.warnings))
+        self.assertTrue(
+            any(
+                "authoritative upstream source" in w
+                and "CAP-0083" in w
+                for w in report.warnings
+            )
+        )
 
     def test_rejects_malformed_toml(self) -> None:
         report = self.run_validation({"a.toml": "not valid [[[ toml"})
