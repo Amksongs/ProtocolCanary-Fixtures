@@ -98,6 +98,12 @@ source_reference = "CAP-0083"          # optional, should be authoritative
 # source_account/contract_id/function/[expect]).
 ```
 
+The full, machine-readable schema lives at
+[`schemas/fixture-v1.schema.json`](schemas/fixture-v1.schema.json).
+Pointing an editor's TOML/JSON-Schema support at it — for example VS
+Code's *Even Better TOML* extension — enables autocomplete and inline
+validation while authoring a fixture, before a validator round-trip.
+
 Fixtures are declarative data, never code: no fixture field is interpreted
 as a shell command, script, or executable instruction of any kind.
 
