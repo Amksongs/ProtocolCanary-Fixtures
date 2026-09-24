@@ -148,12 +148,24 @@ def validate_common_fields(fx: Fixture, report: Report) -> None:
         if not isinstance(caps, list):
             report.error(path, "field 'required_capabilities' must be an array")
         else:
+            seen: set[str] = set()
+            duplicates: set[str] = set()
             for cap in caps:
                 if cap not in CAPABILITIES:
                     report.error(
                         path,
                         f"unknown capability {cap!r}; expected one of {sorted(CAPABILITIES)}",
                     )
+                    continue
+                if cap in seen:
+                    duplicates.add(cap)
+                seen.add(cap)
+            if duplicates:
+                report.error(
+                    path,
+                    "field 'required_capabilities' contains duplicate entries: "
+                    f"{sorted(duplicates)}",
+                )
 
     for file_field in ("input_file", "expected_file"):
         if file_field in data:

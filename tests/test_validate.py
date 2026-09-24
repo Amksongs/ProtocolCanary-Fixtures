@@ -129,6 +129,34 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'kind'" in e for e in report.errors))
 
+    def test_rejects_duplicate_required_capabilities(self) -> None:
+        bad = VALID_XDR + 'required_capabilities = ["rpc-client", "rpc-client"]\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("required_capabilities" in e and "duplicate" in e for e in report.errors)
+        )
+
+    def test_rejects_multiple_duplicate_required_capabilities(self) -> None:
+        bad = (
+            VALID_XDR
+            + 'required_capabilities = ["rpc-client", "rpc-client", "soroban-contract", "soroban-contract"]\n'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "required_capabilities" in e
+                and "duplicate" in e
+                and "rpc-client" in e
+                and "soroban-contract" in e
+                for e in report.errors
+            )
+        )
+
+    def test_accepts_distinct_required_capabilities(self) -> None:
+        good = VALID_XDR + 'required_capabilities = ["rpc-client", "stellar-sdk-dependency"]\n'
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [])
+
     def test_encode_equals_requires_expected_base64(self) -> None:
         bad = VALID_XDR.replace('kind = "decode-success"', 'kind = "encode-equals"')
         report = self.run_validation({"a.toml": bad})
