@@ -189,6 +189,12 @@ Do not silently delete a fixture that is still referenced by a released
 its header comment with the reason, note it in `CHANGELOG.md`, and remove
 it in a later, separate change once nothing depends on it.
 
+Note that deprecation is communicated **only** via this header comment
+convention. There is intentionally no `deprecated` field or equivalent
+structured marker in the schema. This is by design: deprecation is meant
+for humans reading the fixture or reviewing a PR, while automated consumers
+parsing the file via the schema treat it like any other fixture until it is
+fully removed.
 ## Updating CHANGELOG.md
 
 Every user-visible change — a new fixture, a validator behavior change, new
