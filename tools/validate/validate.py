@@ -13,14 +13,20 @@ fixture's assertion (no decoding, no network calls, no simulation) and
 never treats a fixture field as a command to run.
 
 Usage:
-    python3 tools/validate/validate.py [root ...]
+    python3 tools/validate/validate.py [--quiet] [root ...]
 
 With no arguments, validates every protocol-*/ directory found next to
 this script's repository root. Exits 0 if every fixture is valid, 1
 otherwise.
+
+Warnings (e.g. a fixture with no ``source_reference``) are printed to
+stdout by default. Pass ``--quiet`` to suppress them so a fully passing
+CI run is not dominated by warning noise; errors still go to stderr and
+the final OK/FAILED summary is always printed.
 """
 from __future__ import annotations
 
+import argparse
 import base64
 import binascii
 import sys
@@ -30,11 +36,18 @@ from pathlib import Path
 
 SURFACES = {"xdr", "rpc", "soroban"}
 XDR_TYPES = {"StellarValue", "ContractExecutable"}
+# Set of assertion kinds supported by canary-xdr for a given XDR value.
+# Must be kept in sync with canary-xdr's supported assertion kinds.
 XDR_KINDS = {"decode-success", "decode-failure", "roundtrip", "encode-equals"}
 RPC_METHODS = {"get-network", "get-latest-ledger"}
 RPC_ASSERT_KINDS = {"field-exists", "field-type", "field-equals"}
 RPC_ASSERT_TYPES = {"string", "integer", "boolean", "array", "object"}
 SOROBAN_EXPECT_KINDS = {"simulation-success", "simulation-error"}
+# Set of kebab-case capability strings a fixture may list in
+# `required_capabilities`. Must be kept in sync with
+# canary_core::Capability in StellarCanary/Protocol-Canary, whose
+# kebab-case names these mirror (the same cross-reference is documented in
+# schemas/fixture-v1.schema.json's required_capabilities description).
 CAPABILITIES = {
     "soroban-contract",
     "rpc-client",
@@ -304,8 +317,38 @@ def validate_directory(root: Path) -> Report:
     return report
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="validate.py",
+        description=(
+            "Structural validator for ProtocolCanary-Fixtures. Performs structural "
+            "validation only; never executes a fixture's assertion."
+        ),
+    )
+    parser.add_argument(
+        "roots",
+        nargs="*",
+        metavar="root",
+        help=(
+            "directories to scan for *.toml fixtures (default: every protocol-*/ "
+            "directory next to this script)"
+        ),
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help=(
+            "suppress warning output; errors and the final OK/FAILED summary are "
+            "still printed"
+        ),
+    )
+    return parser
+
+
 def main(argv: list[str]) -> int:
-    roots = [Path(a) for a in argv] if argv else None
+    args = build_parser().parse_args(argv)
+    roots = [Path(a) for a in args.roots] if args.roots else None
     if roots is None:
         repo_root = Path(__file__).resolve().parents[2]
         roots = sorted(p for p in repo_root.glob("protocol-*") if p.is_dir())
@@ -323,8 +366,9 @@ def main(argv: list[str]) -> int:
         combined.errors.extend(sub_report.errors)
         combined.warnings.extend(sub_report.warnings)
 
-    for warning in combined.warnings:
-        print(f"warning: {warning}")
+    if not args.quiet:
+        for warning in combined.warnings:
+            print(f"warning: {warning}")
     for error in combined.errors:
         print(f"error: {error}", file=sys.stderr)
 

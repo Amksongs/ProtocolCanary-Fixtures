@@ -30,6 +30,7 @@ CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 EXPECTED_IDS_BY_SURFACE = {
     "xdr": {
         "p28-xdr-cap83-empty-tx-set",
+        "p28-xdr-cap83-empty-tx-set-malformed",
         "p28-xdr-cap85-external-ref-roundtrip",
         "p28-xdr-cap85-external-ref-malformed",
     },
@@ -90,6 +91,20 @@ class Protocol28PackTests(unittest.TestCase):
     def test_protocol_27_pack_has_no_fixtures_yet(self) -> None:
         p27 = REPO_ROOT / "protocol-27"
         self.assertEqual(validate.find_fixture_files(p27), [])
+
+        # protocol-27/README.md documents the pack as intentionally empty as a
+        # matter of policy (no placeholder fixtures). The *.toml-only check
+        # above cannot see stray non-fixture content — an accidentally
+        # committed scratch file, a draft fixture saved with the wrong
+        # extension, or a leftover subdirectory — so assert the documented
+        # invariant directly: the pack's only file is README.md and every
+        # directory inside it is empty.
+        self.assertEqual(
+            sorted(str(p.relative_to(p27)) for p in p27.rglob("*") if p.is_file()),
+            ["README.md"],
+        )
+        non_empty_dirs = [p for p in p27.rglob("*") if p.is_dir() and any(p.iterdir())]
+        self.assertEqual(non_empty_dirs, [])
 
 
 if __name__ == "__main__":
