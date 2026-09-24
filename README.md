@@ -8,6 +8,23 @@ Canonical compatibility fixtures for Stellar Protocol Canary.
 
 [Documentation](https://stellarcanary.github.io/Protocol-Canary/) | [Protocol-Canary](https://github.com/StellarCanary/Protocol-Canary) | [Action](https://github.com/StellarCanary/ProtocolCanary-Action)
 
+## Quick start
+
+The validator requires **Python 3.11 or newer** — it imports `tomllib`,
+which only became part of the standard library in Python 3.11. On an
+older interpreter it fails immediately with
+`ModuleNotFoundError: No module named 'tomllib'`. Nothing else needs to
+be installed.
+
+```bash
+python3 tools/validate/validate.py    # structural fixture validation
+python3 -m unittest discover tests    # repository test suite
+```
+
+See [Validation](#validation) below (and
+[`CONTRIBUTING.md`](CONTRIBUTING.md#development-setup)) for details,
+including the equivalent `make` targets.
+
 ## Purpose
 
 This repository answers one question: **what exact Stellar protocol
@@ -76,8 +93,8 @@ makes a mixed-protocol directory safe either way.
 
 | Pack | Status | Notes |
 |---|---|---|
-| [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. See [`docs/protocol-28.md`](docs/protocol-28.md). |
-| [`protocol-27/`](protocol-27/) | Not yet populated | See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
+| [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. Fixture counts by surface: **4 xdr, 1 rpc, 1 soroban** (6 total). See [`docs/protocol-28.md`](docs/protocol-28.md). |
+| [`protocol-27/`](protocol-27/) | Not yet populated | **0 fixtures.** See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
 
 ## Fixture format
 
@@ -91,12 +108,59 @@ surface = "xdr"                        # required: "xdr" | "rpc" | "soroban"
 category = "cap-0083"                  # required, free-text
 description = "..."                    # required
 source_reference = "CAP-0083"          # optional, should be authoritative
+required_capabilities = []             # optional, see below
+input_file = "..."                     # optional, see below
+# expected_file = "..."                # optional, see below
 
 # surface-specific fields follow — see docs/protocol-28.md and
 # Protocol-Canary's docs/fixture-contract.md for the exact per-surface
 # schema (xdr: type/kind/value_base64; rpc: method/[[assert]]; soroban:
 # source_account/contract_id/function/[expect]).
 ```
+
+The three optional fields above and what they mean:
+
+- **`required_capabilities`** — an array of kebab-case capability strings
+  (e.g. `soroban-contract`, `rpc-client`) a fixture needs; a target project
+  lacking one skips the fixture rather than failing it.
+- **`input_file`** — a path, relative to the fixture file, to externally
+  stored input; the validator checks the file exists.
+- **`expected_file`** — a path, relative to the fixture file, to externally
+  stored expected output; likewise existence-checked.
+
+Neither `input_file` nor `expected_file` is used by any fixture in this
+repository yet (values are inlined via `value_base64`/`expected_base64`),
+but the format supports them. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the fuller field
+table.
+
+### Assertion vocabulary
+
+Each surface states its expected result through a small set of `kind`
+values. These are the only values consumers accept — anything else fails
+at fixture parse time, before any check runs. An XDR fixture carries a
+single top-level `kind`; an RPC fixture carries one or more `[[assert]]`
+tables, all of which must pass; a Soroban fixture carries one `[expect]`
+table.
+
+| Surface | Field | Value | Asserts that… |
+|---|---|---|---|
+| `xdr` | `kind` | `decode-success` | `value_base64` decodes successfully as the named `type`. |
+| `xdr` | `kind` | `decode-failure` | `value_base64` is rejected when decoded as the named `type` — malformed input must fail, never silently decode. |
+| `xdr` | `kind` | `roundtrip` | Decoding `value_base64` and re-encoding it reproduces the same bytes. |
+| `xdr` | `kind` | `encode-equals` | Decoding `value_base64` and re-encoding it produces exactly `expected_base64` (used when testing canonicalization). |
+| `rpc` | `[[assert]].kind` | `field-exists` | The method's response contains the named `field`. |
+| `rpc` | `[[assert]].kind` | `field-absent` | The response does not contain the named `field`. |
+| `rpc` | `[[assert]].kind` | `field-equals` | The named `field` equals `value` exactly. |
+| `rpc` | `[[assert]].kind` | `field-type` | The named `field` has the JSON type named by `expected_type`. |
+| `soroban` | `[expect].kind` | `simulation-success` | `simulateTransaction` succeeds with no error. |
+| `soroban` | `[expect].kind` | `simulation-error` | `simulateTransaction` fails — optionally requiring `message_contains` to appear in the error message. |
+
+The full per-surface field list (including the non-`kind` fields each
+value requires, such as `value_base64` or `expected_type`) is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema); the authoritative
+schema is `Protocol-Canary`'s
+[`docs/fixture-contract.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/fixture-contract.md).
 
 Fixtures are declarative data, never code: no fixture field is interpreted
 as a shell command, script, or executable instruction of any kind.
@@ -112,6 +176,9 @@ upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Validation
 
+Requires **Python 3.11+** (the validator uses the stdlib `tomllib`
+module, unavailable before 3.11); CI pins `3.11.16`.
+
 ```bash
 python3 tools/validate/validate.py
 ```
@@ -121,6 +188,32 @@ references, and referenced-file existence for every fixture in the repo.
 This is structural validation only — it never executes a compatibility
 check itself. CI (`.github/workflows/validate.yml`) runs it, plus
 `python3 -m unittest discover tests`, on every push and pull request.
+
+The same two commands are also available as Makefile targets, so you can
+run exactly what CI runs without typing the commands out:
+
+| Command | What it does |
+|---|---|
+| `make validate` | Structural fixture validation only. |
+| `make test` | Repository test suite only. |
+| `make check` | Both of the above, in CI's order — the same two steps as `.github/workflows/validate.yml`, stopping at the first failure. |
+
+`make check` is the quickest way to confirm a contribution passes CI
+before you push; each target runs from the repository root and exits
+non-zero on the first failure, just like CI's steps do.
+
+The same two commands are also available as Makefile targets, so you can
+run exactly what CI runs without typing the commands out:
+
+| Command | What it does |
+|---|---|
+| `make validate` | Structural fixture validation only. |
+| `make test` | Repository test suite only. |
+| `make check` | Both of the above, in CI's order — the same two steps as `.github/workflows/validate.yml`, stopping at the first failure. |
+
+`make check` is the quickest way to confirm a contribution passes CI
+before you push; each target runs from the repository root and exits
+non-zero on the first failure, just like CI's steps do.
 
 ## Contributing
 
