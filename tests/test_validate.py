@@ -4,7 +4,9 @@ Run with: python3 -m unittest discover tests
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
@@ -101,6 +103,30 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": VALID_XDR, "b.toml": other})
         self.assertTrue(any("duplicate fixture id" in e for e in report.errors))
 
+    def test_rejects_duplicate_ids_across_nested_directories(self) -> None:
+        # The repository stores fixtures in nested per-surface/per-CAP
+        # directories (e.g. protocol-28/xdr/cap-0083/a.toml vs.
+        # protocol-28/soroban/b.toml), so duplicate detection must recurse
+        # through the whole subtree rather than only compare files that sit
+        # directly in the root. This guards against a regression that keeps
+        # flat-directory detection working while breaking the recursive case.
+        other = VALID_XDR.replace(
+            'category = "cap-0083"', 'category = "cap-0083-2"'
+        )
+        report = self.run_validation(
+            {
+                "xdr/cap-0083/a.toml": VALID_XDR,
+                "soroban/b.toml": other,
+            }
+        )
+        duplicates = [e for e in report.errors if "duplicate fixture id" in e]
+        self.assertTrue(duplicates, report.errors)
+        # The error should point at one of the nested files, confirming the
+        # nested fixture was actually discovered by the recursive walk.
+        self.assertTrue(
+            any("soroban/b.toml" in e or "xdr/cap-0083/a.toml" in e for e in duplicates)
+        )
+
     def test_rejects_invalid_surface(self) -> None:
         bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
         report = self.run_validation({"a.toml": bad})
@@ -128,6 +154,18 @@ class ValidatorTests(unittest.TestCase):
         bad = VALID_XDR.replace('kind = "decode-success"', 'kind = "not-a-real-kind"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'kind'" in e for e in report.errors))
+
+    def test_rejects_xdr_type_not_in_xdr_types(self) -> None:
+        bad = VALID_XDR.replace('type = "StellarValue"', 'type = "LedgerEntry"')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "LedgerEntry" in e
+                and "StellarValue" in e
+                and "ContractExecutable" in e
+                for e in report.errors
+            )
+        )
 
     def test_encode_equals_requires_expected_base64(self) -> None:
         bad = VALID_XDR.replace('kind = "decode-success"', 'kind = "encode-equals"')
@@ -161,6 +199,45 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
 
+    def test_rejects_non_table_assert_entry(self) -> None:
+        # TOML permits an array element to be a non-table value; validate_rpc_body
+        # has an explicit branch for that case. Mix a well-formed assert table
+        # with a bare string so the malformed entry is the only error reported.
+        bad = """
+id = "p28-rpc-mixed-assert"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "example"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+assert = [
+    { kind = "field-equals", field = "protocolVersion", value = 28 },
+    "not-a-table",
+]
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertIn(
+            "assert[1] must be a table",
+            "\n".join(report.errors),
+        )
+        # The valid entry alongside the malformed one must not itself error.
+        self.assertFalse(any("assert[0]" in e for e in report.errors))
+
+    def test_unknown_top_level_field_is_not_an_error(self) -> None:
+        # Documents current behavior: validate.py performs no top-level
+        # additionalProperties check, so an unrecognized field (e.g. a typo'd
+        # field name) is silently accepted rather than rejected. If this ever
+        # changes, this test should fail and force a deliberate decision.
+        with_unknown = VALID_XDR.replace(
+            'source_reference = "CAP-0083"',
+            'source_reference = "CAP-0083"\nsoure_reference = "typo"',
+        )
+        report = self.run_validation({"a.toml": with_unknown})
+        self.assertEqual(report.errors, [])
+
     def test_rpc_fixture_requires_at_least_one_assert(self) -> None:
         bad = """
 id = "p28-rpc-no-assert"
@@ -192,6 +269,16 @@ method = "get-network"
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'expect'" in e for e in report.errors))
 
+    def test_soroban_fixture_rejects_unknown_expect_kind(self) -> None:
+        # [expect] is present but its kind is not in SOROBAN_EXPECT_KINDS —
+        # a different branch of validate_soroban_body than the missing-
+        # [expect] case above.
+        bad = VALID_SOROBAN.replace(
+            'kind = "simulation-success"', 'kind = "simulation-timeout"'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("expect.kind" in e for e in report.errors))
+
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
         bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"')
         report = self.run_validation({"a.toml": bad})
@@ -217,6 +304,53 @@ method = "get-network"
         )
         report = self.run_validation({"a.toml": good})
         self.assertEqual(report.errors, [])
+
+
+class QuietFlagTests(unittest.TestCase):
+    """`--quiet` suppresses warnings while keeping errors and the summary."""
+
+    def run_main(self, argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = validate.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def write_warning_fixture(self, root: Path) -> None:
+        # Valid fixture that omits source_reference -> warning only.
+        write(root, "warn.toml", VALID_XDR.replace('source_reference = "CAP-0083"\n', ""))
+
+    def write_error_fixture(self, root: Path) -> None:
+        # Invalid surface -> error only (source_reference is still present).
+        write(root, "error.toml", VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"'))
+
+    def test_default_prints_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_warning_fixture(root)
+            self.write_error_fixture(root)
+            code, out, err = self.run_main([str(root)])
+        self.assertIn("warning:", out)
+        self.assertIn("error:", err)
+        self.assertEqual(code, 1)
+
+    def test_quiet_suppresses_warnings_but_keeps_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_warning_fixture(root)
+            self.write_error_fixture(root)
+            code, out, err = self.run_main(["--quiet", str(root)])
+        self.assertNotIn("warning:", out)
+        self.assertIn("error:", err)
+        self.assertEqual(code, 1)
+
+    def test_quiet_keeps_ok_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_warning_fixture(root)
+            code, out, err = self.run_main(["--quiet", str(root)])
+        self.assertNotIn("warning:", out)
+        self.assertIn("OK:", out)
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":
