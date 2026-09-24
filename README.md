@@ -76,8 +76,8 @@ makes a mixed-protocol directory safe either way.
 
 | Pack | Status | Notes |
 |---|---|---|
-| [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. See [`docs/protocol-28.md`](docs/protocol-28.md). |
-| [`protocol-27/`](protocol-27/) | Not yet populated | See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
+| [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. Fixture counts by surface: **4 xdr, 1 rpc, 1 soroban** (6 total). See [`docs/protocol-28.md`](docs/protocol-28.md). |
+| [`protocol-27/`](protocol-27/) | Not yet populated | **0 fixtures.** See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
 
 ## Fixture format
 
@@ -97,6 +97,34 @@ source_reference = "CAP-0083"          # optional, should be authoritative
 # schema (xdr: type/kind/value_base64; rpc: method/[[assert]]; soroban:
 # source_account/contract_id/function/[expect]).
 ```
+
+### Assertion vocabulary
+
+Each surface states its expected result through a small set of `kind`
+values. These are the only values consumers accept — anything else fails
+at fixture parse time, before any check runs. An XDR fixture carries a
+single top-level `kind`; an RPC fixture carries one or more `[[assert]]`
+tables, all of which must pass; a Soroban fixture carries one `[expect]`
+table.
+
+| Surface | Field | Value | Asserts that… |
+|---|---|---|---|
+| `xdr` | `kind` | `decode-success` | `value_base64` decodes successfully as the named `type`. |
+| `xdr` | `kind` | `decode-failure` | `value_base64` is rejected when decoded as the named `type` — malformed input must fail, never silently decode. |
+| `xdr` | `kind` | `roundtrip` | Decoding `value_base64` and re-encoding it reproduces the same bytes. |
+| `xdr` | `kind` | `encode-equals` | Decoding `value_base64` and re-encoding it produces exactly `expected_base64` (used when testing canonicalization). |
+| `rpc` | `[[assert]].kind` | `field-exists` | The method's response contains the named `field`. |
+| `rpc` | `[[assert]].kind` | `field-absent` | The response does not contain the named `field`. |
+| `rpc` | `[[assert]].kind` | `field-equals` | The named `field` equals `value` exactly. |
+| `rpc` | `[[assert]].kind` | `field-type` | The named `field` has the JSON type named by `expected_type`. |
+| `soroban` | `[expect].kind` | `simulation-success` | `simulateTransaction` succeeds with no error. |
+| `soroban` | `[expect].kind` | `simulation-error` | `simulateTransaction` fails — optionally requiring `message_contains` to appear in the error message. |
+
+The full per-surface field list (including the non-`kind` fields each
+value requires, such as `value_base64` or `expected_type`) is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema); the authoritative
+schema is `Protocol-Canary`'s
+[`docs/fixture-contract.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/fixture-contract.md).
 
 Fixtures are declarative data, never code: no fixture field is interpreted
 as a shell command, script, or executable instruction of any kind.
