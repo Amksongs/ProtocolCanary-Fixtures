@@ -37,7 +37,8 @@ To add one:
    comment block above the TOML body) explains, in prose, how the expected
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
-   not "looks right".
+   not "looks right". If the header comment records *when* an observation
+   was made, use the date convention below.
 3. **Define a stable ID.** Follow `p<protocol>-<surface>-<slug>` (e.g.
    `p28-xdr-cap85-external-ref-roundtrip`). IDs are lowercase, unique
    across the *entire* repository (the loader validates this across all
@@ -70,6 +71,18 @@ host-function behavior from an authoritative source, **stop** — do not
 guess a byte sequence or invent an undocumented host function because it
 "looks right". Open an issue describing the gap instead.
 
+## Recording verification dates
+
+When a fixture's header comment records when a live-network observation was
+made (for example, the date an RPC endpoint or a simulation was last checked
+to still return the documented result), write the date as **`YYYY-MM-DD` in
+UTC** — e.g. `2026-09-02`. State the `UTC` designation the first time a date
+appears in a header comment (or otherwise make clear it is UTC).
+
+Rationale: these dates exist so a future reader can judge how stale an
+observation may be. Recording them in local time would make a date recorded
+near a day boundary ambiguous by up to a day, defeating that purpose.
+
 ## Fixture schema
 
 This repository's fixture files must conform exactly to what
@@ -81,6 +94,16 @@ here is a convenience JSON Schema mirroring that contract for editor/CI
 linting; if the two ever disagree, `Protocol-Canary`'s implementation wins
 and this repository's schema/validator must be corrected to match — never
 the other way around.
+
+The fixture format is versioned: `schemas/fixture-v1.schema.json` is titled
+"Protocol Canary fixture (schema_version 1)". **Every protocol pack must
+state, in its `docs/protocol-NN.md` or the pack's `README.md`, which fixture
+format `schema_version` its fixtures were written against** — the
+`protocol-28` pack, for instance, targets `schema_version 1`. The schema
+version is a per-pack property recorded in prose, not a field repeated in
+each fixture file. Recording it from the start is what lets a future format
+revision (e.g. `schema_version 2`) be scoped per pack rather than
+retrofitted by guesswork.
 
 Common fields (every fixture):
 
