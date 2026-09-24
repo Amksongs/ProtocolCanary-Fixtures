@@ -25,7 +25,8 @@ To add one:
 - **Check it** — run `python3 tools/validate/validate.py`.
 - **Document & test it** — update the relevant `docs/protocol-NN.md` table
   (and the pack's `README.md` for a new CAP or surface), then run
-  `python3 -m unittest discover tests`.
+  `python3 -m unittest discover tests` (or, while iterating on the
+  validator itself, the narrower `python3 -m unittest tests.test_validate`).
 
 1. **Identify the upstream behavior.** Read the CAP text, the upstream XDR
    definition, the upstream implementation, or the official release/API
@@ -55,7 +56,15 @@ To add one:
 6. **Validate the fixture**: `python3 tools/validate/validate.py`.
 7. **Add/update documentation**: the relevant `docs/protocol-NN.md` table
    and, if you added a new CAP or surface, the pack's `README.md`.
-8. **Run the repository tests**: `python3 -m unittest discover tests`.
+8. **Run the repository tests**: `python3 -m unittest discover tests` runs the
+   whole suite — `tests/test_validate.py` (the validator's own unit tests)
+   plus the protocol-28 pack's fixture-inventory tests in
+   `tests/test_pack_protocol_28.py`. While iterating specifically on
+   `tools/validate/validate.py`, the narrower
+   `python3 -m unittest tests.test_validate` runs just that file and is
+   correspondingly faster, which is why it is the tighter edit-test loop.
+   Either way, make sure the full `discover` command passes before opening a
+   pull request — it is what CI (`.github/workflows/validate.yml`) runs.
 
 No fixture should be merged solely because it makes some consumer's CI
 green. If you cannot pin down the exact expected wire representation or
