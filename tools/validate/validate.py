@@ -43,6 +43,11 @@ RPC_METHODS = {"get-network", "get-latest-ledger"}
 RPC_ASSERT_KINDS = {"field-exists", "field-type", "field-equals"}
 RPC_ASSERT_TYPES = {"string", "integer", "boolean", "array", "object"}
 SOROBAN_EXPECT_KINDS = {"simulation-success", "simulation-error"}
+# Set of kebab-case capability strings a fixture may list in
+# `required_capabilities`. Must be kept in sync with
+# canary_core::Capability in StellarCanary/Protocol-Canary, whose
+# kebab-case names these mirror (the same cross-reference is documented in
+# schemas/fixture-v1.schema.json's required_capabilities description).
 CAPABILITIES = {
     "soroban-contract",
     "rpc-client",
