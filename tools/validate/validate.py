@@ -151,7 +151,8 @@ def validate_common_fields(fx: Fixture, report: Report) -> None:
         report.warning(
             path,
             "no 'source_reference' set; protocol-specific fixtures should cite an "
-            "authoritative upstream source",
+            "authoritative upstream source (e.g. CAP-0083 or "
+            "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork)",
         )
 
     if "required_capabilities" in data:
