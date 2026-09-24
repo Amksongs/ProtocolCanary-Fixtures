@@ -34,6 +34,10 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Mirrors canary-fixtures' supported surfaces; must be kept in sync with
+# docs/fixture-contract.md in the upstream canary-fixtures repo. Changing
+# this without a corresponding upstream change would make the validator accept
+# fixtures the loader would reject (or vice versa).
 SURFACES = {"xdr", "rpc", "soroban"}
 XDR_TYPES = {"StellarValue", "ContractExecutable"}
 # Set of assertion kinds supported by canary-xdr for a given XDR value.
