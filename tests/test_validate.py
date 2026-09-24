@@ -4,7 +4,9 @@ Run with: python3 -m unittest discover tests
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
@@ -129,6 +131,18 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'kind'" in e for e in report.errors))
 
+    def test_rejects_xdr_type_not_in_xdr_types(self) -> None:
+        bad = VALID_XDR.replace('type = "StellarValue"', 'type = "LedgerEntry"')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "LedgerEntry" in e
+                and "StellarValue" in e
+                and "ContractExecutable" in e
+                for e in report.errors
+            )
+        )
+
     def test_encode_equals_requires_expected_base64(self) -> None:
         bad = VALID_XDR.replace('kind = "decode-success"', 'kind = "encode-equals"')
         report = self.run_validation({"a.toml": bad})
@@ -175,10 +189,32 @@ method = "get-network"
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("at least one" in e for e in report.errors))
 
+    def test_rejects_unrecognized_rpc_assert_kind(self) -> None:
+        bad = VALID_RPC.replace('kind = "field-equals"', 'kind = "field-contains"')
+        report = self.run_validation({"a.toml": bad})
+        errors = [e for e in report.errors if "assert[0].kind" in e]
+        self.assertEqual(len(errors), 1, report.errors)
+        # The error must name the offending kind and enumerate the kinds the
+        # validator does accept, so that neither widening nor narrowing
+        # RPC_ASSERT_KINDS can pass unnoticed.
+        self.assertIn("field-contains", errors[0])
+        for supported in ("field-exists", "field-type", "field-equals"):
+            self.assertIn(supported, errors[0])
+
     def test_soroban_fixture_requires_expect(self) -> None:
         bad = VALID_SOROBAN.replace("[expect]\nkind = \"simulation-success\"\n", "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'expect'" in e for e in report.errors))
+
+    def test_soroban_fixture_rejects_unknown_expect_kind(self) -> None:
+        # [expect] is present but its kind is not in SOROBAN_EXPECT_KINDS —
+        # a different branch of validate_soroban_body than the missing-
+        # [expect] case above.
+        bad = VALID_SOROBAN.replace(
+            'kind = "simulation-success"', 'kind = "simulation-timeout"'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("expect.kind" in e for e in report.errors))
 
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
         bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"')
@@ -205,6 +241,53 @@ method = "get-network"
         )
         report = self.run_validation({"a.toml": good})
         self.assertEqual(report.errors, [])
+
+
+class QuietFlagTests(unittest.TestCase):
+    """`--quiet` suppresses warnings while keeping errors and the summary."""
+
+    def run_main(self, argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = validate.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def write_warning_fixture(self, root: Path) -> None:
+        # Valid fixture that omits source_reference -> warning only.
+        write(root, "warn.toml", VALID_XDR.replace('source_reference = "CAP-0083"\n', ""))
+
+    def write_error_fixture(self, root: Path) -> None:
+        # Invalid surface -> error only (source_reference is still present).
+        write(root, "error.toml", VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"'))
+
+    def test_default_prints_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_warning_fixture(root)
+            self.write_error_fixture(root)
+            code, out, err = self.run_main([str(root)])
+        self.assertIn("warning:", out)
+        self.assertIn("error:", err)
+        self.assertEqual(code, 1)
+
+    def test_quiet_suppresses_warnings_but_keeps_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_warning_fixture(root)
+            self.write_error_fixture(root)
+            code, out, err = self.run_main(["--quiet", str(root)])
+        self.assertNotIn("warning:", out)
+        self.assertIn("error:", err)
+        self.assertEqual(code, 1)
+
+    def test_quiet_keeps_ok_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_warning_fixture(root)
+            code, out, err = self.run_main(["--quiet", str(root)])
+        self.assertNotIn("warning:", out)
+        self.assertIn("OK:", out)
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":
