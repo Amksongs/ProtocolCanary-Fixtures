@@ -72,12 +72,36 @@ class Fixture:
 class Report:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Fixture ids keyed by the fixture file's path, for fixtures whose ``id``
+    # has already been parsed and validated (see ``known_fixture_id``). Lets
+    # error/warning messages name the fixture without each call site having to
+    # restate its id explicitly.
+    fixture_ids: dict[Path, str] = field(default_factory=dict)
 
-    def error(self, path: Path, message: str) -> None:
-        self.errors.append(f"{path}: {message}")
+    def register_fixture_id(self, path: Path, fixture_id: str | None) -> None:
+        """Record ``fixture_id`` as ``path``'s id when it is known to be valid.
 
-    def warning(self, path: Path, message: str) -> None:
-        self.warnings.append(f"{path}: {message}")
+        A falsy/``None`` id leaves ``path`` unregistered so its messages fall
+        back to the path-only format.
+        """
+        if fixture_id:
+            self.fixture_ids[path] = fixture_id
+
+    def _format(self, path: Path, message: str, fixture_id: str | None) -> str:
+        fid = fixture_id if fixture_id is not None else self.fixture_ids.get(path)
+        if fid:
+            return f"{path} [{fid}]: {message}"
+        return f"{path}: {message}"
+
+    def error(
+        self, path: Path, message: str, fixture_id: str | None = None
+    ) -> None:
+        self.errors.append(self._format(path, message, fixture_id))
+
+    def warning(
+        self, path: Path, message: str, fixture_id: str | None = None
+    ) -> None:
+        self.warnings.append(self._format(path, message, fixture_id))
 
     @property
     def ok(self) -> bool:
@@ -100,6 +124,21 @@ def load_fixture(path: Path, report: Report) -> Fixture | None:
         report.error(path, f"invalid TOML: {exc}")
         return None
     return Fixture(path=path, data=data)
+
+
+def known_fixture_id(fx: Fixture) -> str | None:
+    """Return ``fx``'s id when it is present and valid, else ``None``.
+
+    Only a non-empty, lowercase string counts: those are exactly the
+    properties ``validate_common_fields`` requires of ``id``. An id that is
+    missing, non-string, empty, or not lowercase is not yet known to be
+    valid -- the failure is itself reported by ``validate_common_fields`` --
+    so messages about that fixture fall back to a path-only format.
+    """
+    fid = fx.data.get("id")
+    if isinstance(fid, str) and fid and fid == fid.lower():
+        return fid
+    return None
 
 
 def _require(data: dict, key: str, expected_type: type, path: Path, report: Report) -> bool:
@@ -312,6 +351,9 @@ def validate_directory(root: Path) -> Report:
         fx = load_fixture(path, report)
         if fx is not None:
             fixtures.append(fx)
+
+    for fx in fixtures:
+        report.register_fixture_id(fx.path, known_fixture_id(fx))
 
     for fx in fixtures:
         validate_common_fields(fx, report)
