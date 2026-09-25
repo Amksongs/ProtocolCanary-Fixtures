@@ -62,6 +62,12 @@ class BadgeTests(unittest.TestCase):
             write(root, "README.md", "# not a fixture\n")
             self.assertEqual(badge.count_fixtures(root), 2)
 
+    def test_count_fixtures_returns_zero_for_pack_without_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "protocol-28/README.md", "No fixtures yet.\n")
+            self.assertEqual(badge.count_fixtures(root), 0)
+
     def test_badge_markdown_links_to_the_pack_table(self) -> None:
         rendered = badge.badge_markdown(6)
         self.assertIn("https://img.shields.io/badge/fixtures-6-blue.svg", rendered)
