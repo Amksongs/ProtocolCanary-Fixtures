@@ -85,6 +85,12 @@ class ValidatorTests(unittest.TestCase):
                 write(root, name, contents)
             return validate.validate_directory(root)
 
+    def test_empty_directory_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = validate.validate_directory(Path(tmp))
+        self.assertEqual(report.errors, [])
+        self.assertTrue(report.ok)
+
     def test_accepts_a_valid_xdr_fixture(self) -> None:
         report = self.run_validation({"a.toml": VALID_XDR})
         self.assertEqual(report.errors, [])
