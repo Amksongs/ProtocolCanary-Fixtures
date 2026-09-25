@@ -48,7 +48,7 @@
     "source_reference": {
       "type": "string",
       "minLength": 1,
-      "description": "An authoritative upstream reference: a CAP identifier/URL, an upstream XDR definition, or an official release/API doc URL. Strongly expected for any protocol-specific fixture (omitting it currently produces a warning, not a validator error)."
+      "description": "An authoritative upstream reference: a CAP identifier/URL, an upstream XDR definition, or an official release/API doc URL. Required for every protocol-specific fixture in this repository: tools/validate/validate.py reports a missing or empty source_reference as an error, so omitting it fails validation and CI."
     },
     "required_capabilities": {
       "type": "array",
