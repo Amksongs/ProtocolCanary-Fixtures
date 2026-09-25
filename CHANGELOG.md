@@ -48,12 +48,12 @@ discussion and diff. New entries must include that link; see
 
 ### Changed
 
-- `tools/validate/validate.py` now names the fixture's `id` in every error
-  and warning it reports (`<path> [<id>]: <message>`), so a failing run can
-  be matched back to the offending fixture without opening the file to read
-  its id. Messages fall back to the path-only form when a fixture's `id` is
-  missing or invalid, since the id is not yet known to be valid at that
-  point. ([PR #144])
+- The structural validator now treats a missing `source_reference` as an
+  error rather than a warning, so a fixture with no authoritative provenance
+  reference fails `tools/validate/validate.py` (and therefore CI) instead of
+  passing with a printed advisory. `CONTRIBUTING.md`, `SECURITY.md`,
+  `README.md` and `schemas/fixture-v1.schema.json` were updated to describe
+  the rule as enforced. ([PR #143])
 - `schemas/fixture-v1.schema.json` gained a top-level `examples` array
   containing one minimal, schema-valid XDR fixture mirroring
   `protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml`,
@@ -94,8 +94,8 @@ discussion and diff. New entries must include that link; see
 
 <!-- Link definitions: the pull request or commit that introduced each
      entry above. Commits listed here were pushed directly to `main`
-     without a pull request; PR #97 and PR #144 are the only [Unreleased]
-     entries that originated from merged pull requests. -->
+     without a pull request; PR #97 and PR #143 are the only [Unreleased]
+     entries that originated from pull requests. -->
 
 [757e1e7]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/757e1e777489bb5c20e7500b245370de227c66b3
 [5142110]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/51421106999811666502b2e7da7ae3b9e351fd9c
@@ -108,4 +108,4 @@ discussion and diff. New entries must include that link; see
 [c8d8e75]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/c8d8e75b741b35873e8b5074fac6f8321bc94197
 [806549c]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/806549c1ab8f21dbfd44d5091eb899b776ea5767
 [PR #97]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/97
-[PR #144]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/144
+[PR #143]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/143

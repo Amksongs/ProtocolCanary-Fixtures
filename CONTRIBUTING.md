@@ -33,8 +33,8 @@ To add one:
    docs — in that order of preference. Never cite a source you have not
    actually checked describes the specific behavior you are asserting.
 2. **Add source provenance.** Every fixture sets `source_reference` to an
-   authoritative URL or CAP identifier (note: omitting it currently produces
-   a warning, not a validator error), and its header comment (a `#`
+   authoritative URL or CAP identifier — omitting it is a hard validator
+   error, not a warning — and its header comment (a `#`
    comment block above the TOML body) explains, in prose, how the expected
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
@@ -57,12 +57,11 @@ To add one:
 6. **Validate the fixture**: `make validate` — or
    `python3 tools/validate/validate.py` directly. Only errors produce a
    non-zero exit code: the validator exits 1 if the report contains at
-   least one error and 0 otherwise, and warnings alone never change the
-   exit code. CI runs this exact command
+   least one error and 0 otherwise. CI runs this exact command
    (`.github/workflows/validate.yml`), so that exit code is what CI
-   treats as pass/fail — any error fails the workflow on your PR, while
-   warnings never do (they are advisory: fix them when you can, but they
-   will not fail CI).
+   treats as pass/fail — any error fails the workflow on your PR. In
+   particular, a missing `source_reference` (step 2) is an error, so it
+   fails CI rather than passing with a printed advisory.
 7. **Add/update documentation**: the relevant `docs/protocol-NN.md` table
    and, if you added a new CAP or surface, the pack's `README.md`.
 8. **Run the repository tests**: `make test` — or
@@ -126,7 +125,7 @@ protocol = 28
 surface = "xdr" # | "rpc" | "soroban"
 category = "cap-0083"
 description = "..."
-source_reference = "CAP-0083"          # optional but expected for protocol-specific fixtures
+source_reference = "CAP-0083"          # required for protocol-specific fixtures; missing it is an error
 required_capabilities = []              # optional, see fixture-contract.md
 input_file = "..."                      # optional, path relative to this file (currently unused by any fixture)
 expected_file = "..."                   # optional (currently unused by any fixture)

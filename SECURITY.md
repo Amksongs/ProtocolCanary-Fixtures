@@ -37,12 +37,21 @@ untrusted input by any consumer, including `Protocol-Canary` itself:
 structural problems (schema conformance, duplicate IDs, missing files). It
 never executes a fixture's assertion and never makes a network call.
 
+The validator also enforces provenance rather than merely advising on it: a
+fixture with no `source_reference` (or an empty one) is reported as an
+**error**, so it fails validation and therefore CI, instead of passing
+with a printed warning. This makes the shared validator — not a
+pack-specific test — the common enforcement point for the claim that every
+assertion is traceable to an authoritative upstream source.
+
 ## Audit status
 
 No formal third-party security audit has been performed on this
 repository. Confidence in the "fixtures are data, not code" claim comes
 from the fixture schema itself (no executable field exists) and the
-validator's tests, not from an external review.
+validator's tests, not from an external review. Confidence in fixture
+provenance comes from the structural validator, which treats a missing
+`source_reference` as an error (see above).
 
 ## Reporting a vulnerability
 

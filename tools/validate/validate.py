@@ -19,17 +19,10 @@ With no arguments, validates every protocol-*/ directory found next to
 this script's repository root. Exits 0 if every fixture is valid, 1
 otherwise.
 
-Warnings (e.g. a fixture with no ``source_reference``) are printed to
-stdout by default. Pass ``--quiet`` to suppress them so a fully passing
-CI run is not dominated by warning noise; errors still go to stderr and
-the final OK/FAILED summary is always printed.
-
-When a fixture's ``id`` has been parsed and is valid, every error/warning
-about it is annotated with that id as ``<path> [<id>]: <message>``, so a
-reported problem can be matched back to its fixture without opening the
-file. A fixture whose ``id`` is missing or fails the checks in
-``validate_common_fields`` is reported path-only, because its id is not yet
-known to be valid at the point the failure is recorded.
+Warnings are printed to stdout by default; pass ``--quiet`` to suppress
+them. Errors always go to stderr and the final OK/FAILED summary is always
+printed. A missing ``source_reference`` is an error, not a warning: every
+fixture must cite an authoritative upstream source (see CONTRIBUTING.md).
 """
 from __future__ import annotations
 
@@ -198,9 +191,9 @@ def validate_common_fields(fx: Fixture, report: Report) -> None:
         if not isinstance(data["source_reference"], str) or not data["source_reference"]:
             report.error(path, "field 'source_reference', if present, must be a non-empty string")
     else:
-        report.warning(
+        report.error(
             path,
-            "no 'source_reference' set; protocol-specific fixtures should cite an "
+            "no 'source_reference' set; protocol-specific fixtures must cite an "
             "authoritative upstream source (e.g. CAP-0083 or "
             "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork)",
         )
