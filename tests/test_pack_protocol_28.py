@@ -64,6 +64,14 @@ class Protocol28PackTests(unittest.TestCase):
         for fx in self.fixtures:
             self.assertTrue(fx.data.get("source_reference"), fx.path)
 
+    def test_every_fixture_starts_with_a_header_comment(self) -> None:
+        for path in validate.find_fixture_files(PACK):
+            first_non_empty = next(
+                (line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()),
+                "",
+            )
+            self.assertTrue(first_non_empty.lstrip().startswith("#"), path)
+
     def test_expected_fixture_ids_are_present_per_surface(self) -> None:
         by_surface: dict[str, set[str]] = {"xdr": set(), "rpc": set(), "soroban": set()}
         for fx in self.fixtures:
