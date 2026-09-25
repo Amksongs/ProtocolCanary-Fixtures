@@ -12,6 +12,20 @@ Protocol 28
     └── CAP-0086  (sparse-map host functions for storage migration)
 ```
 
+## Fixture format version
+
+Every fixture in this pack is written against **fixture format
+`schema_version` 1**, the format described by
+[`schemas/fixture-v1.schema.json`](../schemas/fixture-v1.schema.json) (titled
+"Protocol Canary fixture (schema_version 1)"). The `schema_version` is a
+property of the pack as a whole, not a per-fixture TOML field — no fixture
+in this repository sets a `schema_version` key, and the schema neither
+requires nor defines one. Recording it here means that if the fixture format
+is ever revised to `schema_version 2`, this pack's target version is on the
+record and can be migrated deliberately rather than inferred. Future packs
+should likewise state the version they target; see
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md#fixture-schema).
+
 ## CAP-0083: STELLAR_VALUE_EMPTY_TX_SET
 
 **What changed.** [CAP-0083](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0083.md)
@@ -158,6 +172,8 @@ Soroban-pipeline smoke test, not a CAP-specific one.
   or simulation.
 
 ## Consuming this pack
+
+For a concise index of the fixtures in this pack, see [`protocol-28/README.md`](../protocol-28/README.md).
 
 ```bash
 stellar-canary check --fixtures-dir <checkout-of-this-repo>/protocol-28 --json

@@ -4,6 +4,12 @@ Implemented in Stellar Core 28.0.0, Stellar RPC 28.0.0 (integration-tested
 against Soroban host 28.0.1), and the official `stellar-xdr` 28.0.0 crate.
 Includes CAP-0083, CAP-0085, and CAP-0086.
 
+This pack's fixtures are written against **fixture format
+`schema_version` 1** ([`schemas/fixture-v1.schema.json`](../schemas/fixture-v1.schema.json)).
+See [`../docs/protocol-28.md`](../docs/protocol-28.md#fixture-format-version)
+for details, and [`../CONTRIBUTING.md`](../CONTRIBUTING.md#fixture-schema)
+for why future packs should record their target version too.
+
 This directory holds no `manifest.toml` — see the repository root
 [`README.md`](../README.md#repository-relationship) for why: the
 `Protocol-Canary` loader parses every `*.toml` file it finds as a fixture,
