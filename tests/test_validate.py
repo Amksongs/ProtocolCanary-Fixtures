@@ -132,6 +132,46 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'surface'" in e for e in report.errors))
 
+    def test_error_message_includes_fixture_id(self) -> None:
+        # A fixture whose id has been parsed and is valid should be nameable
+        # from the reported error alone, so a failing CI run does not require
+        # cross-referencing the path against the file's contents.
+        bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
+        report = self.run_validation({"a.toml": bad})
+        matching = [e for e in report.errors if "'surface'" in e]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(
+            all("p28-xdr-cap83-example" in e for e in matching), matching
+        )
+        # The id must be an annotation on the message, not a replacement for
+        # the path that locates the offending file.
+        self.assertTrue(all("a.toml" in e for e in matching), matching)
+
+    def test_error_message_omits_id_when_id_is_invalid(self) -> None:
+        # When id itself fails validation (here: it is not lowercase), it is
+        # not yet known to be valid, so messages for that fixture fall back to
+        # the path-only format rather than echoing an invalid id.
+        bad = VALID_XDR.replace(
+            'id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"'
+        ).replace('surface = "xdr"', 'surface = "wallet"')
+        report = self.run_validation({"a.toml": bad})
+        matching = [e for e in report.errors if "'surface'" in e]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(
+            all("P28-XDR-CAP83-EXAMPLE" not in e for e in matching), matching
+        )
+
+    def test_warning_message_includes_fixture_id(self) -> None:
+        # Report.warning shares Report.error's formatting, so a warning about a
+        # fixture with a known id is annotated the same way.
+        report = validate.Report()
+        path = Path("a.toml")
+        report.register_fixture_id(path, "p28-xdr-cap83-example")
+        report.warning(path, "an advisory")
+        self.assertEqual(
+            report.warnings, ["a.toml [p28-xdr-cap83-example]: an advisory"]
+        )
+
     def test_rejects_invalid_protocol_type(self) -> None:
         bad = VALID_XDR.replace("protocol = 28", 'protocol = "28"')
         report = self.run_validation({"a.toml": bad})
