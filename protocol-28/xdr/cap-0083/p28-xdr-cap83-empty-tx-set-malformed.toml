@@ -1,0 +1,36 @@
+# Protocol 28 / CAP-0083: malformed STELLAR_VALUE_EMPTY_TX_SET is rejected.
+#
+# Complements p28-xdr-cap83-empty-tx-set.toml: a decoder that accepts
+# truncated/malformed input is as much of a compatibility break as one that
+# rejects valid input. This fixture's value_base64 is the first 60 bytes of
+# that fixture's well-formed StellarValue encoding — the complete top-level
+# body (zero txSetHash, closeTime, empty upgrades vector) followed by the
+# STELLAR_VALUE_EMPTY_TX_SET ext discriminant (2) and only the first 12 of
+# the required 32 bytes of the nested proposedValue.txSetHash — so the
+# nested txSetHash is cut short and proposedValue.previousLedgerHash,
+# previousLedgerVersion, and the lcValueSignature are entirely missing. A
+# correct XDR decoder must reject this as truncated input, not silently
+# accept a short Hash or ignore the missing arm body.
+#
+# Verified against the official `stellar-xdr` 28.0.0 crate on 2026-09-23,
+# via the `stellar xdr decode --type StellarValue` subcommand of the
+# official Stellar CLI 28.0.0 release binary (which embeds stellar-xdr
+# 28.0.0, xdr commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694 — the v28.0
+# tag): this input fails with "error decoding XDR: failed to fill whole
+# buffer", while the unmodified well-formed encoding in
+# p28-xdr-cap83-empty-tx-set.toml decodes successfully with the same tool.
+# The rejection is therefore the truncation itself, not an unrecognized
+# discriminant.
+#
+# Reference: https://github.com/stellar/stellar-protocol/blob/master/core/cap-0083.md
+
+id = "p28-xdr-cap83-empty-tx-set-malformed"
+protocol = 28
+surface = "xdr"
+category = "cap-0083"
+description = "A truncated CAP-0083 StellarValue using the STELLAR_VALUE_EMPTY_TX_SET ext is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-protocol/blob/master/core/cap-0083.md"
+
+type = "StellarValue"
+kind = "decode-failure"
+value_base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaIwDgAAAAAAAAAACERERERERERERERER"

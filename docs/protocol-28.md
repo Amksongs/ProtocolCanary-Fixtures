@@ -12,6 +12,20 @@ Protocol 28
     └── CAP-0086  (sparse-map host functions for storage migration)
 ```
 
+## Fixture format version
+
+Every fixture in this pack is written against **fixture format
+`schema_version` 1**, the format described by
+[`schemas/fixture-v1.schema.json`](../schemas/fixture-v1.schema.json) (titled
+"Protocol Canary fixture (schema_version 1)"). The `schema_version` is a
+property of the pack as a whole, not a per-fixture TOML field — no fixture
+in this repository sets a `schema_version` key, and the schema neither
+requires nor defines one. Recording it here means that if the fixture format
+is ever revised to `schema_version 2`, this pack's target version is on the
+record and can be migrated deliberately rather than inferred. Future packs
+should likewise state the version they target; see
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md#fixture-schema).
+
 ## CAP-0083: STELLAR_VALUE_EMPTY_TX_SET
 
 **What changed.** [CAP-0083](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0083.md)
@@ -22,10 +36,16 @@ being closed, by adding a new `StellarValueType` case,
 `txSetHash`, with the real hash of the dropped transaction set moved into
 the nested `proposedValue.txSetHash`.
 
-**What this pack tests.** `xdr/cap-0083/p28-xdr-cap83-empty-tx-set.toml`
-asserts that a real, well-formed `StellarValue` using this ext case
-round-trips byte-for-byte through the project's configured `stellar-xdr`
-dependency.
+**What this pack tests.**
+
+- `xdr/cap-0083/p28-xdr-cap83-empty-tx-set.toml`: a real, well-formed
+  `StellarValue` using this ext case round-trips byte-for-byte through the
+  project's configured `stellar-xdr` dependency.
+- `xdr/cap-0083/p28-xdr-cap83-empty-tx-set-malformed.toml`: a truncated
+  encoding of the same shape — the nested `proposedValue.txSetHash` cut
+  short after 12 of its 32 bytes, with the rest of the `proposedValue` arm
+  (including the `lcValueSignature`) missing entirely — is correctly
+  rejected, not silently accepted.
 
 **Surface.** XDR only. This is validator-internal consensus behavior, not
 something a Soroban transaction or RPC call can meaningfully reproduce —
@@ -68,14 +88,32 @@ official `stellar-xdr` 28.0.0 crate before being committed.
 externally-managed-executable contract fleet end-to-end (deploy an owner
 contract, write an `ExecutableTagObject` entry, deploy an instance whose
 executable references it, invoke a function through that reference, and
-confirm the resolved Wasm actually runs). Building that verifiably, rather
-than guessing at it, requires deploying real Protocol 28 contracts using a
-brand-new executable type — which needs either upstream `stellar` CLI
-support for constructing an external-ref deployment (not yet available: the
-CLI installed while authoring this pack was 27.1.0) or hand-crafting the
-raw `InvokeHostFunction`/ledger-entry operations directly against the XDR,
-which risks guessing behavior this project's rules forbid. This is tracked
-as a known gap in `CHANGELOG.md`, not silently skipped.
+confirm the resolved Wasm actually runs). At authoring time, the installed
+Rust `stellar` CLI was **27.1.0** and did not provide a supported way to
+construct that deployment. A re-check on **2026-09-25 UTC** of the
+[`stellar-cli` 28.0.0 release](https://github.com/stellar/stellar-cli/releases/tag/v28.0.0)
+(published 2026-08-26) found that it adds Protocol 28 support and can
+resolve, fetch, and invoke existing external references, but
+`stellar contract deploy` still exposes only `--wasm` and `--wasm-hash` for
+selecting the executable; it has no direct external-reference deployment
+option. The v28.0.0
+[CAP-0085 integration test](https://github.com/stellar/stellar-cli/blob/v28.0.0/cmd/crates/soroban-test/tests/it/integration/contract/external_ref.rs)
+demonstrates the owner-side flow with commands equivalent to:
+
+```text
+stellar contract invoke --id <OWNER_ID> -- publish --tag fleet --wasm-hash <WASM_HASH>
+stellar contract invoke --id <OWNER_ID> -- deploy_ref --tag fleet
+```
+
+(the test supplies the configured source account and network). This requires a
+separately deployed owner contract and is not a general CLI construction path.
+The open draft [`stellar-cli` PR #2659](https://github.com/stellar/stellar-cli/pull/2659)
+proposes `--executable-owner` and `--executable-tag`; until that support is
+released, adding a live fixture would require hand-crafting raw
+`InvokeHostFunction`/ledger-entry operations directly against the XDR, which
+risks guessing behavior this project's rules forbid. This gap is tracked by
+[#8](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/8),
+rather than silently skipped.
 
 **Source.** [CAP-0085](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md).
 
@@ -153,15 +191,21 @@ Soroban-pipeline smoke test, not a CAP-specific one.
 
 ## Consuming this pack
 
+For a concise index of the fixtures in this pack, see [`protocol-28/README.md`](../protocol-28/README.md).
+
 ```bash
 stellar-canary check --fixtures-dir <checkout-of-this-repo>/protocol-28 --json
 # or, scanning every protocol pack in the repository at once:
 stellar-canary check --fixtures-dir <checkout-of-this-repo> --protocol 28 --json
 ```
 
-Both were run and passed 5/5 against a local `Protocol-Canary` build on
-2026-09-02, confirming this pack is consumable exactly as documented in
-`Protocol-Canary`'s `docs/fixture-contract.md`.
+Both were run on 2026-09-02 against a local `Protocol-Canary` build and
+passed for every fixture in the pack as it stood then, confirming this pack
+is consumable exactly as documented in `Protocol-Canary`'s
+`docs/fixture-contract.md`. This record is deliberately not tied to a
+hardcoded fixture count, so adding a fixture does not make it stale — but a
+newly added fixture is only covered by this record once it has been
+re-verified the same way.
 
 ## Adding more Protocol 28 fixtures
 

@@ -30,6 +30,7 @@ CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 EXPECTED_IDS_BY_SURFACE = {
     "xdr": {
         "p28-xdr-cap83-empty-tx-set",
+        "p28-xdr-cap83-empty-tx-set-malformed",
         "p28-xdr-cap85-external-ref-roundtrip",
         "p28-xdr-cap85-external-ref-malformed",
     },
@@ -54,9 +55,33 @@ class Protocol28PackTests(unittest.TestCase):
         for fx in self.fixtures:
             self.assertEqual(fx.data.get("protocol"), 28, fx.path)
 
+    def test_fixture_paths_match_declared_surface(self) -> None:
+        for fx in self.fixtures:
+            relative_path = fx.path.relative_to(PACK)
+            self.assertEqual(relative_path.parts[0], fx.data.get("surface"), fx.path)
+
+    def test_fixture_ids_follow_the_p_protocol_surface_convention(self) -> None:
+        # CONTRIBUTING.md documents `p<protocol>-<surface>-<slug>` for fixture
+        # IDs, and the schema's pattern only requires lowercase/non-empty. This
+        # per-pack check enforces the documented prefix for protocol-28.
+        for fx in self.fixtures:
+            expected_prefix = f"p{fx.data.get('protocol')}-{fx.data.get('surface')}-"
+            self.assertTrue(
+                str(fx.data.get("id", "")).startswith(expected_prefix),
+                f"{fx.path}: id {fx.data.get('id')!r} does not start with {expected_prefix!r}",
+            )
+
     def test_every_fixture_has_a_source_reference(self) -> None:
         for fx in self.fixtures:
             self.assertTrue(fx.data.get("source_reference"), fx.path)
+
+    def test_every_fixture_starts_with_a_header_comment(self) -> None:
+        for path in validate.find_fixture_files(PACK):
+            first_non_empty = next(
+                (line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()),
+                "",
+            )
+            self.assertTrue(first_non_empty.lstrip().startswith("#"), path)
 
     def test_expected_fixture_ids_are_present_per_surface(self) -> None:
         by_surface: dict[str, set[str]] = {"xdr": set(), "rpc": set(), "soroban": set()}
@@ -90,6 +115,20 @@ class Protocol28PackTests(unittest.TestCase):
     def test_protocol_27_pack_has_no_fixtures_yet(self) -> None:
         p27 = REPO_ROOT / "protocol-27"
         self.assertEqual(validate.find_fixture_files(p27), [])
+
+        # protocol-27/README.md documents the pack as intentionally empty as a
+        # matter of policy (no placeholder fixtures). The *.toml-only check
+        # above cannot see stray non-fixture content — an accidentally
+        # committed scratch file, a draft fixture saved with the wrong
+        # extension, or a leftover subdirectory — so assert the documented
+        # invariant directly: the pack's only file is README.md and every
+        # directory inside it is empty.
+        self.assertEqual(
+            sorted(str(p.relative_to(p27)) for p in p27.rglob("*") if p.is_file()),
+            ["README.md"],
+        )
+        non_empty_dirs = [p for p in p27.rglob("*") if p.is_dir() and any(p.iterdir())]
+        self.assertEqual(non_empty_dirs, [])
 
 
 if __name__ == "__main__":
