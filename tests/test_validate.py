@@ -184,6 +184,26 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'protocol'" in e for e in report.errors))
 
+    def test_rejects_non_positive_protocol(self) -> None:
+        bad = VALID_XDR.replace("protocol = 28", "protocol = 0")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("positive integer" in e for e in report.errors))
+
+    def test_rejects_negative_protocol(self) -> None:
+        bad = VALID_XDR.replace("protocol = 28", "protocol = -1")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("positive integer" in e for e in report.errors))
+
+    def test_rejects_unknown_capability(self) -> None:
+        bad = VALID_XDR + '\nrequired_capabilities = ["not-a-real-capability"]\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("unknown capability" in e for e in report.errors))
+
+    def test_accepts_known_required_capabilities(self) -> None:
+        good = VALID_XDR + '\nrequired_capabilities = ["soroban-contract"]\n'
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [])
+
     def test_rejects_missing_input_file(self) -> None:
         bad = VALID_XDR + '\ninput_file = "does-not-exist.xdr.b64"\n'
         report = self.run_validation({"a.toml": bad})
