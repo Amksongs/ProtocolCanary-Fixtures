@@ -1,10 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/StellarCanary/ProtocolCanary-Fixtures/schemas/fixture-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/ProtocolCanary-Fixtures/main/schemas/fixture-v1.schema.json",
   "title": "Protocol Canary fixture (schema_version 1)",
-  "description": "A single compatibility-assertion fixture consumed by StellarCanary/Protocol-Canary's canary-fixtures loader. This schema mirrors that implementation (see Protocol-Canary's docs/fixture-contract.md); it is a convenience for editor/CI linting in this repository, not an independent specification. On any disagreement, Protocol-Canary's implementation is authoritative.",
+  "description": "A single compatibility-assertion fixture consumed by StellarCanary/Protocol-Canary's canary-fixtures loader. This schema mirrors that implementation (see Protocol-Canary's docs/fixture-contract.md); it is a convenience for editor/CI linting in this repository, not an independent specification. On any disagreement, Protocol-Canary's implementation is authoritative. Note: this top-level object intentionally leaves additionalProperties unset, so unknown top-level fields are permitted (not rejected) — matching tools/validate/validate.py, which performs no unknown-field check. See CONTRIBUTING.md for the rationale.",
   "type": "object",
   "required": ["id", "protocol", "surface", "category", "description"],
+  "$comment": "examples mirrors protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml; keep the two in sync.",
+  "examples": [
+    {
+      "id": "p28-xdr-cap85-external-ref-roundtrip",
+      "protocol": 28,
+      "surface": "xdr",
+      "category": "cap-0085",
+      "description": "ContractExecutable using the CAP-0085 CONTRACT_EXECUTABLE_EXTERNAL_REF case round-trips byte-for-byte",
+      "source_reference": "https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md",
+      "type": "ContractExecutable",
+      "kind": "roundtrip",
+      "value_base64": "AAAAAgAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQAAAAhmbGVldC12MQ=="
+    }
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -34,7 +48,7 @@
     "source_reference": {
       "type": "string",
       "minLength": 1,
-      "description": "An authoritative upstream reference: a CAP identifier/URL, an upstream XDR definition, or an official release/API doc URL. Strongly expected for any protocol-specific fixture (omitting it currently produces a warning, not a validator error)."
+      "description": "An authoritative upstream reference: a CAP identifier/URL, an upstream XDR definition, or an official release/API doc URL. Required for every protocol-specific fixture in this repository: tools/validate/validate.py reports a missing or empty source_reference as an error, so omitting it fails validation and CI."
     },
     "required_capabilities": {
       "type": "array",
@@ -111,7 +125,8 @@
                 "value": {},
                 "expected_type": {
                   "type": "string",
-                  "enum": ["string", "integer", "boolean", "array", "object"]
+                  "enum": ["string", "integer", "boolean", "array", "object"],
+                  "description": "JSON type names accepted for an RPC field-type assertion. Keep this enum in sync with RPC_ASSERT_TYPES in tools/validate/validate.py."
                 }
               }
             }
