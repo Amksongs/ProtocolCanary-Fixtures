@@ -36,7 +36,7 @@ kind = "decode-success"
 value_base64 = "AAAAAA=="
 """
 
-VALID_RPC = """
+RPC_HEADER = """
 id = "p28-rpc-example"
 protocol = 28
 surface = "rpc"
@@ -45,12 +45,16 @@ description = "example"
 source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
 
 method = "get-network"
+"""
 
+RPC_ASSERT_TABLE = """
 [[assert]]
 kind = "field-equals"
 field = "protocolVersion"
 value = 28
 """
+
+VALID_RPC = RPC_HEADER + RPC_ASSERT_TABLE
 
 VALID_SOROBAN = """
 id = "p28-soroban-example"
@@ -343,6 +347,67 @@ method = "get-network"
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("at least one" in e for e in report.errors))
 
+    def test_rpc_fixture_rejects_invalid_method(self) -> None:
+        bad = VALID_RPC.replace('method = "get-network"', 'method = "get-balance"')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("'method'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_empty_assert_array(self) -> None:
+        bad = RPC_HEADER + "\nassert = []\n"
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("non-empty array" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_non_table_assert_entry(self) -> None:
+        bad = RPC_HEADER + '\nassert = ["not-a-table"]\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("assert[0] must be a table" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_invalid_assert_kind(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "not-a-real-kind"
+field = "protocolVersion"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("assert[0].kind" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_missing_assert_field(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-equals"
+value = 28
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("missing required non-empty 'field'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_empty_assert_field(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-equals"
+field = ""
+value = 28
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("missing required non-empty 'field'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_field_equals_without_value(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-equals"
+field = "protocolVersion"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("kind=field-equals requires 'value'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_invalid_expected_type(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-type"
+field = "protocolVersion"
+expected_type = "not-a-real-type"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("assert[0].expected_type" in e for e in report.errors))
     def test_rejects_unrecognized_rpc_assert_kind(self) -> None:
         bad = VALID_RPC.replace('kind = "field-equals"', 'kind = "field-contains"')
         report = self.run_validation({"a.toml": bad})
