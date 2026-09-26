@@ -54,6 +54,10 @@ discussion and diff. New entries must include that link; see
   passing with a printed advisory. `CONTRIBUTING.md`, `SECURITY.md`,
   `README.md` and `schemas/fixture-v1.schema.json` were updated to describe
   the rule as enforced. ([PR #143])
+- Documented the reciprocal RPC type-list maintenance relationship, linked
+  the malformed-input review guidance into the fixture walkthrough, and
+  recorded the current CAP-0085 CLI status and tracked deployment gap.
+  ([PR #176])
 - `schemas/fixture-v1.schema.json` gained a top-level `examples` array
   containing one minimal, schema-valid XDR fixture mirroring
   `protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml`,
@@ -79,7 +83,17 @@ discussion and diff. New entries must include that link; see
   The XDR fixtures above prove the wire representation round-trips; they
   do not exercise an actual deployed externally-managed-executable
   contract fleet end-to-end, which would require deploying and verifying a
-  real Protocol 28 contract using this brand-new executable type.
+  real Protocol 28 contract using this brand-new executable type. The Rust
+  `stellar` CLI **27.1.0** installed while authoring this pack had no
+  supported external-reference deployment flow. The current **28.0.0**
+  release can resolve and invoke existing external references, but its
+  `stellar contract deploy` command still has no direct
+  `--executable-owner`/`--executable-tag` construction option; the draft
+  [`stellar-cli` PR #2659](https://github.com/stellar/stellar-cli/pull/2659)
+  is the upstream candidate to unblock that gap. The exact commands,
+  re-check date, and distinction between reference resolution and direct
+  deployment are recorded in [`docs/protocol-28.md`](docs/protocol-28.md) and
+  tracked by [issue #8](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/8).
   ([757e1e7])
 - `protocol-27/` is intentionally empty; see `protocol-27/README.md`.
   ([757e1e7])
@@ -94,8 +108,8 @@ discussion and diff. New entries must include that link; see
 
 <!-- Link definitions: the pull request or commit that introduced each
      entry above. Commits listed here were pushed directly to `main`
-     without a pull request; PR #97 and PR #143 are the only [Unreleased]
-     entries that originated from pull requests. -->
+     without a pull request; PR #97, PR #143, and PR #176 are the
+     [Unreleased] entries that originated from pull requests. -->
 
 [757e1e7]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/757e1e777489bb5c20e7500b245370de227c66b3
 [5142110]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/51421106999811666502b2e7da7ae3b9e351fd9c
@@ -109,3 +123,4 @@ discussion and diff. New entries must include that link; see
 [806549c]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/806549c1ab8f21dbfd44d5091eb899b776ea5767
 [PR #97]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/97
 [PR #143]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/143
+[PR #176]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/176
