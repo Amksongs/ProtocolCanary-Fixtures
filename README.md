@@ -96,6 +96,18 @@ makes a mixed-protocol directory safe either way.
 | [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. Fixture counts by surface: **4 xdr, 1 rpc, 1 soroban** (6 total). See [`docs/protocol-28.md`](docs/protocol-28.md). |
 | [`protocol-27/`](protocol-27/) | Not yet populated | **0 fixtures.** See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
 
+Pack directories are named **`protocol-<N>`**, where `<N>` is the Stellar
+protocol version the pack targets: a pack for Protocol 28 is
+`protocol-28/`, and the pack for a future Protocol 29 would be
+`protocol-29/`, with every fixture in it setting `protocol = 29` and a
+`docs/protocol-29.md` plus a pack `README.md` alongside it. A pack is
+created only when there is verified upstream behavior to record — the
+same rule that leaves `protocol-27/` empty — not as a placeholder. Only
+the leading `protocol-` pack directories are named this way: the
+directories *inside* a pack (`xdr/`, `rpc/`, `soroban/`, `cap-0083/`) are
+for human navigation only, and are ignored by the loader (see
+[Repository relationship](#repository-relationship)).
+
 ## Fixture format
 
 Every fixture is one TOML file with common metadata plus a surface-specific
