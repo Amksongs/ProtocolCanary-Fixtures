@@ -60,6 +60,17 @@ class Protocol28PackTests(unittest.TestCase):
             relative_path = fx.path.relative_to(PACK)
             self.assertEqual(relative_path.parts[0], fx.data.get("surface"), fx.path)
 
+    def test_fixture_ids_follow_the_p_protocol_surface_convention(self) -> None:
+        # CONTRIBUTING.md documents `p<protocol>-<surface>-<slug>` for fixture
+        # IDs, and the schema's pattern only requires lowercase/non-empty. This
+        # per-pack check enforces the documented prefix for protocol-28.
+        for fx in self.fixtures:
+            expected_prefix = f"p{fx.data.get('protocol')}-{fx.data.get('surface')}-"
+            self.assertTrue(
+                str(fx.data.get("id", "")).startswith(expected_prefix),
+                f"{fx.path}: id {fx.data.get('id')!r} does not start with {expected_prefix!r}",
+            )
+
     def test_every_fixture_has_a_source_reference(self) -> None:
         for fx in self.fixtures:
             self.assertTrue(fx.data.get("source_reference"), fx.path)

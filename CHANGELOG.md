@@ -38,13 +38,12 @@ discussion and diff. New entries must include that link; see
     (SEP-41 `name()` on the reserved native-asset contract), verified live
     against `soroban-testnet.stellar.org`. ([ea8b63b])
 - `docs/protocol-28.md` documenting exactly what this pack checks, what it
-  does not, and why.
+  does not, and why. ([806549c])
 - A fixture-count badge in README.md's badge row, plus `tools/badge/badge.py`,
   a stdlib-only generator/checker that counts fixtures using the same
   discovery rule as the validator and rewrites only the marked region of
   README.md. `make badge` regenerates it; CI runs `--check`, so the number
-  cannot silently drift from the fixture tree.
-  does not, and why. ([806549c])
+  cannot silently drift from the fixture tree. ([ab88ca4])
 
 ### Changed
 
@@ -121,6 +120,7 @@ discussion and diff. New entries must include that link; see
 [ea8b63b]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/ea8b63b5eb46118b8475568c2332f9d43f571ee2
 [c8d8e75]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/c8d8e75b741b35873e8b5074fac6f8321bc94197
 [806549c]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/806549c1ab8f21dbfd44d5091eb899b776ea5767
+[ab88ca4]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/commit/ab88ca4ee03e4e189c003402fe68aa8430411d00
 [PR #97]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/97
 [PR #143]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/143
 [PR #176]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/176

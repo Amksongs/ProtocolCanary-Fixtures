@@ -199,9 +199,13 @@ stellar-canary check --fixtures-dir <checkout-of-this-repo>/protocol-28 --json
 stellar-canary check --fixtures-dir <checkout-of-this-repo> --protocol 28 --json
 ```
 
-Both were run and passed 5/5 against a local `Protocol-Canary` build on
-2026-09-02, confirming this pack is consumable exactly as documented in
-`Protocol-Canary`'s `docs/fixture-contract.md`.
+Both were run on 2026-09-02 against a local `Protocol-Canary` build and
+passed for every fixture in the pack as it stood then, confirming this pack
+is consumable exactly as documented in `Protocol-Canary`'s
+`docs/fixture-contract.md`. This record is deliberately not tied to a
+hardcoded fixture count, so adding a fixture does not make it stale — but a
+newly added fixture is only covered by this record once it has been
+re-verified the same way.
 
 ## Adding more Protocol 28 fixtures
 
