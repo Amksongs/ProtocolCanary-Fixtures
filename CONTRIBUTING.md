@@ -50,7 +50,11 @@ To add one:
 4. **Create deterministic input.** No fixture may depend on ledger state
    that changes between runs (a current ledger sequence, "the latest
    anything") unless the assertion is explicitly scoped as a live-network
-   check and documented as such.
+   check and documented as such. For an XDR `decode-failure` fixture, follow
+   the [malformed-input guidance in `SECURITY.md`](SECURITY.md#parser-safety-in-mind):
+   prefer a specific documented rejection, such as truncation or an invalid
+   discriminant, over arbitrary fuzzing input, and explain the malformation in
+   the fixture's header comment.
 5. **Define an explicit expected result** using the assertion vocabulary
    the target surface actually supports (see "Fixture schema" below) — no
    generic string matching when a typed assertion exists.

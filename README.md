@@ -96,6 +96,18 @@ makes a mixed-protocol directory safe either way.
 | [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. Fixture counts by surface: **4 xdr, 1 rpc, 1 soroban** (6 total). See [`docs/protocol-28.md`](docs/protocol-28.md). |
 | [`protocol-27/`](protocol-27/) | Not yet populated | **0 fixtures.** See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
 
+Pack directories are named **`protocol-<N>`**, where `<N>` is the Stellar
+protocol version the pack targets: a pack for Protocol 28 is
+`protocol-28/`, and the pack for a future Protocol 29 would be
+`protocol-29/`, with every fixture in it setting `protocol = 29` and a
+`docs/protocol-29.md` plus a pack `README.md` alongside it. A pack is
+created only when there is verified upstream behavior to record — the
+same rule that leaves `protocol-27/` empty — not as a placeholder. Only
+the leading `protocol-` pack directories are named this way: the
+directories *inside* a pack (`xdr/`, `rpc/`, `soroban/`, `cap-0083/`) are
+for human navigation only, and are ignored by the loader (see
+[Repository relationship](#repository-relationship)).
+
 ## Fixture format
 
 Every fixture is one TOML file with common metadata plus a surface-specific
@@ -189,21 +201,6 @@ This is structural validation only — it never executes a compatibility
 check itself. CI (`.github/workflows/validate.yml`) runs it, plus
 `python3 -m unittest discover tests` and a fixtures-badge freshness check,
 on every push and pull request.
-
-The commands CI runs are also available as Makefile targets, so you can
-run exactly what CI runs without typing the commands out:
-
-| Command | What it does |
-|---|---|
-| `make validate` | Structural fixture validation only. |
-| `make badge` | Regenerates README.md's fixture-count badge. |
-| `make badge-check` | Fails if that badge is stale (what CI runs). |
-| `make test` | Repository test suite only. |
-| `make check` | All of the above, in CI's order — the same steps as `.github/workflows/validate.yml`, stopping at the first failure. |
-
-`make check` is the quickest way to confirm a contribution passes CI
-before you push; each target runs from the repository root and exits
-non-zero on the first failure, just like CI's steps do.
 
 The commands CI runs are also available as Makefile targets, so you can
 run exactly what CI runs without typing the commands out:

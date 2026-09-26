@@ -125,7 +125,8 @@
                 "value": {},
                 "expected_type": {
                   "type": "string",
-                  "enum": ["string", "integer", "boolean", "array", "object"]
+                  "enum": ["string", "integer", "boolean", "array", "object"],
+                  "description": "JSON type names accepted for an RPC field-type assertion. Keep this enum in sync with RPC_ASSERT_TYPES in tools/validate/validate.py."
                 }
               }
             }
