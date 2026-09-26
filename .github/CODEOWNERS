@@ -1,0 +1,28 @@
+# CODEOWNERS
+#
+# Maps paths in this repository to the GitHub users who should be requested
+# as reviewers on a pull request that touches them. GitHub reads this file
+# from `.github/CODEOWNERS`; the *last* matching pattern wins.
+#
+# Source of truth for ownership is the "Maintainers & Community" section of
+# README.md, which names @Hollujay as the sole maintainer. Update this file
+# whenever that section changes.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: everything in the repository is owned by the maintainer, so every
+# new pull request gets a reviewer automatically — including the ones from
+# first-time contributors who do not know who to request.
+*                       @Hollujay
+
+# Critical paths are listed explicitly so a dedicated reviewer can be added
+# per area later without disturbing the default above.
+
+# Structural validator — the only executable surface in this repository.
+/tools/validate/        @Hollujay
+
+# Fixture JSON schema; changes here can invalidate every existing fixture.
+/schemas/               @Hollujay
+
+# CI, templates, and repository automation.
+/.github/               @Hollujay
