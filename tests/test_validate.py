@@ -107,6 +107,19 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": VALID_SOROBAN})
         self.assertEqual(report.errors, [])
 
+    def test_discovers_fixtures_in_nested_subdirectories(self) -> None:
+        files = {
+            "flat.toml": VALID_XDR,
+            "xdr/cap-0083/nested.toml": VALID_RPC,
+            "xdr/cap-0085/deeper/deepest.toml": VALID_SOROBAN,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            written = {write(root, name, contents) for name, contents in files.items()}
+            self.assertEqual(set(validate.find_fixture_files(root)), written)
+            report = validate.validate_directory(root)
+        self.assertEqual(report.errors, [])
+
     def test_rejects_duplicate_ids(self) -> None:
         other = VALID_XDR.replace(
             'category = "cap-0083"', 'category = "cap-0083-2"'
