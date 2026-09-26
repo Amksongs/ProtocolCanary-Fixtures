@@ -213,6 +213,20 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("does not resolve to an existing file" in e for e in report.errors))
 
+    def test_rejects_empty_input_file(self) -> None:
+        bad = VALID_XDR + '\ninput_file = ""\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("field 'input_file', if present, must be a non-empty string" in e for e in report.errors)
+        )
+
+    def test_rejects_non_string_expected_file(self) -> None:
+        bad = VALID_XDR + '\nexpected_file = 123\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("field 'expected_file', if present, must be a non-empty string" in e for e in report.errors)
+        )
+
     def test_accepts_an_existing_input_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -305,6 +319,13 @@ class ValidatorTests(unittest.TestCase):
         )
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
+
+    def test_rejects_empty_id(self) -> None:
+        bad = VALID_XDR.replace(
+            'id = "p28-xdr-cap83-example"', 'id = ""'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("field 'id' must not be empty" in e for e in report.errors))
 
     def test_rejects_non_table_assert_entry(self) -> None:
         # TOML permits an array element to be a non-table value; validate_rpc_body
@@ -446,6 +467,14 @@ expected_type = "not-a-real-type"
         )
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("expect.kind" in e for e in report.errors))
+
+    def test_soroban_fixture_rejects_non_table_expect(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            "[expect]\nkind = \"simulation-success\"\n",
+            'expect = "simulation-success"\n',
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("'expect' must be a table" in e for e in report.errors))
 
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
         bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"')
