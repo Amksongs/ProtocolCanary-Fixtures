@@ -466,7 +466,98 @@ expected_type = "not-a-real-type"
             'kind = "simulation-success"', 'kind = "simulation-timeout"'
         )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("expect.kind" in e for e in report.errors))
+        errors = [e for e in report.errors if "expect.kind" in e]
+        self.assertEqual(len(errors), 1, report.errors)
+        # The error must name the offending value and enumerate the kinds the
+        # validator does accept, so that neither widening nor narrowing
+        # SOROBAN_EXPECT_KINDS can pass unnoticed.
+        self.assertIn("simulation-timeout", errors[0])
+        for supported in validate.SOROBAN_EXPECT_KINDS:
+            self.assertIn(supported, errors[0])
+
+    def test_soroban_fixture_rejects_missing_source_account(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"\n',
+            "",
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'source_account'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_string_source_account(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"',
+            "source_account = 12345",
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'source_account'" in e and "must be of type str" in e and "int" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_missing_contract_id(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"\n',
+            "",
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'contract_id'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_string_contract_id(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"',
+            'contract_id = true',
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'contract_id'" in e and "must be of type str" in e and "bool" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_missing_function(self) -> None:
+        bad = VALID_SOROBAN.replace('function = "name"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'function'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_string_function(self) -> None:
+        bad = VALID_SOROBAN.replace('function = "name"', 'function = ["name"]')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'function'" in e and "must be of type str" in e and "list" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_missing_sequence_number(self) -> None:
+        bad = VALID_SOROBAN.replace("sequence_number = 1\n", "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'sequence_number'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_integer_sequence_number(self) -> None:
+        bad = VALID_SOROBAN.replace("sequence_number = 1", 'sequence_number = "1"')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'sequence_number'" in e and "must be of type int" in e and "str" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
 
     def test_soroban_fixture_rejects_non_table_expect(self) -> None:
         bad = VALID_SOROBAN.replace(
