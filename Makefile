@@ -5,6 +5,7 @@
 #   make badge        - regenerate README.md's fixture-count badge (tools/badge/badge.py)
 #   make badge-check  - fail if that badge is stale (what CI runs)
 #   make test         - repository test suite (unittest discover tests)
+#   make check-changelog - verify CHANGELOG entry for changed files (tools/validate/check_changelog.py)
 #   make check-links  - check fixture source reference links (tools/validate/check_source_links.py)
 #   make coverage     - test suite under branch coverage of tools/, failing below
 #                       .coveragerc's fail_under (what CI's coverage job runs);
@@ -30,11 +31,13 @@ OLD ?=
 NEW ?=
 FORMAT ?= text
 
-.PHONY: validate badge badge-check test check-links coverage registry records pack check
-.PHONY: validate badge badge-check test check-links coverage registry registry-diff pack check
+.PHONY: validate badge badge-check test check-changelog check-links coverage registry records registry-diff pack check
 
 validate:
 	python3 tools/validate/validate.py
+
+check-changelog:
+	python3 tools/validate/check_changelog.py
 
 check-links:
 	python3 tools/validate/check_source_links.py
