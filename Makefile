@@ -60,6 +60,7 @@ registry:
 
 records:
 	python3 tools/evidence/record_structural.py $(PACK)
+
 registry-diff:
 	@test -n "$(OLD)" && test -n "$(NEW)" || { echo "usage: make registry-diff OLD=REGISTRY NEW=REGISTRY [FORMAT=text|json|markdown]" >&2; exit 2; }
 	python3 tools/registry/diff.py "$(OLD)" "$(NEW)" --format "$(FORMAT)"

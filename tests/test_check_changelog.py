@@ -419,9 +419,10 @@ class TestGitDiffHelper(unittest.TestCase):
         self.assertIsInstance(files, list)
 
     def test_get_git_diff_files_with_origin_prefix_fallback(self) -> None:
-        # origin/HEAD fallback to HEAD
-        files = get_git_diff_files("origin/HEAD")
-        self.assertIsInstance(files, list)
+        mock_res = MagicMock(returncode=0, stdout="CHANGELOG.md\n")
+        with patch("subprocess.run", return_value=mock_res):
+            files = get_git_diff_files("origin/HEAD")
+            self.assertEqual(files, ["CHANGELOG.md"])
 
     def test_get_git_diff_files_not_found(self) -> None:
         with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -439,6 +440,15 @@ class TestGitDiffHelper(unittest.TestCase):
 
 class TestCliInterface(unittest.TestCase):
     """Test CLI invocation, stdin handling, and summary file output."""
+
+    def setUp(self) -> None:
+        self._env_patcher = patch.dict(os.environ, {}, clear=False)
+        self._env_patcher.start()
+        os.environ.pop("PR_LABELS", None)
+        os.environ.pop("GITHUB_EVENT_PATH", None)
+
+    def tearDown(self) -> None:
+        self._env_patcher.stop()
 
     def test_cli_positional_arguments_governed_fail(self) -> None:
         stderr = io.StringIO()
@@ -574,7 +584,7 @@ class TestCliInterface(unittest.TestCase):
 
     def test_cli_summary_file_write_error(self) -> None:
         stderr = io.StringIO()
-        with patch("pathlib.Path.open", side_effect=OSError("disk full")):
+        with patch("tools.validate.check_changelog.build_markdown_summary", side_effect=OSError("disk full")):
             with patch("sys.stderr", stderr):
                 main([
                     "docs/README.md",
