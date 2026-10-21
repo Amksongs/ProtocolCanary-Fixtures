@@ -12,6 +12,87 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/common/atomic_write.py` writes release artifacts atomically, and
+  `tools/pack/pack.py`, `tools/release/manifest.py` and
+  `tools/registry/generate.py` use it for every output, including the
+  `sha256sum`-format checksum file. The bytes of the archive, the manifest,
+  the checksum file and the registry are unchanged; only the way they are
+  published is. A release artifact now appears under its final name only
+  once it is complete: the temporary file is created in the destination
+  directory (so the replacement is on the same filesystem), written, flushed
+  and `fsync`ed, then moved into place with `os.replace`, and the containing
+  directory is `fsync`ed afterwards on POSIX. An interrupted write leaves
+  either no file or the previous complete content, and never a partial file
+  under the final name; the temporary file is removed and the original error
+  propagates. `tests/test_atomic_write.py` covers the failure paths, the
+  replacement of an existing file, concurrent writers, and the SHA-256
+  baselines of the four protocol-28 artifacts, which are byte-for-byte
+  identical to the ones the tools produced before this change. Closes
+  [issue #345](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/345).
+  ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
+- `tests/test_verify_archive_hostile.py` and `tests/hostile_archives.py` add
+  a hostile-archive corpus for `tools/pack/verify_archive.py`. Every input is
+  built locally with the standard library from the real `protocol-28` pack and
+  is deterministic, so the corpus is regenerated rather than downloaded. The
+  corpus covers malformed tar headers, invalid UTF-8 names, NUL bytes in a
+  name, PAX path overrides, FIFO, symbolic and hard link entries, setuid bits,
+  absolute and `..` paths, duplicate and case-fold duplicate paths, GNU long
+  names, GNU sparse entries, truncated headers, truncated member data and
+  truncated gzip streams, concatenated gzip members, trailing bytes after the
+  tar end markers, and extra files at the archive root and inside the pack
+  directory. Each case runs the `verify_archive.py` command line tool and
+  asserts the exit code (0 valid, 1 invalid, 2 unreadable), that no traceback
+  is printed, and that nothing is written outside the verifier's own
+  temporary directory. Every case names the CF-06 clause it exercises and is
+  classified as `rejected`, `accepted` or `policy-decision`. Five cases are
+  accepted today and are listed with the follow-up a maintainer has to make:
+  trailing bytes after the tar end markers, a concatenated gzip member, an
+  extra file at the archive root, an extra file inside the pack directory,
+  and (as a control) a tar header with a wrong magic but a valid checksum.
+  Accepting an archive is not, on its own, evidence of an exploitable
+  problem; it is a question about what the contract says. The tools
+  themselves are unchanged. Closes
+  [issue #346](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/346).
+  ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
+- `tests/test_jsonschema_differential.py` compares
+  `tools/validate/jsonschema_lite.py` with the reference Draft 2020-12
+  implementation from a pinned `jsonschema` development dependency. The
+  instances are the ones the repository produces -- the registry for
+  `protocol-28`, the manifest for the archive built from it, and the
+  checked-in `upstream-matrix.json` -- each mutated one fault at a time from
+  a fixed seed, plus hand-written edge cases for `pattern`, `uniqueItems`,
+  numeric bounds, booleans against integers and `additionalProperties`. A
+  mismatch is reported with the schema name, the JSON Pointer of the instance
+  node, the instance, both verdicts and the seed. The differences that are
+  known and reviewed are recorded in the test module: JSON Schema 2020-12
+  calls `1.0` an integer and compares `const` and `enum` by value, while
+  `jsonschema_lite` requires a Python `int` and compares by type name, so it
+  is stricter in three cases and more permissive in one (`enum` keeps `true`
+  and `1` apart in JSON Schema, but not in `jsonschema_lite`; no schema in
+  scope uses `enum` with a numeric member). A difference that is not on that
+  list fails the test. `requirements-differential.txt` pins the dependencies
+  with the SHA-256 of every published artifact, and
+  `.github/workflows/schema-differential.yml` runs the comparison on manual
+  dispatch and on a schedule, with read-only permissions and actions pinned
+  to commit SHAs. The default test suite installs nothing: the comparison
+  skips itself with a clear message when `jsonschema` is not importable.
+  Closes
+  [issue #347](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/347).
+  ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
+- `tests/test_build_environment.py` adds a regression guard that the
+  archive, the registry and the manifest do not depend on the environment
+  they are built in. The three release tools are run in temporary copies of
+  the repository under different time zones, locales, `PYTHONHASHSEED`
+  values and process umasks; the outputs are compared byte for byte, and the
+  same pack written in reversed and shuffled order is compared as well. The
+  guard covers one operating system and one Python version -- the ones it is
+  run on -- and does not claim cross-operating-system or
+  cross-Python-version reproducibility. The guard is proved to have teeth: a
+  scratch copy of the packer that leaks the time zone into the gzip header is
+  caught, and the production tools are never modified. Closes
+  [issue #349](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/349).
+  ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
+
 - `tools/validate/validate.py` validates Soroban `source_account` and
   `contract_id` with a standard-library-only strkey decoder (RFC 4648 unpadded base32,
   CRC16-XModem checksum, G.../C... version byte) and requires `function` to
@@ -444,6 +525,19 @@ discussion and diff. New entries must include that link; see
   ([PR #316])
 
 ### Known gaps
+
+- **The archive acceptance policy has open questions.** The hostile-archive
+  corpus added in [PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409)
+  (issue
+  [#346](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/346))
+  records five archives that `tools/pack/verify_archive.py` accepts today and
+  that CF-06 does not settle: bytes after the tar end-of-archive markers, a
+  concatenated gzip member, a file at the archive root that is not part of the
+  pack, a file inside the pack directory that is not part of the pack, and a
+  tar header with a wrong magic but a valid checksum. A maintainer has to
+  decide what the contract says about each; the corpus and the verifier are
+  unchanged until then. The corpus is the record of what was observed, not a
+  claim that any of these is exploitable. ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
 
 - **CAP-0086 is not covered.** CAP-0086 (sparse-map host functions) has no
   corresponding top-level XDR type — testing it for real requires a

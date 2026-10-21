@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,7 +25,18 @@ from tools.common.atomic_write import write_bytes_atomic
 
 
 # Resolve paths relative to the repository root
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# A full 40-character lowercase git commit hash: tools/release/manifest.py
+# requires one, and rejects anything shorter.
+REVISION = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _temp_files(directory: str) -> list[str]:
+    """The helper's temporary files that are still in ``directory``."""
+    return sorted(
+        name for name in os.listdir(directory) if name.startswith(".canary-tmp-")
+    )
 
 
 class BasicWriteTest(unittest.TestCase):
@@ -37,33 +49,58 @@ class BasicWriteTest(unittest.TestCase):
 
     def test_write_new_file(self) -> None:
         """A new file is created with the exact data."""
-        path = os.path.join(self.dir, "new.txt")
+        path = Path(self.dir) / "new.txt"
         write_bytes_atomic(path, b"hello world")
-        self.assertTrue(os.path.isfile(path))
-        with open(path, "rb") as f:
-            self.assertEqual(f.read(), b"hello world")
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.read_bytes(), b"hello world")
 
     def test_overwrite_existing(self) -> None:
         """An existing file is replaced atomically."""
-        path = os.path.join(self.dir, "test.txt")
-        # First write
+        path = Path(self.dir) / "test.txt"
         write_bytes_atomic(path, b"first")
-        self.assertEqual(open(path, "rb").read(), b"first")
-        # Second write
+        self.assertEqual(path.read_bytes(), b"first")
         write_bytes_atomic(path, b"second")
-        self.assertEqual(open(path, "rb").read(), b"second")
+        self.assertEqual(path.read_bytes(), b"second")
 
     def test_atomicity_on_success(self) -> None:
-        """On success the final path has either old or new complete content."""
-        path = os.path.join(self.dir, "atomic.txt")
-        # Write initial content
+        """On success the final path has the complete new content."""
+        path = Path(self.dir) / "atomic.txt"
         write_bytes_atomic(path, b"old content")
-        # Verify old content is there
-        self.assertEqual(open(path, "rb").read(), b"old content")
-        # Replace with new content
+        self.assertEqual(path.read_bytes(), b"old content")
         write_bytes_atomic(path, b"new content")
-        # New content should be there, old is gone
-        self.assertEqual(open(path, "rb").read(), b"new content")
+        self.assertEqual(path.read_bytes(), b"new content")
+
+    def test_bytes_like_input(self) -> None:
+        """bytearray input is written exactly like bytes."""
+        path = Path(self.dir) / "bytearray.bin"
+        write_bytes_atomic(path, bytearray(b"\x00binary\xff"))
+        self.assertEqual(path.read_bytes(), b"\x00binary\xff")
+
+    def test_partial_writes_are_completed(self) -> None:
+        """A short os.write is retried until every byte is written."""
+        path = Path(self.dir) / "partial.bin"
+        data = b"x" * 10_000
+        real_write = os.write
+        calls = 0
+
+        def short_write(fd: int, view) -> int:
+            nonlocal calls
+            calls += 1
+            # Write at most 7 bytes per call, like a short write on a pipe.
+            return real_write(fd, bytes(view)[:7])
+
+        with mock.patch("tools.common.atomic_write.os.write", side_effect=short_write):
+            write_bytes_atomic(path, data)
+
+        self.assertGreater(calls, 1)
+        self.assertEqual(path.read_bytes(), data)
+        self.assertEqual(_temp_files(self.dir), [])
+
+    def test_empty_data_creates_an_empty_file(self) -> None:
+        """An empty artifact is published, not skipped."""
+        path = Path(self.dir) / "empty.bin"
+        write_bytes_atomic(path, b"")
+        self.assertEqual(path.read_bytes(), b"")
 
 
 class FailureSafetyTest(unittest.TestCase):
@@ -74,123 +111,168 @@ class FailureSafetyTest(unittest.TestCase):
         self.addCleanup(self._tmpdir.cleanup)
         self.dir = self._tmpdir.name
 
-    def test_error_during_write_removes_temp(self) -> None:
-        """If writing data fails, no temp file remains and final path is unchanged."""
-        path = os.path.join(self.dir, "partial.txt")
-        # The file should not exist initially (or be absent after error)
-        # if it existed before, it should retain its original content
-        original_content = b"original data"
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                original_content = f.read()
+    def test_error_during_write_preserves_the_old_content(self) -> None:
+        """If writing data fails, the previous file is untouched."""
+        path = Path(self.dir) / "partial.txt"
+        write_bytes_atomic(path, b"original data")
 
-        # Patch os.write to fail after first byte
-        with mock.patch("tools.common.atomic_write.os.write") as mock_write:
-            mock_write.side_effect = OSError("write failed after 1 byte")
+        with mock.patch(
+            "tools.common.atomic_write.os.write",
+            side_effect=OSError("write failed after 1 byte"),
+        ):
+            with self.assertRaises(OSError):
+                write_bytes_atomic(path, b"data that will fail")
 
-            # Patch os.fsync and os.close to no-ops (but NOT os.unlink)
-            # The implementation will call os.unlink to clean up
-            with mock.patch("tools.common.atomic_write.os.fsync"), \
-                 mock.patch("tools.common.atomic_write.os.close"):
-                try:
-                    write_bytes_atomic(path, b"data that will fail")
-                    self.fail("Expected OSError to be raised")
-                except OSError:
-                    pass  # Expected
+        self.assertEqual(path.read_bytes(), b"original data")
+        self.assertEqual(_temp_files(self.dir), [])
 
-        # After the error, the original path should still have its original content
-        # (or be absent if it never existed), and no temp file should remain
-        # because the implementation calls os.unlink in the except block
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                content = f.read()
-                # Should still have original content, not partial
-        # No temp file should remain in the directory (implementation cleans up)
-        tmp_files = [f for f in os.listdir(self.dir) if f.startswith(".canary-tmp")]
-        self.assertEqual(len(tmp_files), 0, f"Temp files remained after failed write: {tmp_files}")
+    def test_error_during_write_leaves_no_new_file(self) -> None:
+        """A failed first write does not create the final path."""
+        path = Path(self.dir) / "never-written.txt"
+
+        with mock.patch(
+            "tools.common.atomic_write.os.write",
+            side_effect=OSError("write failed"),
+        ):
+            with self.assertRaises(OSError):
+                write_bytes_atomic(path, b"data")
+
+        self.assertFalse(path.exists())
+        self.assertEqual(_temp_files(self.dir), [])
 
     def test_error_during_fsync_removes_temp(self) -> None:
         """If fsync fails, temp file is cleaned up and target is unchanged."""
-        path = os.path.join(self.dir, "fsync-test.txt")
-        # Write original content first
+        path = Path(self.dir) / "fsync-test.txt"
         write_bytes_atomic(path, b"original")
-        self.assertEqual(open(path, "rb").read(), b"original")
+        self.assertEqual(path.read_bytes(), b"original")
 
-        # Patch os.fsync to fail
-        with mock.patch("tools.common.atomic_write.os.fsync", side_effect=OSError("fsync failed")):
-            # Also patch os.close to not raise
-            with mock.patch("tools.common.atomic_write.os.close", side_effect=OSError("close failed")):
-                try:
-                    write_bytes_atomic(path, b"new data")
-                    self.fail("Expected OSError to be raised")
-                except OSError:
-                    pass  # Expected
+        with mock.patch(
+            "tools.common.atomic_write.os.fsync",
+            side_effect=OSError("fsync failed"),
+        ):
+            with self.assertRaises(OSError):
+                write_bytes_atomic(path, b"new data")
 
-        # After the error, the original content should be preserved
-        self.assertEqual(open(path, "rb").read(), b"original")
-        # No temp file should remain
-        tmp_files = [f for f in os.listdir(self.dir) if f.startswith(".canary-tmp")]
-        self.assertEqual(len(tmp_files), 0, f"Temp files remained after fsync failure: {tmp_files}")
+        self.assertEqual(path.read_bytes(), b"original")
+        self.assertEqual(_temp_files(self.dir), [])
 
     def test_error_during_replace_removes_temp(self) -> None:
         """If os.replace fails, temp file is cleaned up and target is unchanged."""
-        path = os.path.join(self.dir, "replace-test.txt")
-        # Write original content first
+        path = Path(self.dir) / "replace-test.txt"
         write_bytes_atomic(path, b"original")
-        self.assertEqual(open(path, "rb").read(), b"original")
+        self.assertEqual(path.read_bytes(), b"original")
 
-        # Patch os.replace to fail
-        with mock.patch("tools.common.atomic_write.os.replace", side_effect=OSError("replace failed")):
-            try:
+        with mock.patch(
+            "tools.common.atomic_write.os.replace",
+            side_effect=OSError("replace failed"),
+        ):
+            with self.assertRaises(OSError):
                 write_bytes_atomic(path, b"new data")
-                self.fail("Expected OSError to be raised")
-            except OSError:
-                pass  # Expected
 
-        # After the error, the original content should be preserved
-        self.assertEqual(open(path, "rb").read(), b"original")
-        # No temp file should remain
-        tmp_files = [f for f in os.listdir(self.dir) if f.startswith(".canary-tmp")]
-        self.assertEqual(len(tmp_files), 0, f"Temp files remained after replace failure: {tmp_files}")
+        self.assertEqual(path.read_bytes(), b"original")
+        self.assertEqual(_temp_files(self.dir), [])
 
+    def test_error_during_close_removes_temp(self) -> None:
+        """A failing close does not leave the final path changed."""
+        path = Path(self.dir) / "close-test.txt"
+        write_bytes_atomic(path, b"original")
 
-class DirectoryFsyncTest(unittest.TestCase):
-    """Test that directory fsync happens on POSIX."""
+        with mock.patch(
+            "tools.common.atomic_write.os.close",
+            side_effect=OSError("close failed"),
+        ):
+            with self.assertRaises(OSError):
+                write_bytes_atomic(path, b"new data")
 
-    def setUp(self) -> None:
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmpdir.cleanup)
-        self.dir = self._tmpdir.name
-
-    def test_directory_fsync_on_posix(self) -> None:
-        """Verify the function works without error (directory fsync is best-effort)."""
-        path = os.path.join(self.dir, "dir-fsync-test.txt")
-        write_bytes_atomic(path, b"test data")
-        # If we get here without error, the function worked
-        self.assertTrue(os.path.isfile(path))
-        with open(path, "rb") as f:
-            self.assertEqual(f.read(), b"test data")
+        self.assertEqual(path.read_bytes(), b"original")
+        self.assertEqual(_temp_files(self.dir), [])
 
 
 class TempFileLocationTest(unittest.TestCase):
-    """Test that temp file is in the same directory as the target."""
+    """The temp file is next to the target, so os.replace cannot cross filesystems."""
 
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
         self.dir = self._tmpdir.name
 
-    def test_temp_file_same_directory(self) -> None:
-        """The temp file is created in the target directory, not a system temp dir."""
-        path = os.path.join(self.dir, "same-dir-test.txt")
-        write_bytes_atomic(path, b"content")
-        # List all files in the directory including hidden ones
-        all_files = os.listdir(self.dir)
-        # There should be our target file
-        self.assertIn("same-dir-test.txt", all_files)
-        # During execution, the temp file is in the same directory
-        # After completion, it should be replaced/cleaned up
-        # We verify the function doesn't crash
+    def test_temp_file_is_in_the_target_directory(self) -> None:
+        """The path handed to os.replace is in the destination directory."""
+        path = Path(self.dir) / "same-dir-test.txt"
+        seen: list[str] = []
+        real_replace = os.replace
+
+        def record(source, destination) -> None:
+            seen.append(str(source))
+            real_replace(source, destination)
+
+        with mock.patch(
+            "tools.common.atomic_write.os.replace", side_effect=record
+        ):
+            write_bytes_atomic(path, b"content")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(os.path.dirname(seen[0]), self.dir)
+        self.assertEqual(path.read_bytes(), b"content")
+
+    def test_relative_path_uses_the_current_directory(self) -> None:
+        """A bare filename is written atomically in the current directory."""
+        previous = os.getcwd()
+        self.addCleanup(os.chdir, previous)
+        os.chdir(self.dir)
+        write_bytes_atomic("relative.txt", b"relative")
+        self.assertEqual((Path(self.dir) / "relative.txt").read_bytes(), b"relative")
+        self.assertEqual(_temp_files(self.dir), [])
+
+    def test_directory_open_failure_is_best_effort(self) -> None:
+        """A platform that cannot open a directory still gets the file."""
+        path = Path(self.dir) / "no-dir-fsync.txt"
+        real_open = os.open
+        directory_flag = getattr(os, "O_DIRECTORY", 0)
+
+        def open_without_directories(target, flags, *args, **kwargs):
+            # The temporary file is opened for writing; the directory fsync
+            # opens the destination directory and is allowed to fail.
+            if flags & (os.O_RDONLY | directory_flag) == flags and os.path.isdir(target):
+                raise OSError("directories cannot be opened")
+            return real_open(target, flags, *args, **kwargs)
+
+        with mock.patch(
+            "tools.common.atomic_write.os.open", side_effect=open_without_directories
+        ):
+            write_bytes_atomic(path, b"content")
+
+        self.assertEqual(path.read_bytes(), b"content")
+        self.assertEqual(_temp_files(self.dir), [])
+
+    def test_concurrent_writers_never_produce_a_mixture(self) -> None:
+        """Two writers to one path leave one complete artifact, never a mix."""
+        path = Path(self.dir) / "concurrent.txt"
+        first = b"A" * 200_000
+        second = b"B" * 200_000
+        errors: list[BaseException] = []
+        start = threading.Barrier(2)
+
+        def writer(data: bytes) -> None:
+            try:
+                start.wait(timeout=10)
+                for _ in range(20):
+                    write_bytes_atomic(path, data)
+            except BaseException as error:  # pragma: no cover - reported below
+                errors.append(error)
+
+        threads = [
+            threading.Thread(target=writer, args=(first,)),
+            threading.Thread(target=writer, args=(second,)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+            self.assertFalse(thread.is_alive(), "a concurrent writer did not finish")
+
+        self.assertEqual(errors, [])
+        self.assertIn(path.read_bytes(), (first, second))
+        self.assertEqual(_temp_files(self.dir), [])
 
 
 class ToolOutputConsistencyTest(unittest.TestCase):
@@ -205,65 +287,155 @@ class ToolOutputConsistencyTest(unittest.TestCase):
         """Build the protocol-28 pack and verify the archive is produced."""
         dist_dir = os.path.join(self._tmpdir.name, "dist")
         os.makedirs(dist_dir, exist_ok=True)
-        # Run pack as a module
         result = subprocess.run(
-            [sys.executable, "-m", "tools.pack.pack", "protocol-28", "--version", "1.0.0", "--output-dir", dist_dir],
+            [sys.executable, "tools/pack/pack.py", "protocol-28", "--version", "1.0.0",
+             "--output-dir", dist_dir],
             cwd=self.repo_root,
             capture_output=True,
             text=True,
         )
         self.assertEqual(result.returncode, 0, f"pack.py failed: {result.stderr}")
-        # Verify the archive was written
         archive = os.path.join(dist_dir, "protocolcanary-fixtures-1.0.0.tar.gz")
         self.assertTrue(os.path.isfile(archive), f"Archive not found at {archive}")
+        self.assertEqual(_temp_files(dist_dir), [])
 
     def test_manifest_produces_file(self) -> None:
         """Build the manifest and verify it's produced."""
         dist_dir = os.path.join(self._tmpdir.name, "dist")
         os.makedirs(dist_dir, exist_ok=True)
 
-        # First build the archive
         subprocess.run(
-            [sys.executable, "-m", "tools.pack.pack", "protocol-28", "--version", "1.0.0", "--output-dir", dist_dir],
+            [sys.executable, "tools/pack/pack.py", "protocol-28", "--version", "1.0.0",
+             "--output-dir", dist_dir],
             cwd=self.repo_root,
             capture_output=True,
             text=True,
+            check=True,
         )
 
-        # Then build the manifest
         archive = os.path.join(dist_dir, "protocolcanary-fixtures-1.0.0.tar.gz")
         manifest_path = os.path.join(dist_dir, "protocolcanary-fixtures-1.0.0.manifest.json")
         result = subprocess.run(
-            [sys.executable, "-m", "tools.release.manifest", str(archive), "--revision", "abc123", "--engine", "0.2.0", "--output", manifest_path],
+            [sys.executable, "tools/release/manifest.py", str(archive),
+             "--revision", REVISION, "--engine", "0.2.0",
+             "--output", manifest_path],
             cwd=self.repo_root,
             capture_output=True,
             text=True,
         )
         self.assertEqual(result.returncode, 0, f"manifest.py failed: {result.stderr}")
         self.assertTrue(os.path.isfile(manifest_path), f"Manifest not found at {manifest_path}")
+        self.assertEqual(_temp_files(dist_dir), [])
 
     def test_registry_produces_file(self) -> None:
         """Build the registry and verify it's produced."""
         dist_dir = os.path.join(self._tmpdir.name, "dist")
         os.makedirs(dist_dir, exist_ok=True)
 
-        # First build the archive
-        subprocess.run(
-            [sys.executable, "-m", "tools.pack.pack", "protocol-28", "--version", "1.0.0", "--output-dir", dist_dir],
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-        )
-
-        # Then build the registry
         result = subprocess.run(
-            [sys.executable, "-m", "tools.registry.generate", "protocol-28", "--output", os.path.join(dist_dir, "registry-v1.json")],
+            [sys.executable, "tools/registry/generate.py", "protocol-28",
+             "--output", os.path.join(dist_dir, "registry-v1.json")],
             cwd=self.repo_root,
             capture_output=True,
             text=True,
         )
         self.assertEqual(result.returncode, 0, f"generate.py failed: {result.stderr}")
-        self.assertTrue(os.path.isfile(os.path.join(dist_dir, "registry-v1.json")), "Registry not found")
+        self.assertTrue(
+            os.path.isfile(os.path.join(dist_dir, "registry-v1.json")),
+            "Registry not found",
+        )
+        self.assertEqual(_temp_files(dist_dir), [])
+
+
+class BaselineHashTest(unittest.TestCase):
+    """The release artifacts must stay byte-for-byte identical (F-081).
+
+    These are the SHA-256 hashes the four protocol-28 release artifacts had
+    *before* the atomic-write change. The atomic write must not alter a
+    single byte of any of them: it changes how the bytes reach the disk, not
+    which bytes they are. A change here is a release-integrity regression --
+    a consumer pinning these hashes would break, and a consumer verifying a
+    checksum against a half-written archive would be defeated.
+
+    The values were recorded by building the same four artifacts from
+    ``upstream/main`` at ec10f95, before this branch changed any tool.
+
+    Recompute them with:
+        python3 tools/pack/pack.py protocol-28 --version 1.0.0 --output-dir D
+        python3 tools/release/manifest.py D/protocolcanary-fixtures-1.0.0.tar.gz \\
+            --revision 0123456789abcdef0123456789abcdef01234567 --engine 0.2.0 \\
+            --output D/protocolcanary-fixtures-1.0.0.manifest.json \\
+            --sha256-file D/protocolcanary-fixtures-1.0.0.tar.gz.sha256
+        python3 tools/registry/generate.py protocol-28 --output D/registry-v1.json
+    """
+
+    BASELINE = {
+        "protocolcanary-fixtures-1.0.0.tar.gz":
+            "c99ca009ed6ad3c167dae981632f647f47894d7a385d49dfea760f600de30f24",
+        "protocolcanary-fixtures-1.0.0.manifest.json":
+            "7bd6ee88bb4c6340a9411be041bd45466730d4bc078ec416958ed5844229b308",
+        "protocolcanary-fixtures-1.0.0.tar.gz.sha256":
+            "dd493f07b2f8eded446684e433c0350bb5b87c23eebd4820e23b15bc2388533f",
+        "registry-v1.json":
+            "2ed13e6509f1be7baf37592abda93d7cdb30492b3f02f3f92cb4ccc2f19c001f",
+    }
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.dist = Path(self._tmpdir.name)
+
+    def run_tool(self, *args: str) -> subprocess.CompletedProcess:
+        result = subprocess.run(
+            [sys.executable, *args],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, f"{args[0]} failed: {result.stderr}")
+        return result
+
+    def build_artifacts(self) -> None:
+        """Produce the four release artifacts in a temporary directory."""
+        self.run_tool(
+            "tools/pack/pack.py", "protocol-28",
+            "--version", "1.0.0", "--output-dir", str(self.dist),
+        )
+        archive = self.dist / "protocolcanary-fixtures-1.0.0.tar.gz"
+        self.run_tool(
+            "tools/release/manifest.py", str(archive),
+            "--revision", REVISION, "--engine", "0.2.0",
+            "--output", str(self.dist / "protocolcanary-fixtures-1.0.0.manifest.json"),
+            "--sha256-file", str(self.dist / "protocolcanary-fixtures-1.0.0.tar.gz.sha256"),
+        )
+        self.run_tool(
+            "tools/registry/generate.py", "protocol-28",
+            "--output", str(self.dist / "registry-v1.json"),
+        )
+
+    def test_the_release_artifacts_match_the_baseline_hashes(self) -> None:
+        """Every protocol-28 release artifact keeps its pre-change SHA-256."""
+        self.build_artifacts()
+
+        for name, expected in self.BASELINE.items():
+            with self.subTest(artifact=name):
+                path = self.dist / name
+                self.assertTrue(path.is_file(), f"{name} was not produced")
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                self.assertEqual(
+                    actual, expected,
+                    f"{name} changed: the atomic write must not alter any byte",
+                )
+        self.assertEqual(_temp_files(str(self.dist)), [])
+
+    def test_the_checksum_file_names_the_archive_hash(self) -> None:
+        """The manifest checksum file pins the archive's own SHA-256."""
+        self.build_artifacts()
+        expected = self.BASELINE["protocolcanary-fixtures-1.0.0.tar.gz"]
+        line = (self.dist / "protocolcanary-fixtures-1.0.0.tar.gz.sha256").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(expected, line)
 
 
 if __name__ == "__main__":

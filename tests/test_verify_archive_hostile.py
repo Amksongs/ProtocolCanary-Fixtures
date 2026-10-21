@@ -1,206 +1,287 @@
-"""Tests for hostile archive corpus (F-070 / issue #346).
+"""The hostile-archive corpus for tools/pack/verify_archive.py (F-070 / issue #346).
 
-Standard-library only: the CI `validate` job runs `unittest discover` on a bare
-interpreter.
+Every case is built locally, from the real ``protocol-28`` pack, with the
+standard library only: nothing is downloaded, and the same input always gives
+the same archive bytes. The corpus is run against the ``verify_archive.py``
+command line tool, so the exit code, the message and the files left on disk
+are the ones a consumer would see.
 
-Run with: python3 -m unittest discover tests
+For every case the test records:
+
+* the CF-06 clause the case exercises;
+* the classification of the observed behaviour -- ``rejected`` when the
+  verifier refuses the archive, ``accepted`` when it accepts the archive and
+  the contract permits it, and ``policy-decision`` when it accepts the
+  archive but the contract does not settle the question;
+* the exit code the verifier returns.
+
+The cases classified ``policy-decision`` are listed with the follow-up a
+maintainer has to make. Accepting an archive is not, on its own, evidence of
+an exploitable problem: it is a question about what the contract says, and
+the corpus exists to put that question in front of a maintainer.
+
+The tools are not changed by this corpus. ``tools/pack/verify_archive.py`` and
+``tools/pack/pack.py`` are the code under test, and the corpus only builds
+inputs for them.
+
+Run with: python3 -m unittest tests.test_verify_archive_hostile
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
-import json
 import os
 import subprocess
 import sys
-import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from unittest import mock
 
-# Add tests directory to path so we can import pack_support
+REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import pack_support as support  # noqa: E402
-verify = support.verify_archive  # noqa: E402
+import hostile_archives as corpus  # noqa: E402
 
-TEMP_PREFIX = "canary-pack-verify-"
+VERIFY = REPO_ROOT / "tools" / "pack" / "verify_archive.py"
+
+# The whole corpus has to finish well inside the CI job. The limit is a
+# guard against a case that turns into a decompression or extraction bomb.
+TIME_LIMIT_SECONDS = 120
 
 
-def leftover_directories() -> set[str]:
-    return {n for n in os.listdir(tempfile.gettempdir()) if n.startswith(TEMP_PREFIX)}
+def _verify_directories() -> set[str]:
+    """The extraction directories the verifier is supposed to clean up."""
+    return {
+        name
+        for name in os.listdir(tempfile.gettempdir())
+        if name.startswith("canary-pack-verify-")
+    }
 
 
-class HostileArchiveBase(unittest.TestCase):
+def _repository_snapshot() -> dict[str, int]:
+    """The size of every file in the repository, so a write would show."""
+    snapshot: dict[str, int] = {}
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        if relative.startswith(".git/") or "__pycache__" in relative:
+            continue
+        try:
+            snapshot[relative] = path.stat().st_size
+        except OSError:
+            continue
+    return snapshot
+
+
+class HostileArchiveCorpusTests(unittest.TestCase):
+    """Run every case of the corpus against the verifier."""
+
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory(prefix="canary-hostile-corpus-")
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
-        self.before = leftover_directories()
+        self.work = self.root / "work"
+        self.work.mkdir()
+        self.before_directories = _verify_directories()
+        self.before_repository = _repository_snapshot()
 
     def tearDown(self) -> None:
-        self.assertEqual(leftover_directories(), self.before)
+        # The verifier must not leave an extraction directory behind.
+        self.assertEqual(
+            _verify_directories(),
+            self.before_directories,
+            "the verifier left an extraction directory behind",
+        )
 
-    def valid_archive(self) -> Path:
-        support.write_pack(self.root)
-        return support.pack.build_archive(
-            self.root / "pack", self.root / "out", "1.0.0"
-        ).path
+    def _build(self, case) -> Path:
+        """Build one case in a directory of its own."""
+        directory = self.work / case.name
+        directory.mkdir(exist_ok=True)
+        return case.build(directory)
 
-    def hostile(self, extra, name: str = "hostile.tar.gz") -> Path:
-        entries = support.valid_members(self.root / "src") + extra
-        return support.tar_gz(entries, self.root / name)
+    def _run(self, archive: Path) -> subprocess.CompletedProcess:
+        environment = os.environ.copy()
+        # Keep the repository tree free of __pycache__ directories, so the
+        # "nothing was written outside the destination" check stays exact.
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        return subprocess.run(
+            [sys.executable, str(VERIFY), str(archive)],
+            cwd=str(self.work),
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
 
+    def test_corpus_cases(self) -> None:
+        """Each case gives the expected exit code, without a traceback."""
+        started = time.monotonic()
+        for case in corpus.CASES:
+            with self.subTest(case=case.name):
+                archive = self._build(case)
+                self.assertTrue(archive.is_file(), f"{case.name} produced no archive")
+                result = self._run(archive)
+                self.assertNotIn(
+                    "Traceback (most recent call last)",
+                    result.stderr,
+                    f"{case.name} made the verifier crash:\n{result.stderr}",
+                )
+                self.assertIn(
+                    result.returncode,
+                    (0, 1, 2),
+                    f"{case.name} returned an unexpected exit code",
+                )
+                self.assertEqual(
+                    result.returncode,
+                    case.exit_code,
+                    f"{case.name}: expected exit code {case.exit_code}, got "
+                    f"{result.returncode}\n{result.stdout}{result.stderr}",
+                )
+        elapsed = time.monotonic() - started
+        self.assertLess(
+            elapsed,
+            TIME_LIMIT_SECONDS,
+            f"the corpus took {elapsed:.1f}s, over the {TIME_LIMIT_SECONDS}s limit",
+        )
 
-class MalformedHeaderTests(HostileArchiveBase):
-    """Malformed TAR headers and structural edge cases."""
+    def test_nothing_is_written_outside_the_destination(self) -> None:
+        """The verifier writes only inside its own temporary directory."""
+        for case in corpus.CASES:
+            with self.subTest(case=case.name):
+                archive = self._build(case)
+                self._run(archive)
+                directory = archive.parent
+                leftovers = sorted(
+                    path.name for path in directory.iterdir() if path.name != archive.name
+                )
+                self.assertEqual(
+                    leftovers,
+                    [],
+                    f"{case.name} left files in the working directory: {leftovers}",
+                )
+        self.assertEqual(
+            _repository_snapshot(),
+            self.before_repository,
+            "the verifier wrote to the repository tree",
+        )
 
-    def test_malformed_tar_header(self) -> None:
-        """A TAR entry with a header that has an invalid size field."""
-        entries = [
-            support.entry("badheader.toml", b"bad data"),
-        ]
-        archive = self.hostile(entries)
-        result = verify.verify_archive(archive)
-        self.assertFalse(result.ok)
+    def test_rejected_cases_say_why(self) -> None:
+        """A refused archive names the problem instead of failing silently."""
+        for case in corpus.CASES:
+            if case.classification != corpus.REJECTED:
+                continue
+            with self.subTest(case=case.name):
+                archive = self._build(case)
+                result = self._run(archive)
+                self.assertEqual(result.returncode, case.exit_code)
+                self.assertTrue(
+                    result.stderr.strip(),
+                    f"{case.name} was refused without a message",
+                )
+                self.assertIn(
+                    "error:",
+                    result.stderr,
+                    f"{case.name} did not report an error:\n{result.stderr}",
+                )
 
-    def test_truncated_tar_end_marker(self) -> None:
-        """A TAR archive truncated right after the end-of-archive marker."""
-        archive = self.valid_archive()
-        data = archive.read_bytes()
-        # Truncate to just before the end marker
-        truncated = data[: max(0, len(data) - 5)]
-        archive_path = self.root / "truncated.tar.gz"
-        archive_path.write_bytes(truncated)
-        # The verifier may or may not raise depending on how much is truncated
-        try:
-            verify.verify_archive(archive_path)
-        except verify.UnreadableArchive:
-            pass  # Expected
-
-
-class InvalidUTF8NameTests(HostileArchiveBase):
-    """Invalid UTF-8 or Windows-forbidden names in TAR entries."""
-
-    def test_invalid_utf8_in_path(self) -> None:
-        """An entry with invalid UTF-8 bytes in the path."""
-        # Use a raw string prefix to avoid Unicode escape interpretation issues
-        entries = [
-            support.entry(r"xdr/inv\xfail.toml", b"data"),
-        ]
-        archive = self.hostile(entries)
-        # Should be reported as a non-portable name issue
-        result = verify.verify_archive(archive)
-        # The exact verdict depends on the verifier's policy;
-        # at minimum it should not crash with a traceback.
-        self.assertIsNotNone(result.ok or result.problems)
-
-    def test_windows_reserved_name_conol(self) -> None:
-        """Windows reserved device name ``CON`` (with any extension)."""
-        entries = [
-            support.entry("xdr/con.toml", b"data"),
-        ]
-        archive = self.hostile(entries)
-        result = verify.verify_archive(archive)
-        self.assertFalse(result.ok)
-        # Should mention a reserved device name
-        combined = "\n".join(result.problems)
-        self.assertIn("reserved", combined.lower() or "device" in combined.lower())
-
-
-class GNULongNameTests(HostileArchiveBase):
-    """GNU-long-file-name records in TAR."""
-
-    def test_gnu_long_name_record(self) -> None:
-        """A TAR entry with a name longer than 100 characters using GNU format."""
-        # Create a very long name (GNU format uses a special marker record)
-        long_name = "xdr/" + "a" * 150 + ".toml"
-        entries = [support.entry(long_name, b"data")]
-        archive = self.hostile(entries)
-        result = verify.verify_archive(archive)
-        # Should not crash; long names may be accepted or rejected per policy
-
-
-class SparseEntryTests(HostileArchiveBase):
-    """Sparse entry records in TAR."""
-
-    def test_sparse_entry_record(self) -> None:
-        """A TAR entry with sparse handling."""
-        # Create an entry using TarInfo approach
-        info = tarfile.TarInfo("xdr/sparse.toml")
-        info.type = tarfile.REGTYPE
-        info.size = 0
-        # Sparse entries are handled at the tar packing level;
-        # verify the archive doesn't crash
-        entries = [support.entry("xdr/sparse.toml", b"data")]
-        archive = self.hostile(entries)
-        result = verify.verify_archive(archive)
-        # Should not raise an unexpected traceback
-
-
-class TrailingBytesTests(HostileArchiveBase):
-    """Trailing data after the TAR end-of-archive marker."""
-
-    def test_trailing_bytes_after_tar_end(self) -> None:
-        """Data appended after the standard TAR end-of-archive two 512-byte blocks."""
-        archive = self.valid_archive()
-        data = archive.read_bytes()
-        # Append some trailing bytes
-        trailing = b"\x00" * 100
-        archive_path = self.root / "trailing.tar.gz"
-        archive_path.write_bytes(data + trailing)
-        result = verify.verify_archive(archive_path)
-        # Should not crash; trailing bytes policy may vary
-
-
-class ExtraFilesTests(HostileArchiveBase):
-    """Extra files beyond the expected pack membership."""
-
-    def test_extra_root_level_file(self) -> None:
-        """An extra file at the root level of the archive."""
-        archive = self.valid_archive()
-        # Add an extra file not in the pack
-        extra_data = b"extra content"
-        archive_path = self.root / "extra-root.tar.gz"
-        # Use support to add an extra file
-        entries = support.valid_members(self.root / "src")
-        entries.append(support.entry("extra.txt", extra_data))
-        archive2 = support.tar_gz(entries, self.root / "extra-root.tar.gz")
-        result = verify.verify_archive(archive_path)
-        # Should be flagged or handled per CF-06 policy
-        # At minimum should not crash
-        self.assertIsNotNone(result.ok or result.problems)
-
-    def test_extra_file_inside_pack_directory(self) -> None:
-        """An extra file inside the pack directory beyond membership."""
-        archive = self.valid_archive()
-        extra_data = b"more content"
-        archive_path = self.root / "extra-inside.tar.gz"
-        entries = support.valid_members(self.root / "src")
-        entries.append(support.entry("extra/extra.txt", extra_data))
-        archive2 = support.tar_gz(entries, self.root / "extra-inside.tar.gz")
-        result = verify.verify_archive(archive_path)
-        # Should not crash; extra-files policy may vary
+    def test_accepted_cases_report_success(self) -> None:
+        """An accepted archive says so, and names what it checked."""
+        for case in corpus.CASES:
+            if case.classification != corpus.ACCEPTED:
+                continue
+            with self.subTest(case=case.name):
+                archive = self._build(case)
+                result = self._run(archive)
+                self.assertEqual(result.returncode, case.exit_code)
+                self.assertIn(
+                    "OK:",
+                    result.stdout,
+                    f"{case.name} was accepted without a success message:\n"
+                    f"{result.stdout}{result.stderr}",
+                )
 
 
-class MixedEdgeCaseTests(HostileArchiveBase):
-    """Multiple edge cases combined."""
+class CorpusDocumentationTests(unittest.TestCase):
+    """The corpus documents itself: clauses, classifications and coverage."""
 
-    def test_multiple_hostile_entries(self) -> None:
-        """Combining several hostile features in one archive."""
-        entries = [
-            support.entry("../escape.toml", b"x"),
-            support.entry("xdr/con.toml", b"y"),
-            support.entry("xdr/bad./f.toml", b"z"),
-        ]
-        archive = self.hostile(entries)
-        result = verify.verify_archive(archive)
-        # Should refuse the archive, not crash
-        self.assertFalse(result.ok)
-        # Should have problems reported
-        self.assertTrue(result.problems)
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="canary-hostile-docs-")
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def test_every_case_is_classified(self) -> None:
+        for case in corpus.CASES:
+            with self.subTest(case=case.name):
+                self.assertIn(case.classification, corpus.CLASSIFICATIONS)
+                self.assertTrue(case.clauses, f"{case.name} names no CF-06 clause")
+                self.assertTrue(case.description)
+                self.assertTrue(
+                    case.note or case.required_follow_up,
+                    f"{case.name} has neither a note nor a follow-up",
+                )
+
+    def test_policy_decisions_name_their_follow_up(self) -> None:
+        """A case that needs a maintainer decision says what the decision is."""
+        self.assertTrue(
+            corpus.POLICY_DECISION_CASES,
+            "the corpus has no case that needs a maintainer decision",
+        )
+        for case in corpus.POLICY_DECISION_CASES:
+            with self.subTest(case=case.name):
+                self.assertTrue(
+                    case.required_follow_up,
+                    f"{case.name} needs a decision but does not say which",
+                )
+
+    def test_the_required_attack_shapes_are_covered(self) -> None:
+        """Every shape the issue names is in the corpus."""
+        names = " ".join(case.name for case in corpus.CASES)
+        for shape in corpus.REQUIRED_SHAPES:
+            with self.subTest(shape=shape):
+                self.assertIn(shape, names, f"the corpus has no {shape} case")
+
+    def test_the_corpus_is_deterministic(self) -> None:
+        """Building a case twice gives the same bytes."""
+        for case in corpus.CASES:
+            with self.subTest(case=case.name):
+                first_directory = self.root / "first" / case.name
+                second_directory = self.root / "second" / case.name
+                first_directory.mkdir(parents=True, exist_ok=True)
+                second_directory.mkdir(parents=True, exist_ok=True)
+                first = case.build(first_directory)
+                second = case.build(second_directory)
+                self.assertEqual(
+                    first.read_bytes(),
+                    second.read_bytes(),
+                    f"{case.name} is not deterministic",
+                )
+
+    def test_the_corpus_does_not_change_the_tools(self) -> None:
+        """The tools under test do not know about the corpus."""
+        for relative in ("tools/pack/verify_archive.py", "tools/pack/pack.py"):
+            with self.subTest(tool=relative):
+                source = (REPO_ROOT / relative).read_text(encoding="utf-8")
+                self.assertNotIn("hostile", source)
+                self.assertNotIn("unittest", source)
+
+    def test_the_valid_case_is_the_real_pack(self) -> None:
+        """The baseline case really is the protocol-28 archive."""
+        members = corpus.protocol28_members()
+        self.assertIn("registry.json", members)
+        self.assertTrue(
+            any(name.endswith(".toml") for name in members),
+            "the pack has no fixtures",
+        )
+        with tempfile.TemporaryDirectory(prefix="canary-hostile-baseline-") as directory:
+            archive = corpus._plain(Path(directory), "valid.tar.gz")
+            result = subprocess.run(
+                [sys.executable, str(VERIFY), str(archive)],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("fixture(s)", result.stdout)
 
 
 if __name__ == "__main__":

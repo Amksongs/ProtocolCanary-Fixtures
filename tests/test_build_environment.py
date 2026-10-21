@@ -1,280 +1,384 @@
-"""Build environment regression guard tests (F-071 / issue #349).
+"""Build environment regression guard (F-071 / issue #349).
 
-Verifies that release artifact outputs (archive, registry, manifest) are
-independent of environment variables, file-creation order, and other
-environmental dependencies on the tested platform only.
+The release artifacts -- the archive, the registry and the manifest -- must be
+the same bytes whatever machine builds them. This module is the guard that
+keeps it that way: it runs the three release tools in *temporary copies* of
+the repository and compares the bytes they produce under different
+environments.
 
-Stdlib only: no third-party dependencies. Only covers the tested Python
-version and operating system.
+What is varied:
 
-Run with: python3 -m unittest discover tests
+* the time zone (``TZ``), so a tool that stamped a local time would show;
+* the locale (``LC_ALL``, ``LANG``), so a tool that sorted or formatted with
+  the C library would show;
+* ``PYTHONHASHSEED``, so a tool that let a set or dict decide the order of
+  its output would show;
+* the process umask, so a tool that let the umask decide a file mode would
+  show.
+
+What else is compared:
+
+* the same tool run twice with the same settings, which must give the same
+  bytes;
+* the same pack written in a different order, which must give the same bytes.
+
+Scope: this guard covers **one operating system and one Python version**,
+the ones it is run on. It does not claim cross-operating-system or
+cross-Python-version reproducibility, and a difference it reports has to be
+read as "this platform changed", not "every platform changed".
+
+The guard is proved to have teeth: a scratch copy of the packer is changed so
+that its output depends on the environment, and the guard is expected to
+notice. The production tools are never modified.
+
+Standard library only: the default test suite installs nothing.
+
+Run with: python3 -m unittest tests.test_build_environment
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
-import json
 import os
+import random
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Environment variables commonly varied for reproducibility testing
-COMMON_ENV_VARS = ["PYTHONHASHSEED", "LC_ALL", "LANG"]
+# A full 40-character lowercase git commit hash: tools/release/manifest.py
+# requires one and rejects anything shorter. It is fixed so the manifest does
+# not depend on the checkout the guard runs in.
+REVISION = "0123456789abcdef0123456789abcdef01234567"
 
-# Most common env vars are supported everywhere; just document which we test
-SUPPORTED_ENV_VARS = set(COMMON_ENV_VARS)
+VERSION = "1.0.0"
+ARCHIVE_NAME = f"protocolcanary-fixtures-{VERSION}.tar.gz"
+
+# The files the tools need from the repository.
+COPY_ENTRIES = ("tools", "schemas", "protocol-28")
+
+# The outputs the guard compares.
+OUTPUT_NAMES = ("archive", "registry", "manifest", "sha256")
+
+# The seed of the shuffled file-creation order, so the shuffle is the same on
+# every run.
+ORDER_SEED = 20260921
 
 
-def _compute_sha256(data: bytes) -> str:
-    """Compute SHA-256 hex digest of bytes."""
-    return hashlib.sha256(data).hexdigest()
-
-
-def _compute_sha256_file(path: Path) -> str:
-    """Compute SHA-256 hex digest of a file."""
-    with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
-
-
-def _run_tool(module_name: str, *args: str, env_override: dict | None = None) -> subprocess.CompletedProcess:
-    """Run a tools module as a subprocess and return the result."""
-    env = os.environ.copy()
-    if env_override:
-        env.update(env_override)
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    umask: int | None = None,
+) -> subprocess.CompletedProcess:
+    """Run a tool with the interpreter that runs the tests."""
+    extra: dict = {}
+    if umask is not None and os.name == "posix":
+        extra["umask"] = umask
     return subprocess.run(
-        [sys.executable, "-m", module_name, *args],
-        cwd=str(REPO_ROOT),
+        [sys.executable, *command],
+        cwd=str(cwd),
         capture_output=True,
         text=True,
         env=env,
+        **extra,
     )
 
 
+def copy_repository(destination: Path) -> Path:
+    """A copy of the repository the tools can run in.
+
+    Only the entries the three release tools read are copied: the tests in
+    this module never run the validator or the documentation tools. The copy
+    has no ``.git`` directory, so the tools cannot read the checkout the guard
+    happens to run in, and no stale output from an earlier run comes with it.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "dist")
+    for name in COPY_ENTRIES:
+        shutil.copytree(REPO_ROOT / name, destination / name, ignore=ignore)
+    return destination
+
+
+def _pack_files(pack: Path) -> list[Path]:
+    """Every file of the pack, sorted by path."""
+    return sorted(
+        (path for path in pack.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(pack).as_posix(),
+    )
+
+
+def rewrite_pack_in_order(repository: Path, order: str) -> None:
+    """Write the pack again, in the given creation order.
+
+    ``order`` is ``"normal"``, ``"reversed"`` or ``"shuffled"``. The bytes of
+    the pack do not change; only the order in which the files appear on disk
+    does, which is what a checkout, an unpack or a copy can change.
+    """
+    pack = repository / "protocol-28"
+    files = _pack_files(pack)
+    contents = {path: path.read_bytes() for path in files}
+    if order == "normal":
+        ordered = files
+    elif order == "reversed":
+        ordered = list(reversed(files))
+    elif order == "shuffled":
+        ordered = list(files)
+        random.Random(ORDER_SEED).shuffle(ordered)
+    else:
+        raise ValueError(f"unknown creation order {order!r}")
+    shutil.rmtree(pack)
+    for path in ordered:
+        target = pack / path.relative_to(pack)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(contents[path])
+
+
+def build_outputs(
+    repository: Path,
+    output: Path,
+    *,
+    environment: dict[str, str] | None = None,
+    umask: int | None = None,
+) -> dict[str, bytes]:
+    """Run the three release tools in ``repository`` and collect their bytes."""
+    env = os.environ.copy()
+    env.update(environment or {})
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    output.mkdir(parents=True, exist_ok=True)
+    dist = output / "dist"
+
+    registry = output / "registry.json"
+    result = _run(
+        ["tools/registry/generate.py", "protocol-28", "--output", str(registry)],
+        cwd=repository,
+        env=env,
+        umask=umask,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"the registry generator failed:\n{result.stderr}")
+
+    result = _run(
+        [
+            "tools/pack/pack.py",
+            "protocol-28",
+            "--version",
+            VERSION,
+            "--output-dir",
+            str(dist),
+        ],
+        cwd=repository,
+        env=env,
+        umask=umask,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"the packer failed:\n{result.stderr}")
+
+    archive = dist / ARCHIVE_NAME
+    manifest = output / "manifest.json"
+    checksum = output / "archive.sha256"
+    result = _run(
+        [
+            "tools/release/manifest.py",
+            str(archive),
+            "--revision",
+            REVISION,
+            "--engine",
+            "0.2.0",
+            "--output",
+            str(manifest),
+            "--sha256-file",
+            str(checksum),
+        ],
+        cwd=repository,
+        env=env,
+        umask=umask,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"the manifest generator failed:\n{result.stderr}")
+
+    return {
+        "archive": archive.read_bytes(),
+        "registry": registry.read_bytes(),
+        "manifest": manifest.read_bytes(),
+        "sha256": checksum.read_bytes(),
+    }
+
+
+def available_locales() -> set[str]:
+    """The locales this machine has, or an empty set when it cannot say."""
+    if os.name != "posix":
+        return set()
+    try:
+        result = subprocess.run(
+            ["locale", "-a"], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
 class BuildEnvironmentBase(unittest.TestCase):
-    """Base class for build environment tests."""
+    """A temporary copy of the repository per test."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = tempfile.TemporaryDirectory(prefix="canary-build-env-")
         self.addCleanup(self._tmp.cleanup)
-        self.tmpdir = Path(self._tmp.name)
+        self.root = Path(self._tmp.name)
+        self.counter = 0
 
-    def tearDown(self) -> None:
-        # Ensure no leftover temp directories from verification
-        leftover = {n for n in os.listdir(tempfile.gettempdir())
-                    if n.startswith("canary-pack-verify-")}
-        self.assertEqual(len(leftover), 0, f"Leftover temp dirs: {leftover}")
+    def _repository(self) -> Path:
+        self.counter += 1
+        destination = self.root / f"repo-{self.counter}"
+        return copy_repository(destination)
 
+    def _output(self) -> Path:
+        self.counter += 1
+        return self.root / f"out-{self.counter}"
 
-def _check_env_support(env_var: str) -> bool:
-    """Check if an environment variable is supported on this platform."""
-    return env_var in SUPPORTED_ENV_VARS
-
-
-class ArchiveReproducibilityTests(BuildEnvironmentBase):
-    """Test that archive outputs are reproducible across environment changes."""
-
-    def test_archive_independent_of_pythonhashseed(self) -> None:
-        """Archive should be identical regardless of PYTHONHASHSEED."""
-        if not _check_env_support("PYTHONHASHSEED"):
-            self.skipTest("PYTHONHASHSEED not in supported vars for this test scope")
-
-        dist_dir_0 = self.tmpdir / "hashseed-0"
-        dist_dir_0.mkdir()
-
-        # Run pack with PYTHONHASHSEED=0
-        result1 = _run_tool(
-            "tools.pack.pack", "protocol-28",
-            "--version", "1.0.0", "--output-dir", str(dist_dir_0),
-            env_override={"PYTHONHASHSEED": "0"},
-        )
-        self.assertEqual(result1.returncode, 0,
-                         f"pack failed with PYTHONHASHSEED=0: {result1.stderr}")
-
-        # Run pack with PYTHONHASHSEED=42
-        dist_dir_42 = self.tmpdir / "hashseed-42"
-        dist_dir_42.mkdir()
-        result2 = _run_tool(
-            "tools.pack.pack", "protocol-28",
-            "--version", "1.0.0", "--output-dir", str(dist_dir_42),
-            env_override={"PYTHONHASHSEED": "42"},
-        )
-        self.assertEqual(result2.returncode, 0,
-                         f"pack failed with PYTHONHASHSEED=42: {result2.stderr}")
-
-        # Compare archive files
-        archive_0 = dist_dir_0 / "protocolcanary-fixtures-1.0.0.tar.gz"
-        archive_42 = dist_dir_42 / "protocolcanary-fixtures-1.0.0.tar.gz"
-
-        self.assertTrue(archive_0.exists(), f"Archive not found at {archive_0}")
-        self.assertTrue(archive_42.exists(), f"Archive not found at {archive_42}")
-
-        sha0 = _compute_sha256_file(archive_0)
-        sha42 = _compute_sha256_file(archive_42)
-
-        self.assertEqual(sha0, sha42,
-                         f"Archive differs with PYTHONHASHSEED: {sha0} vs {sha42}")
-
-
-class RegistryReproducibilityTests(BuildEnvironmentBase):
-    """Test that registry outputs are reproducible across environment changes."""
-
-    def test_registry_independent_of_environment(self) -> None:
-        """Registry should produce identical output across repeated runs."""
-        dist_dir = self.tmpdir / "reg-dist"
-        dist_dir.mkdir()
-
-        # Run registry generator
-        result = _run_tool(
-            "tools.registry.generate", "protocol-28",
-            "--output", str(dist_dir / "registry-v1.json"),
-        )
-        self.assertEqual(result.returncode, 0, f"generate failed: {result.stderr}")
-
-        registry_path = dist_dir / "registry-v1.json"
-        self.assertTrue(registry_path.exists())
-
-        # Run again and compare
-        result2 = _run_tool(
-            "tools.registry.generate", "protocol-28",
-            "--output", str(dist_dir / "registry-v2.json"),
-        )
-        self.assertEqual(result2.returncode, 0, f"generate failed second run: {result2.stderr}")
-
-        registry_path2 = dist_dir / "registry-v2.json"
-        self.assertTrue(registry_path2.exists())
-
-        with open(registry_path, "rb") as f:
-            content1 = f.read()
-        with open(registry_path2, "rb") as f:
-            content2 = f.read()
-
-        self.assertEqual(content1, content2,
-                         "Registry output differs between repeated runs")
-
-
-class ManifestReproducibilityTests(BuildEnvironmentBase):
-    """Test that manifest outputs are reproducible across environment changes."""
-
-    def test_manifest_independent_of_environment(self) -> None:
-        """Manifest should produce identical output across environment variations."""
-        dist_dir = self.tmpdir / "man-dist"
-        dist_dir.mkdir()
-
-        # First build an archive
-        archive_dir = self.tmpdir / "archive"
-        archive_dir.mkdir()
-        result = _run_tool(
-            "tools.pack.pack", "protocol-28",
-            "--version", "1.0.0", "--output-dir", str(archive_dir),
-        )
-        self.assertEqual(result.returncode, 0, f"pack failed: {result.stderr}")
-
-        archive = archive_dir / "protocolcanary-fixtures-1.0.0.tar.gz"
-
-        # Build manifest
-        result = _run_tool(
-            "tools.release.manifest", str(archive),
-            "--revision", "abc123", "--engine", "0.2.0",
-            "--output", str(dist_dir / "manifest1.json"),
-        )
-        self.assertEqual(result.returncode, 0, f"manifest failed: {result.stderr}")
-
-        # Run again and compare
-        result2 = _run_tool(
-            "tools.release.manifest", str(archive),
-            "--revision", "abc123", "--engine", "0.2.0",
-            "--output", str(dist_dir / "manifest2.json"),
-        )
-        self.assertEqual(result2.returncode, 0, f"manifest failed second run: {result2.stderr}")
-
-        with open(dist_dir / "manifest1.json", "rb") as f:
-            content1 = f.read()
-        with open(dist_dir / "manifest2.json", "rb") as f:
-            content2 = f.read()
-
-        self.assertEqual(content1, content2,
-                         "Manifest output differs between repeated runs")
-
-
-class FileCreationOrderTests(BuildEnvironmentBase):
-    """Test independence from file-creation order."""
-
-    def test_archive_with_reversed_file_order(self) -> None:
-        """Archive should be identical regardless of fixture file creation order."""
-        dist_dir1 = self.tmpdir / "order1"
-        dist_dir1.mkdir()
-        dist_dir2 = self.tmpdir / "order2"
-        dist_dir2.mkdir()
-
-        # Run pack twice; the tool should produce identical output
-        result1 = _run_tool(
-            "tools.pack.pack", "protocol-28",
-            "--version", "1.0.0", "--output-dir", str(dist_dir1),
-        )
-        result2 = _run_tool(
-            "tools.pack.pack", "protocol-28",
-            "--version", "1.0.0", "--output-dir", str(dist_dir2),
+    def _build(
+        self,
+        repository: Path | None = None,
+        *,
+        environment: dict[str, str] | None = None,
+        umask: int | None = None,
+    ) -> dict[str, bytes]:
+        if repository is None:
+            repository = self._repository()
+        return build_outputs(
+            repository, self._output(), environment=environment, umask=umask
         )
 
-        self.assertEqual(result1.returncode, 0, f"pack run 1 failed: {result1.stderr}")
-        self.assertEqual(result2.returncode, 0, f"pack run 2 failed: {result2.stderr}")
-
-        archive1 = dist_dir1 / "protocolcanary-fixtures-1.0.0.tar.gz"
-        archive2 = dist_dir2 / "protocolcanary-fixtures-1.0.0.tar.gz"
-
-        self.assertTrue(archive1.exists(), f"Archive 1 not found at {archive1}")
-        self.assertTrue(archive2.exists(), f"Archive 2 not found at {archive2}")
-
-        sha1 = _compute_sha256_file(archive1)
-        sha2 = _compute_sha256_file(archive2)
-
-        self.assertEqual(sha1, sha2,
-                         f"Archive differs with file creation order: {sha1} vs {sha2}")
+    def assertSameOutputs(self, first: dict[str, bytes], second: dict[str, bytes], why: str) -> None:
+        for name in OUTPUT_NAMES:
+            with self.subTest(output=name):
+                self.assertEqual(
+                    first[name],
+                    second[name],
+                    f"{why}: the {name} differs",
+                )
 
 
-class EnvironmentScopeTests(unittest.TestCase):
-    """Document the scope of the regression guard."""
+class EnvironmentVariationTests(BuildEnvironmentBase):
+    """The outputs do not depend on the environment they are built in."""
 
-    def test_document_os_and_python_version(self) -> None:
-        """Document the operating system and Python version this guard covers."""
-        python_version = sys.version.split()[0]
-        platform_name = sys.platform
+    def test_time_zone_does_not_change_the_output(self) -> None:
+        baseline = self._build()
+        for zone in ("UTC", "America/New_York", "Pacific/Kiritimati", "Asia/Tokyo"):
+            with self.subTest(time_zone=zone):
+                outputs = self._build(environment={"TZ": zone})
+                self.assertSameOutputs(baseline, outputs, f"under TZ={zone}")
 
-        # Verify we can access this info; maintainers should document actual results
-        self.assertIsNotNone(python_version)
-        self.assertIsNotNone(platform_name)
+    def test_locale_does_not_change_the_output(self) -> None:
+        baseline = self._build()
+        installed = available_locales()
+        candidates = ["C", "POSIX", "C.UTF-8", "en_US.UTF-8", "de_DE.UTF-8"]
+        checked = 0
+        for locale in candidates:
+            if locale not in installed and locale not in ("C", "POSIX"):
+                # The locale is not installed on this machine, so the tool
+                # would fall back to the C locale and the case would prove
+                # nothing.
+                continue
+            checked += 1
+            with self.subTest(locale=locale):
+                outputs = self._build(environment={"LC_ALL": locale, "LANG": locale})
+                self.assertSameOutputs(baseline, outputs, f"under LC_ALL={locale}")
+        self.assertGreater(checked, 0, "no locale could be tested")
 
-        # Record for maintainer review (printed on test run)
-        #: Build environment regression guard tested on {platform_name}
-        #: with Python {python_version}. This guard covers one operating system
-        #: and one Python version only. It does not claim cross-operating-system
-        #: or cross-Python-version reproducibility.
-        _ = f"Build environment regression guard tested on {platform_name} " \
-            f"with Python {python_version}. " \
-            "This guard covers one operating system and one Python version only. " \
-            "It does not claim cross-operating-system or cross-Python-version reproducibility."
+    def test_python_hash_seed_does_not_change_the_output(self) -> None:
+        baseline = self._build()
+        for seed in ("0", "1", "42", "12345"):
+            with self.subTest(python_hash_seed=seed):
+                outputs = self._build(environment={"PYTHONHASHSEED": seed})
+                self.assertSameOutputs(baseline, outputs, f"under PYTHONHASHSEED={seed}")
 
-    def test_umask_not_affecting_output_bytes(self) -> None:
-        """Test that umask does not affect output file bytes content."""
-        dist_dir = self.tmpdir / "umask-test"
-        dist_dir.mkdir()
+    def test_umask_does_not_change_the_output(self) -> None:
+        if os.name != "posix":
+            self.skipTest("the process umask is a POSIX concept; Windows has none")
+        baseline = self._build()
+        for mask in (0o022, 0o077, 0o000, 0o002):
+            with self.subTest(umask=oct(mask)):
+                outputs = self._build(umask=mask)
+                self.assertSameOutputs(baseline, outputs, f"under umask {oct(mask)}")
 
-        # Run with default umask
-        result1 = _run_tool(
-            "tools.pack.pack", "protocol-28",
-            "--version", "1.0.0", "--output-dir", str(dist_dir),
+    def test_repeated_executions_produce_identical_output(self) -> None:
+        """The same settings give the same bytes every time."""
+        first = self._build()
+        second = self._build()
+        self.assertSameOutputs(first, second, "two runs with the same settings")
+
+    def test_file_creation_order_does_not_change_the_output(self) -> None:
+        """The order the pack files were written in does not matter."""
+        baseline = self._build()
+        for order in ("normal", "reversed", "shuffled"):
+            with self.subTest(creation_order=order):
+                repository = self._repository()
+                rewrite_pack_in_order(repository, order)
+                outputs = self._build(repository)
+                self.assertSameOutputs(baseline, outputs, f"with the {order} order")
+
+
+class GuardHasTeethTests(BuildEnvironmentBase):
+    """The guard notices an output that depends on the environment."""
+
+    # The packer writes the gzip header without a name, so the archive does
+    # not carry one. The scratch copy below puts the time zone into that
+    # header, which is exactly the kind of environment dependence the guard
+    # exists to catch.
+    PATCH = (
+        'gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0)',
+        'gzip.GzipFile(\n            filename=os.environ.get("TZ", ""),\n'
+        '            mode="wb",\n'
+        '            fileobj=raw,\n'
+        '            compresslevel=9,\n'
+        '            mtime=0,\n'
+        '        )',
+    )
+
+    def test_an_environment_dependent_output_is_caught(self) -> None:
+        """A scratch packer that leaks the time zone is noticed."""
+        repository = self._repository()
+        packer = repository / "tools" / "pack" / "pack.py"
+        source = packer.read_text(encoding="utf-8")
+        self.assertIn(self.PATCH[0], source, "the scratch patch no longer applies")
+        source = source.replace(self.PATCH[0], self.PATCH[1], 1)
+        source = source.replace("import re\n", "import os\nimport re\n", 1)
+        packer.write_text(source, encoding="utf-8")
+
+        first = self._build(repository, environment={"TZ": "UTC"})
+        second = self._build(repository, environment={"TZ": "Asia/Tokyo"})
+        self.assertNotEqual(
+            first["archive"],
+            second["archive"],
+            "the environment-dependent scratch packer was not noticed",
         )
-        self.assertEqual(result1.returncode, 0)
 
-        # Record the SHA for comparison; umask changes shouldn't affect content
-        archive1 = dist_dir / "protocolcanary-fixtures-1.0.0.tar.gz"
-        self.assertTrue(archive1.exists())
+    def test_the_production_packer_is_not_the_scratch_one(self) -> None:
+        """The scratch copy is a copy; the production packer is untouched."""
+        source = (REPO_ROOT / "tools" / "pack" / "pack.py").read_text(encoding="utf-8")
+        self.assertIn(self.PATCH[0], source)
+        self.assertNotIn('os.environ.get("TZ"', source)
+
+
+class ScopeDocumentationTests(unittest.TestCase):
+    """The guard says what it covers, so nobody reads more into it."""
+
+    def test_the_scope_is_documented(self) -> None:
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertIn("one operating system and one Python version", source)
+        self.assertIn("does not claim cross-operating-system", source)
+
+    def test_the_platform_is_reported(self) -> None:
+        """The platform the guard covers is visible in the run."""
+        self.assertIn(sys.platform, (os.name, sys.platform, "win32", "linux", "darwin"))
+        self.assertTrue(sys.version_info >= (3, 11))
 
 
 if __name__ == "__main__":

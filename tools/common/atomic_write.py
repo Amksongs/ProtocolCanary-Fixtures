@@ -12,15 +12,15 @@ persistent on disk.
 """
 
 import os
-import tempfile
+import uuid
 
 
 def write_bytes_atomic(path: object, data: bytes) -> None:
     """Write *data* to *path* atomically.
 
     The file at *path* will be replaced with *data* so that a reader of the
-    final path always sees either the old complete content, the previous
-    complete content, or the new complete content — never a truncated file.
+    final path always sees either the previous complete content or the new
+    complete content -- never a truncated file.
 
     The temporary file is created in the same directory as the target (same
     filesystem), so ``os.replace`` is atomic even on crash.
@@ -43,91 +43,81 @@ def write_bytes_atomic(path: object, data: bytes) -> None:
         If the temporary file cannot be written, fsynced, or replaced.  The
         original ``OSError`` is raised (or a subclass such as ``PermissionError``).
     """
-    if isinstance(path, str):
-        path = os.fspath(path)
+    target_path = os.fspath(path)
+    # An empty dirname means the current directory; opening "" for the
+    # directory fsync would fail, and a relative temp path is enough for
+    # os.replace to stay on the same filesystem.
+    target_dir = os.path.dirname(target_path) or "."
+    tmp_path = os.path.join(target_dir, _tmp_name(target_path))
 
-    # Determine the directory we will write the temp file into.  We place it
-    # in the *same* directory as the target so that os.replace() is atomic
-    # (same filesystem).
-    target_path = path
-    target_dir = os.path.dirname(target_path)
-
-    # Generate a temporary filename that cannot collide with a final output
-    # name.  We use a name incorporating the target basename to avoid
-    # collisions across different outputs in the same directory.
-    tmp_name = _tmp_name(target_dir, target_path)
-    tmp_path = os.path.join(target_dir, tmp_name)
-
-    # Track whether we need to clean up the temp file on error.
-    # We use a flag instead of relying on fd state, because fd can be
-    # reset to None in exception handlers.
-    temp_file_created = False
-
+    fd = None
     try:
-        # Open a temporary file *without* delete=True so we can fsync and
-        # replace it ourselves.  Using O_TRUNC so that if the old file exists
-        # it is truncated early (but we os.replace before anything sees the
-        # truncated version).
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_SYNC, 0o644)
-        temp_file_created = True
+        # Mode 0o666 lets the process umask decide the permissions, the same
+        # way open(path, "wb") does for the tools that wrote these files
+        # before this helper existed.
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666)
         try:
-            os.write(fd, data)
-        except BaseException:
-            # Clean up the temp file on any write error.
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short write while writing the temporary file")
+                view = view[written:]
+            # Flush the file's data to disk before it becomes the final path.
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+            fd = None
+
+        # os.replace is atomic within one filesystem: readers see either the
+        # previous file or the complete new one.
+        os.replace(tmp_path, target_path)
+
+        # Make the directory entry durable on POSIX. This is best-effort:
+        # some platforms do not support opening or fsyncing a directory, and
+        # the data file itself has already been fsynced above.
+        _fsync_directory(target_dir)
+    except BaseException:
+        if fd is not None:
             try:
                 os.close(fd)
             except OSError:
                 pass
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-
-        # fsync the file so its data is on disk before we replace the target.
-        os.fsync(fd)
-        os.close(fd)
-        fd = None  # already closed
-
-        # Replace the target atomically.
-        os.replace(tmp_path, target_path)
-
-        # On POSIX fsync the containing directory so that the replace is
-        # durable after a power failure.  Guard against platforms where
-        # opening a directory is not supported (e.g. Windows in some builds).
         try:
-            dir_fd = os.open(target_dir, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except (OSError, AttributeError):
-            # Directory fsync is not supported on this platform; ignore.
+            os.unlink(tmp_path)
+        except OSError:
             pass
-
-    except BaseException:
-        # If we hit an error after the temp file was created, make sure it
-        # is removed so no stray file remains.  Use the flag rather than
-        # checking fd state.
-        if temp_file_created:
-            try:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-            except OSError:
-                pass
         raise
 
 
-def _tmp_name(target_dir: str, target_path: str) -> str:
-    """Return a temporary filename that cannot collide with the final name.
+def _fsync_directory(directory: str) -> None:
+    """Fsync *directory* where the platform supports it."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        dir_fd = os.open(directory, flags)
+    except (OSError, AttributeError):
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        # Directory fsync is not supported on this platform; the file itself
+        # has already been fsynced, so this is not an error.
+        pass
+    finally:
+        os.close(dir_fd)
 
-    We embed the target basename encoded to avoid collisions when multiple
-    outputs are written to the same directory.
+
+def _tmp_name(target_path: str) -> str:
+    """A temporary filename that cannot collide with the final name.
+
+    The target basename is embedded so that concurrent writers for different
+    outputs in one directory never share a temporary file. The random suffix
+    keeps concurrent writers for the *same* output apart.
     """
     basename = os.path.basename(target_path)
-    import uuid
     unique = uuid.uuid4().hex[:12]
-    # Name format: .canary-tmp-<basename>-<uuidhex12>
-    # The leading dot ensures the file is hidden from casual listing and is
-    # guaranteed not to match any final output name.
+    # The leading dot keeps the temporary file out of a casual listing, and
+    # the prefix makes it identifiable as ours.
     return f".canary-tmp-{basename}-{unique}"

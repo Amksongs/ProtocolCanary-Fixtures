@@ -41,14 +41,24 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
-# Import atomic_write for safe, atomic file writes (F-081)
-_AMM_PATH = Path(__file__).resolve().parents[2] / "tools" / "common" / "atomic_write.py"
-_spec = importlib.util.spec_from_file_location("atomic_write", _AMM_PATH)
-_amm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_amm)
-write_bytes_atomic = _amm.write_bytes_atomic
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load(name: str, relative: str):
+    path = REPO_ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules.setdefault(name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Atomic writes (F-081): a release artifact is published under its final name
+# only once it is complete.
+atomic_write = _load("canary_atomic_write", "tools/common/atomic_write.py")
+write_bytes_atomic = atomic_write.write_bytes_atomic
+
 ARCHIVE_PREFIX = "protocolcanary-fixtures"
 REGISTRY_NAME = "registry.json"
 FILE_MODE = 0o644
