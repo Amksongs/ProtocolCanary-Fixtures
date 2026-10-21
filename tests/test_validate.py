@@ -2169,6 +2169,86 @@ class SourceReferenceFormatTests(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertIn("host", message)
 
+    def test_rejects_non_public_ipv4_networks(self) -> None:
+        # Exercise both ends of each explicitly denied CIDR.
+        denied_ranges = (
+            ("0.0.0.0", "0.255.255.255"),
+            ("10.0.0.0", "10.255.255.255"),
+            ("100.64.0.0", "100.127.255.255"),
+            ("127.0.0.0", "127.255.255.255"),
+            ("169.254.0.0", "169.254.255.255"),
+            ("172.16.0.0", "172.31.255.255"),
+            ("192.0.0.0", "192.0.0.255"),
+            ("192.0.2.0", "192.0.2.255"),
+            ("192.168.0.0", "192.168.255.255"),
+            ("198.18.0.0", "198.19.255.255"),
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.0", "203.0.113.255"),
+            ("224.0.0.0", "239.255.255.255"),
+            ("240.0.0.0", "255.255.255.255"),
+        )
+        for first, last in denied_ranges:
+            for address in (first, last):
+                with self.subTest(address=address):
+                    self.assertIsNotNone(validate.non_public_host_problem(address))
+
+    def test_non_public_host_policy_normalizes_local_names(self) -> None:
+        for host in (
+            "localhost",
+            "api.localhost",
+            "router.local",
+            "printer.localdomain",
+            "db.internal",
+            "device.home.arpa",
+        ):
+            with self.subTest(host=host):
+                self.assertIsNotNone(validate.non_public_host_problem(host))
+        self.assertIsNotNone(validate.non_public_host_problem("LOCALHOST"))
+        self.assertIsNotNone(validate.non_public_host_problem("LOCALHOST."))
+        # Normalize exactly one trailing dot; do not strip repeatedly.
+        self.assertIsNone(validate.non_public_host_problem("localhost.."))
+        self.assertIsNone(validate.non_public_host_problem("example.org.."))
+
+    def test_rejects_noncanonical_numeric_hosts(self) -> None:
+        for host in (
+            "2130706433",
+            "0x7f000001",
+            "0177.0.0.1",
+            "127.1",
+            "127.0.1",
+            "127.0.0x1",
+            "example.123",
+            "example.0x10",
+        ):
+            with self.subTest(host=host):
+                self.assertIsNotNone(validate.non_public_host_problem(host))
+
+    def test_accepts_public_host_policy_cases(self) -> None:
+        for host in (
+            "example.org",
+            "developers.stellar.org",
+            "soroban-testnet.stellar.org",
+            "rpc.example.invalid",
+            "8.8.8.8",
+            "notlocalhost.example.org",
+            "internal.example.org",
+        ):
+            with self.subTest(host=host):
+                self.assertIsNone(validate.non_public_host_problem(host))
+
+    def test_rejects_bracketed_ipv6_source_reference_hosts(self) -> None:
+        for host in ("[2001:4860:4860::8888]", "[::1]", "[::ffff:8.8.8.8]"):
+            value = f"https://{host}/docs/reference"
+            with self.subTest(host=host):
+                message = self.problem(value)
+                self.assertIsNotNone(message)
+                if host == "[::ffff:8.8.8.8]":
+                    self.assertIn("IPv6", message)
+
+    def test_accepts_bracketed_ipvfuture_source_reference_host(self) -> None:
+        value = "https://[v1.foo]/docs/reference"
+        self.assertIsNone(self.problem(value))
+
     def test_rejects_embedded_credentials(self) -> None:
         for value in (
             f"https://user:secret@github.com/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md",
@@ -2278,7 +2358,9 @@ class SourceReferenceFormatTests(unittest.TestCase):
         self.assertTrue(any("source_reference" in e and "'see issue'" in e for e in report.errors))
 
     def test_every_shipped_fixture_reference_passes(self) -> None:
-        for path in sorted((REPO_ROOT).glob("protocol-*/**/*.toml")):
+        paths = sorted((REPO_ROOT).glob("protocol-*/**/*.toml"))
+        self.assertEqual(len(paths), 23)
+        for path in paths:
             data = tomllib.loads(path.read_text(encoding="utf-8"))
             reference = data.get("source_reference")
             self.assertIsInstance(reference, str, path)
@@ -2472,6 +2554,23 @@ class VerificationEvidenceTests(unittest.TestCase):
         ):
             with self.subTest(bad):
                 self.assertTrue(self.problems(endpointHost=bad))
+
+    def test_endpoint_host_rejects_non_public_hosts_after_shape_validation(self) -> None:
+        for host in (
+            "localhost",
+            "service.local",
+            "10.1.2.3",
+            "127.1",
+            "2130706433",
+        ):
+            with self.subTest(host=host):
+                found = self.problems(endpointHost=host)
+                self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+
+        # Shape errors retain precedence and do not also receive host-policy errors.
+        found = self.problems(endpointHost="127.0.0.1:443")
+        self.assertTrue(any("host name only" in p for p in found), found)
+        self.assertFalse(any("non-public host" in p for p in found), found)
 
     def test_evidence_ref_must_stay_inside_the_repository(self) -> None:
         for bad in ("/etc/passwd", "../outside.json", "a/../b.json", "a\\b.json", "a//b.json"):
