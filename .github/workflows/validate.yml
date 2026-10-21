@@ -31,6 +31,10 @@ jobs:
           # deliberately when a new patch release is wanted.
           python-version: "3.11.16"
 
+      - name: Check root files
+        # Guard against stray files committed to the repository root (issue #328).
+        run: python3 tools/validate/check_root_files.py
+
       - name: Structural fixture validation
         run: python3 tools/validate/validate.py
 
