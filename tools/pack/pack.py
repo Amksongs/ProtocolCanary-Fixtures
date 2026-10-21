@@ -41,6 +41,13 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
+# Import atomic_write for safe, atomic file writes (F-081)
+_AMM_PATH = Path(__file__).resolve().parents[2] / "tools" / "common" / "atomic_write.py"
+_spec = importlib.util.spec_from_file_location("atomic_write", _AMM_PATH)
+_amm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_amm)
+write_bytes_atomic = _amm.write_bytes_atomic
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE_PREFIX = "protocolcanary-fixtures"
 REGISTRY_NAME = "registry.json"
@@ -198,7 +205,7 @@ def build_archive(pack: Path, output_dir: Path, version: str) -> ArchiveInfo:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / archive_name(version)
-    path.write_bytes(data)
+    write_bytes_atomic(path, data)
     return ArchiveInfo(
         path=path,
         sha256=hashlib.sha256(data).hexdigest(),

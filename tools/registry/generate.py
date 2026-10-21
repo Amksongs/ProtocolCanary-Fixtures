@@ -53,6 +53,13 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+# Import atomic_write for safe, atomic file writes (F-081)
+_AMM_PATH = Path(__file__).resolve().parents[2] / "tools" / "common" / "atomic_write.py"
+_spec = importlib.util.spec_from_file_location("atomic_write", _AMM_PATH)
+_amm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_amm)
+write_bytes_atomic = _amm.write_bytes_atomic
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "schemas" / "registry-v1.schema.json"
 DEFAULT_REGISTRY_NAME = "registry-v1.json"
@@ -431,7 +438,7 @@ def main(argv: list[str]) -> int:
     output = args.output or (args.pack / DEFAULT_REGISTRY_NAME)
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(text.encode("utf-8"))
+        write_bytes_atomic(output, text.encode("utf-8"))
     except OSError as error:
         print(f"error: could not write {output}: {error}", file=sys.stderr)
         return 1

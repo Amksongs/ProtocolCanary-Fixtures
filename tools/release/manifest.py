@@ -40,6 +40,13 @@ import sys
 import tarfile
 from pathlib import Path
 
+# Import atomic_write for safe, atomic file writes (F-081)
+_AMM_PATH = Path(__file__).resolve().parents[2] / "tools" / "common" / "atomic_write.py"
+_spec = importlib.util.spec_from_file_location("atomic_write", _AMM_PATH)
+_amm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_amm)
+write_bytes_atomic = _amm.write_bytes_atomic
+
 NAME = "protocolcanary-fixtures"
 MANIFEST_VERSION = 1
 REGISTRY_NAME = "registry.json"
@@ -242,10 +249,10 @@ def main(argv: list[str]) -> int:
     )
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(render_manifest(manifest).encode("utf-8"))
+        write_bytes_atomic(output, render_manifest(manifest).encode("utf-8"))
         if args.sha256_file is not None:
             args.sha256_file.parent.mkdir(parents=True, exist_ok=True)
-            args.sha256_file.write_bytes(sha256_line(manifest).encode("utf-8"))
+            write_bytes_atomic(args.sha256_file, sha256_line(manifest).encode("utf-8"))
     except OSError as error:
         print(f"error: could not write the manifest: {error}", file=sys.stderr)
         return 1
