@@ -6,14 +6,17 @@ and that exemptions (docs, tests, workflows, no-changelog opt-out label) are hon
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
+import runpy
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tools.validate.check_changelog import (
     OPT_OUT_LABEL,
@@ -22,6 +25,7 @@ from tools.validate.check_changelog import (
     build_markdown_summary,
     check_changelog,
     extract_labels_from_event,
+    get_git_diff_files,
     is_changelog_file,
     is_governed_path,
     main,
@@ -29,6 +33,9 @@ from tools.validate.check_changelog import (
     parse_changed_file_line,
     parse_labels_string,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CHECK_CHANGELOG_PATH = REPO_ROOT / "tools" / "validate" / "check_changelog.py"
 
 
 class TestPathClassification(unittest.TestCase):
@@ -41,6 +48,24 @@ class TestPathClassification(unittest.TestCase):
         self.assertEqual(normalize_path("tools/validate/../validate/foo.py"), "tools/validate/foo.py")
         self.assertEqual(normalize_path('"schemas/fixture-v1.schema.json"'), "schemas/fixture-v1.schema.json")
         self.assertEqual(normalize_path(""), "")
+
+    def test_normalize_path_absolute(self) -> None:
+        cwd = Path.cwd()
+        target = cwd / "tools" / "foo.py"
+        # Relative to explicit repo_root
+        self.assertEqual(normalize_path(str(target), repo_root=cwd), "tools/foo.py")
+        # Relative to cwd when repo_root is None
+        self.assertEqual(normalize_path(str(target), repo_root=None), "tools/foo.py")
+
+        # ValueError fallback when relpath fails with explicit repo_root
+        with patch("os.path.relpath", side_effect=ValueError("cross-device")):
+            res1 = normalize_path("/abs/path/to/file.txt", repo_root=cwd)
+            self.assertEqual(res1, "abs/path/to/file.txt")
+
+        # ValueError fallback when relpath fails with repo_root=None
+        with patch("os.path.relpath", side_effect=ValueError("cross-device")):
+            res2 = normalize_path("/abs/path/to/file.txt", repo_root=None)
+            self.assertEqual(res2, "abs/path/to/file.txt")
 
     def test_is_changelog_file(self) -> None:
         self.assertTrue(is_changelog_file("CHANGELOG.md"))
@@ -57,19 +82,29 @@ class TestPathClassification(unittest.TestCase):
         self.assertTrue(is_governed_path("protocol-27/README.md"))
         self.assertTrue(is_governed_path("protocol-29/evidence/testnet/get-network.json"))
         self.assertTrue(is_governed_path("protocol-custom/fixtures/test.toml"))
+        self.assertTrue(is_governed_path("protocol-28"))
+        self.assertTrue(is_governed_path("protocol-28/"))
 
     def test_is_governed_path_schemas(self) -> None:
         self.assertTrue(is_governed_path("schemas/fixture-v1.schema.json"))
         self.assertTrue(is_governed_path("./schemas/registry-v1.schema.json"))
         self.assertTrue(is_governed_path("schemas/proposed/resource-estimate.json"))
+        self.assertTrue(is_governed_path("schemas/"))
+        self.assertTrue(is_governed_path("schemas"))
 
     def test_is_governed_path_tools(self) -> None:
         self.assertTrue(is_governed_path("tools/validate/validate.py"))
         self.assertTrue(is_governed_path("tools/badge/badge.py"))
         self.assertTrue(is_governed_path("tools/pack/pack.py"))
         self.assertTrue(is_governed_path("./tools/registry/generate.py"))
+        self.assertTrue(is_governed_path("tools/"))
+        self.assertTrue(is_governed_path("tools"))
 
     def test_is_exempt_paths(self) -> None:
+        # Empty path
+        self.assertFalse(is_governed_path(""))
+        self.assertFalse(is_governed_path("   "))
+
         # Documentation
         self.assertFalse(is_governed_path("docs/protocol-28.md"))
         self.assertFalse(is_governed_path("README.md"))
@@ -168,6 +203,11 @@ class TestCheckChangelogCoreRules(unittest.TestCase):
         self.assertTrue(res.passed)
         self.assertEqual(res.governed_files, [])
 
+    def test_duplicate_file_inputs_deduplicated(self) -> None:
+        res = check_changelog(["tools/foo.py", "tools/foo.py", "./tools/foo.py"])
+        self.assertFalse(res.passed)
+        self.assertEqual(res.governed_files, ["tools/foo.py"])
+
     def test_pr_number_not_required(self) -> None:
         # Acceptance criteria: do not require the changelog entry to contain the PR number
         res = check_changelog(["tools/badge/badge.py", "CHANGELOG.md"])
@@ -207,22 +247,28 @@ class TestOptOutLabel(unittest.TestCase):
         self.assertEqual(parse_labels_string("no-changelog"), {"no-changelog"})
         self.assertEqual(parse_labels_string("bug, no-changelog, doc"), {"bug", "no-changelog", "doc"})
         self.assertEqual(
-            parse_labels_string('["bug", "no-changelog"]'),
-            {"bug", "no-changelog"},
+            parse_labels_string('["bug", "no-changelog", "", 123]'),
+            {"bug", "no-changelog", "123"},
         )
         self.assertEqual(parse_labels_string(""), set())
+        # Invalid JSON fallback
+        self.assertEqual(parse_labels_string("[not valid json]"), {"[not", "valid", "json]"})
+        # Mock json.loads returning non-list
+        with patch("json.loads", return_value=123):
+            self.assertEqual(parse_labels_string("[123]"), {"[123]"})
 
     def test_extract_labels_from_github_event_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             event_file = Path(tmpdir) / "event.json"
 
-            # PR event with labels
+            # PR event with dict labels
             payload = {
                 "pull_request": {
                     "number": 123,
                     "labels": [
                         {"name": "documentation"},
                         {"name": "no-changelog"},
+                        {"other": "missing name"},
                     ],
                 }
             }
@@ -230,6 +276,16 @@ class TestOptOutLabel(unittest.TestCase):
             labels = extract_labels_from_event(event_file)
             self.assertIn("no-changelog", labels)
             self.assertIn("documentation", labels)
+
+            # PR event with string labels
+            payload_str = {
+                "pull_request": {
+                    "labels": ["no-changelog", "bug"],
+                }
+            }
+            event_file.write_text(json.dumps(payload_str), encoding="utf-8")
+            labels_str = extract_labels_from_event(event_file)
+            self.assertEqual(labels_str, {"no-changelog", "bug"})
 
             # Event without no-changelog
             payload_no_opt = {
@@ -240,6 +296,12 @@ class TestOptOutLabel(unittest.TestCase):
             event_file.write_text(json.dumps(payload_no_opt), encoding="utf-8")
             labels_no_opt = extract_labels_from_event(event_file)
             self.assertEqual(labels_no_opt, {"bug"})
+
+            # Non-dict pull_request or non-list labels
+            event_file.write_text(json.dumps({"pull_request": "not_a_dict"}), encoding="utf-8")
+            self.assertEqual(extract_labels_from_event(event_file), set())
+            event_file.write_text(json.dumps({"pull_request": {"labels": "not_a_list"}}), encoding="utf-8")
+            self.assertEqual(extract_labels_from_event(event_file), set())
 
             # Non-existent or invalid file
             self.assertEqual(extract_labels_from_event(Path(tmpdir) / "nonexistent.json"), set())
@@ -307,6 +369,10 @@ class TestEdgeCases(unittest.TestCase):
             ["tools/a.py", "tools/b.py"],
         )
         self.assertEqual(
+            parse_changed_file_line("nonstatus\ttools/b.py"),
+            ["nonstatus", "tools/b.py"],
+        )
+        self.assertEqual(
             parse_changed_file_line("tools/a.py -> tools/b.py"),
             ["tools/a.py", "tools/b.py"],
         )
@@ -344,6 +410,33 @@ class TestEdgeCases(unittest.TestCase):
         )
 
 
+class TestGitDiffHelper(unittest.TestCase):
+    """Test get_git_diff_files under various git conditions."""
+
+    def test_get_git_diff_files_real_repo(self) -> None:
+        # Diff against HEAD should succeed and return empty list
+        files = get_git_diff_files("HEAD")
+        self.assertIsInstance(files, list)
+
+    def test_get_git_diff_files_with_origin_prefix_fallback(self) -> None:
+        # origin/HEAD fallback to HEAD
+        files = get_git_diff_files("origin/HEAD")
+        self.assertIsInstance(files, list)
+
+    def test_get_git_diff_files_not_found(self) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_git_diff_files("HEAD")
+            self.assertIn("git executable not found", str(ctx.exception))
+
+    def test_get_git_diff_files_all_fail(self) -> None:
+        mock_res = MagicMock(returncode=1, stderr="fatal: bad revision")
+        with patch("subprocess.run", return_value=mock_res):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_git_diff_files("nonexistent_ref_12345")
+            self.assertIn("git diff failed for base ref", str(ctx.exception))
+
+
 class TestCliInterface(unittest.TestCase):
     """Test CLI invocation, stdin handling, and summary file output."""
 
@@ -361,6 +454,13 @@ class TestCliInterface(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("CHANGELOG.md has been updated", stdout.getvalue())
 
+    def test_cli_flag_files(self) -> None:
+        stdout = io.StringIO()
+        with patch("sys.stdout", stdout):
+            code = main(["--files", "tools/badge/badge.py", "CHANGELOG.md"])
+        self.assertEqual(code, 0)
+        self.assertIn("CHANGELOG.md has been updated", stdout.getvalue())
+
     def test_cli_with_opt_out_label_flag(self) -> None:
         stdout = io.StringIO()
         with patch("sys.stdout", stdout):
@@ -368,13 +468,75 @@ class TestCliInterface(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("bypassed by 'no-changelog' label", stdout.getvalue())
 
-    def test_cli_with_stdin_piped(self) -> None:
+    def test_cli_with_labels_str_flag(self) -> None:
+        stdout = io.StringIO()
+        with patch("sys.stdout", stdout):
+            code = main(["protocol-28/xdr/test.toml", "--labels", "documentation,no-changelog"])
+        self.assertEqual(code, 0)
+        self.assertIn("bypassed by 'no-changelog' label", stdout.getvalue())
+
+    def test_cli_with_event_path_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            event_file = Path(tmpdir) / "event.json"
+            event_file.write_text(json.dumps({"pull_request": {"labels": [{"name": "no-changelog"}]}}), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                code = main(["protocol-28/xdr/test.toml", "--event-path", str(event_file)])
+            self.assertEqual(code, 0)
+            self.assertIn("bypassed by 'no-changelog' label", stdout.getvalue())
+
+    def test_cli_with_stdin_dash(self) -> None:
+        stdin = io.StringIO("tools/validate/validate.py\n\nCHANGELOG.md\n")
+        stdout = io.StringIO()
+        with patch("sys.stdin", stdin), patch("sys.stdout", stdout):
+            code = main(["-"])
+        self.assertEqual(code, 0)
+        self.assertIn("CHANGELOG.md has been updated", stdout.getvalue())
+
+    def test_cli_with_stdin_flag(self) -> None:
         stdin = io.StringIO("tools/validate/validate.py\nCHANGELOG.md\n")
         stdout = io.StringIO()
         with patch("sys.stdin", stdin), patch("sys.stdout", stdout):
             code = main(["--stdin"])
         self.assertEqual(code, 0)
         self.assertIn("CHANGELOG.md has been updated", stdout.getvalue())
+
+    def test_cli_with_piped_stdin(self) -> None:
+        stdin = io.StringIO("tools/validate/validate.py\n\nCHANGELOG.md\n")
+        stdout = io.StringIO()
+        with patch("sys.stdin", stdin), patch("sys.stdout", stdout), patch("sys.stdin.isatty", return_value=False):
+            code = main([])
+        self.assertEqual(code, 0)
+        self.assertIn("CHANGELOG.md has been updated", stdout.getvalue())
+
+    def test_cli_with_base_flag_success(self) -> None:
+        stdout = io.StringIO()
+        with patch("tools.validate.check_changelog.get_git_diff_files", return_value=["CHANGELOG.md"]):
+            with patch("sys.stdout", stdout):
+                code = main(["--base", "HEAD"])
+        self.assertEqual(code, 0)
+
+    def test_cli_with_base_flag_git_error(self) -> None:
+        stderr = io.StringIO()
+        with patch("tools.validate.check_changelog.get_git_diff_files", side_effect=RuntimeError("fatal diff")):
+            with patch("sys.stderr", stderr):
+                code = main(["--base", "invalid_ref"])
+        self.assertEqual(code, 2)
+        self.assertIn("Error determining changed files via git", stderr.getvalue())
+
+    def test_cli_no_args_fallback_git_diff(self) -> None:
+        stdout = io.StringIO()
+        with patch("tools.validate.check_changelog.get_git_diff_files", return_value=[]):
+            with patch("sys.stdout", stdout):
+                code = main([])
+        self.assertEqual(code, 0)
+
+    def test_cli_no_args_fallback_git_diff_raises(self) -> None:
+        stdout = io.StringIO()
+        with patch("tools.validate.check_changelog.get_git_diff_files", side_effect=Exception("error")):
+            with patch("sys.stdout", stdout):
+                code = main([])
+        self.assertEqual(code, 0)
 
     def test_cli_with_pr_labels_env(self) -> None:
         stdout = io.StringIO()
@@ -384,7 +546,7 @@ class TestCliInterface(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("bypassed by 'no-changelog' label", stdout.getvalue())
 
-    def test_cli_summary_file_written(self) -> None:
+    def test_cli_summary_file_written_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             summary_file = Path(tmpdir) / "summary.md"
             main([
@@ -396,6 +558,29 @@ class TestCliInterface(unittest.TestCase):
             content = summary_file.read_text(encoding="utf-8")
             self.assertIn("CHANGELOG Validation [F-055]", content)
             self.assertIn("PASSED", content)
+
+    def test_cli_summary_file_written_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_file = Path(tmpdir) / "summary.md"
+            with patch("sys.stderr", io.StringIO()):
+                main([
+                    "protocol-28/xdr/test.toml",
+                    "--summary-file", str(summary_file),
+                ])
+            self.assertTrue(summary_file.exists())
+            content = summary_file.read_text(encoding="utf-8")
+            self.assertIn("FAILED", content)
+            self.assertIn("protocol-28/xdr/test.toml", content)
+
+    def test_cli_summary_file_write_error(self) -> None:
+        stderr = io.StringIO()
+        with patch("pathlib.Path.open", side_effect=OSError("disk full")):
+            with patch("sys.stderr", stderr):
+                main([
+                    "docs/README.md",
+                    "--summary-file", "/some/path/summary.md",
+                ])
+        self.assertIn("Warning: could not write summary file", stderr.getvalue())
 
     def test_build_markdown_summary_failure(self) -> None:
         result = ChangelogCheckResult(
@@ -409,6 +594,15 @@ class TestCliInterface(unittest.TestCase):
         self.assertIn("FAILED", md)
         self.assertIn("protocol-28/xdr/foo.toml", md)
         self.assertIn("no-changelog", md)
+
+    def test_module_executed_as_main(self) -> None:
+        old_argv = sys.argv
+        sys.argv = ["check_changelog.py", "docs/protocol-28.md"]
+        self.addCleanup(setattr, sys, "argv", old_argv)
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                runpy.run_path(str(CHECK_CHANGELOG_PATH), run_name="__main__")
+            self.assertEqual(caught.exception.code, 0)
 
 
 if __name__ == "__main__":
