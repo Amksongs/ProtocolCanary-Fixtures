@@ -3,10 +3,10 @@
   "fixtureId": "p28-xdr-contract-executable-wasm-roundtrip",
   "fixtureSha256": "0b430092a7edc69fe272be58f1ce816e5c75c1d27cd6963942fff28f8c6a16d6",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

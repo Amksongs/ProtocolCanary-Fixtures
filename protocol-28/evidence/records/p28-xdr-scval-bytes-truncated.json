@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-scval-bytes-truncated",
+  "fixtureSha256": "6cfc2e2dc2ad3485fbc61ea76835a8a536a8bc85d475c0dde16020dfcaf27ae2",
+  "method": "structural",
+  "checkedAt": "2026-10-22T07:52:29Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

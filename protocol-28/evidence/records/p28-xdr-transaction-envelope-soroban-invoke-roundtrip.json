@@ -3,10 +3,10 @@
   "fixtureId": "p28-xdr-transaction-envelope-soroban-invoke-roundtrip",
   "fixtureSha256": "bd5de06a3b89ec934bfacce8da5759a65e977f49ec9bd7584b6f6115aef141fc",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

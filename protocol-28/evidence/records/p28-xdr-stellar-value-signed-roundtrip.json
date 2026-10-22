@@ -3,10 +3,10 @@
   "fixtureId": "p28-xdr-stellar-value-signed-roundtrip",
   "fixtureSha256": "c4ef767eb66c2cd34203e9614fa184768e05db50af35bff85c88ea08ffa47f2b",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

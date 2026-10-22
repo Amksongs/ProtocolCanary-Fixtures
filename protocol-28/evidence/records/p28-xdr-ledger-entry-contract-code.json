@@ -3,10 +3,10 @@
   "fixtureId": "p28-xdr-ledger-entry-contract-code",
   "fixtureSha256": "ddbe0faaae5e5d51be472b653d515974f8b75557ec4d5193c93455a6c3cccc31",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

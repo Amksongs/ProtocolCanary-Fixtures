@@ -757,6 +757,92 @@ and rejects all six decode-failures. With the engine: `stellar-canary` 0.2.0,
 `xdr = true`, reports all 11 as passing — 5 "LedgerEntry round-tripped
 byte-for-byte" and 6 "LedgerEntry was correctly rejected".
 
+## ScVal scalar values
+
+Added 2026-10-22. `ScVal` is the argument and result type of every Soroban
+call: the engine decodes it (`XdrTypeName::ScVal`) and a contract's inputs,
+outputs and data keys are all `ScVal`s. Until this section's fixtures existed
+the pack had no `ScVal` evidence at all, so an encoding mistake in a scalar
+variant — sign extension, a swapped 64-bit limb, a wrong length prefix — would
+have passed unnoticed.
+
+**What this pack tests.** Thirty-four fixtures under
+[`protocol-28/xdr/scval/`](../protocol-28/xdr/scval/):
+
+| Group | Fixtures | What they cover |
+|---|---|---|
+| Primitives | `void`, `bool-true`, `bool-false`, `u32-max`, `i32-min`, `u64-max`, `i64-min`, `timepoint`, `duration` | one roundtrip per primitive, at the value that makes a width or sign mistake visible |
+| Wide integers | `u128-zero`, `u128-max`, `u128-high-bit`, `i128-min`, `i128-zero`, `i128-max`, `u256-zero`, `u256-max`, `i256-min`, `i256-zero`, `i256-max` | minimum, maximum and zero for each of `u128`, `i128`, `u256` and `i256`, plus a `u128` with the high bit set |
+| Bytes and string | `bytes-empty`, `bytes-small`, `string-empty`, `string-small` | empty and a small value that forces non-zero padding, for both variable-length opaque and string |
+| Symbol | `symbol-empty`, `symbol-small`, `symbol-32-boundary` | empty, an ordinary eight-byte name, and exactly `SCSYMBOL_LIMIT` = 32 bytes |
+| Decode failures | `u32-truncated`, `u64-truncated`, `u256-truncated`, `i128-truncated`, `bytes-truncated`, `string-truncated`, `symbol-33-invalid` | six truncations and one 33-byte symbol, each rejected by the reference crate |
+
+Every fixture id in the table is `p28-xdr-scval-` followed by the name shown
+(for example `p28-xdr-scval-u128-high-bit`).
+
+For an unsigned wide integer the minimum is zero, so the `-zero-` fixture
+covers both; the maximum has its own fixture. The `u128` high-bit fixture
+(`UInt128Parts { hi: 1u64 << 63, lo: 0 }`, value 2^127) is valid input while
+its payload limbs are bit-identical to the `i128` minimum's. The ScValType
+discriminant — 9 for `SCV_U128`, 10 for `SCV_I128` — is what distinguishes
+them, and the fixture header says so explicitly. `u8` and `i8` are not ScVal
+variants: `enum SCValType` defines 32-bit as the smallest integer width, and
+no fixture invents a narrower one.
+
+**Where the definitions come from.** Every header cites the pinned file
+`Stellar-contract.x` in `stellar/stellar-xdr` at tag `v28.0`, commit
+`9c9c145953e80990d6ff1ae3a6a973a0ce6d0694` (the same pin `tests/scval_xdr.py`
+uses), with line ranges:
+
+- `enum SCValType` lines 26-81 and `union SCVal` lines 254-316;
+- `typedef opaque SCBytes<>` line 9 and `typedef string SCString<>` line 10;
+- `const SCSYMBOL_LIMIT = 32` line 11 and
+  `typedef string SCSymbol<SCSYMBOL_LIMIT>` line 12;
+- `struct UInt128Parts` lines 140-143, `struct Int128Parts` lines 149-152,
+  `struct UInt256Parts` lines 154-159 and `struct Int256Parts` lines 165-170;
+- `typedef uint64 TimePoint` and `typedef uint64 Duration` in
+  `Stellar-types.x` lines 17-18.
+
+The 32-byte symbol limit is read from that definition, not assumed: 32 bytes
+is valid and 33 is invalid, and the pack has one fixture on each side of the
+boundary.
+
+**How the payloads were produced.** Every `value_base64` is the output of a
+Rust program that builds the typed value with the official `stellar-xdr`
+28.0.1 crate (features `base64` and `alloc` — the version Protocol-Canary's
+`canary-xdr` pins for Protocol 28) and calls
+`to_xdr_base64(Limits::none())`. Nothing is hand-assembled. Each fixture's
+header records the one-line construction expression, the crate version,
+`rustc 1.99.1 (58cf8f9c3 2026-10-13)` and the generation date (2026-10-22
+UTC). The same program asserted, for every fixture, that
+`from_xdr_base64` returns `Ok` and that re-encoding the decoded value
+reproduces the same base64 exactly. A decode-failure payload is that
+crate-produced value truncated, or changed in exactly one documented field,
+and the program asserted that `from_xdr_base64` rejects it with the error the
+header quotes (`failed to fill whole buffer` for the six truncations,
+`xdr value max length exceeded` for the 33-byte symbol).
+
+**Size.** The repository limits a pack file to 1 MiB
+(`tools/common/pack_limits.py`); no fixture here is near it. The largest is
+3,210 bytes of TOML and the largest encoded payload is 44 bytes, because a
+scalar `ScVal` has a bounded payload and the only variable-length variants
+here use deliberately small values. No fixture targets a maximum length that
+could not fit in a pack file.
+
+**Verification.** `tools/validate/validate.py` accepts all 34 fixtures. A
+cross-check with `tests/scval_xdr.py` (the repository's standard-library ScVal
+codec) decodes and re-encodes every roundtrip fixture byte-for-byte and
+rejects every decode-failure fixture, 34 of 34 agreeing. The engine check
+recorded for this pack is a separate, re-runnable step: `stellar-canary`
+0.2.0, `Protocol-Canary` commit `bc13306`, run offline with
+`--offline --no-cache --json` against a project that enables `xdr = true`.
+
+**What this does not test.** No fixture claims a network observation, a
+contract call or a real account: every number, symbol, string and byte
+sequence is a synthetic structural value labelled as such in its header. Depth
+and recursion limits for `SCV_VEC`/`SCV_MAP` are out of scope here (issue
+#303) and are not targeted by any fixture in this directory.
+
 ## ScVal vectors, maps and addresses
 
 Added 2026-10-22. Composite and address values are what real Soroban calls

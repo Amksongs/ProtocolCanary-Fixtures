@@ -3,10 +3,10 @@
   "fixtureId": "p28-xdr-transaction-envelope-v1-roundtrip",
   "fixtureSha256": "fdc591267e226ec421fd4519f9b2ecf75830b3fd79eca6ba4b555166c013e6f3",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

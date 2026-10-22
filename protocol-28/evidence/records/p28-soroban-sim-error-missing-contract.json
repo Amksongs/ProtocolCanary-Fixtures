@@ -3,10 +3,10 @@
   "fixtureId": "p28-soroban-sim-error-missing-contract",
   "fixtureSha256": "23cd6b73b447ae9d620fb87b6c31d3ccd523771de6304bc40d82b7f07b48cf7c",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

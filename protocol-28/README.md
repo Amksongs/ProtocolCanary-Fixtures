@@ -1,6 +1,6 @@
 # Protocol 28 compatibility pack
 
-This pack contains **56 fixtures**.
+This pack contains **90 fixtures**.
 
 Implemented in Stellar Core 28.0.0, Stellar RPC 28.0.0 (integration-tested
 against Soroban host 28.0.1), and the official `stellar-xdr` 28.0.0 crate.
@@ -70,6 +70,40 @@ enumeration.
 | [`xdr/scval-composite/p28-xdr-scval-vec-multi.toml`](xdr/scval-composite/p28-xdr-scval-vec-multi.toml) | xdr | — | A three-element `ScVal::Vec` round-trips byte-for-byte. |
 | [`xdr/scval-composite/p28-xdr-scval-vec-null.toml`](xdr/scval-composite/p28-xdr-scval-vec-null.toml) | xdr | — | An absent (null) `ScVal::Vec` round-trips byte-for-byte. |
 | [`xdr/scval-composite/p28-xdr-scval-vec-one.toml`](xdr/scval-composite/p28-xdr-scval-vec-one.toml) | xdr | — | A one-element `ScVal::Vec` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-bool-false.toml`](xdr/scval/p28-xdr-scval-bool-false.toml) | xdr | — | `ScVal::Bool(false)` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-bool-true.toml`](xdr/scval/p28-xdr-scval-bool-true.toml) | xdr | — | `ScVal::Bool(true)` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-bytes-empty.toml`](xdr/scval/p28-xdr-scval-bytes-empty.toml) | xdr | — | An empty `ScVal::Bytes` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-bytes-small.toml`](xdr/scval/p28-xdr-scval-bytes-small.toml) | xdr | — | A five-byte `ScVal::Bytes` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-bytes-truncated.toml`](xdr/scval/p28-xdr-scval-bytes-truncated.toml) | xdr | — | A truncated `ScVal::Bytes` payload is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-duration.toml`](xdr/scval/p28-xdr-scval-duration.toml) | xdr | — | `ScVal::Duration(Duration(86_400))` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i128-max.toml`](xdr/scval/p28-xdr-scval-i128-max.toml) | xdr | — | `ScVal::I128` maximum round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i128-min.toml`](xdr/scval/p28-xdr-scval-i128-min.toml) | xdr | — | `ScVal::I128` minimum round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i128-truncated.toml`](xdr/scval/p28-xdr-scval-i128-truncated.toml) | xdr | — | A truncated `ScVal::I128` payload is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-i128-zero.toml`](xdr/scval/p28-xdr-scval-i128-zero.toml) | xdr | — | `ScVal::I128` zero round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i256-max.toml`](xdr/scval/p28-xdr-scval-i256-max.toml) | xdr | — | `ScVal::I256` maximum round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i256-min.toml`](xdr/scval/p28-xdr-scval-i256-min.toml) | xdr | — | `ScVal::I256` minimum round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i256-zero.toml`](xdr/scval/p28-xdr-scval-i256-zero.toml) | xdr | — | `ScVal::I256` zero round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i32-min.toml`](xdr/scval/p28-xdr-scval-i32-min.toml) | xdr | — | `ScVal::I32(i32::MIN)` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-i64-min.toml`](xdr/scval/p28-xdr-scval-i64-min.toml) | xdr | — | `ScVal::I64(i64::MIN)` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-string-empty.toml`](xdr/scval/p28-xdr-scval-string-empty.toml) | xdr | — | An empty `ScVal::String` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-string-small.toml`](xdr/scval/p28-xdr-scval-string-small.toml) | xdr | — | A six-byte `ScVal::String` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-string-truncated.toml`](xdr/scval/p28-xdr-scval-string-truncated.toml) | xdr | — | A truncated `ScVal::String` payload is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-symbol-32-boundary.toml`](xdr/scval/p28-xdr-scval-symbol-32-boundary.toml) | xdr | — | A 32-byte `ScVal::Symbol`, the SCSYMBOL_LIMIT, round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-symbol-33-invalid.toml`](xdr/scval/p28-xdr-scval-symbol-33-invalid.toml) | xdr | — | A 33-byte symbol, one past SCSYMBOL_LIMIT, is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-symbol-empty.toml`](xdr/scval/p28-xdr-scval-symbol-empty.toml) | xdr | — | An empty `ScVal::Symbol` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-symbol-small.toml`](xdr/scval/p28-xdr-scval-symbol-small.toml) | xdr | — | An eight-byte `ScVal::Symbol` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-timepoint.toml`](xdr/scval/p28-xdr-scval-timepoint.toml) | xdr | — | `ScVal::Timepoint(TimePoint(1_700_000_000))` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u128-high-bit.toml`](xdr/scval/p28-xdr-scval-u128-high-bit.toml) | xdr | — | `ScVal::U128` with the high bit set round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u128-max.toml`](xdr/scval/p28-xdr-scval-u128-max.toml) | xdr | — | `ScVal::U128` maximum round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u128-zero.toml`](xdr/scval/p28-xdr-scval-u128-zero.toml) | xdr | — | `ScVal::U128` zero round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u256-max.toml`](xdr/scval/p28-xdr-scval-u256-max.toml) | xdr | — | `ScVal::U256` maximum round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u256-truncated.toml`](xdr/scval/p28-xdr-scval-u256-truncated.toml) | xdr | — | A truncated `ScVal::U256` payload is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-u256-zero.toml`](xdr/scval/p28-xdr-scval-u256-zero.toml) | xdr | — | `ScVal::U256` zero round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u32-max.toml`](xdr/scval/p28-xdr-scval-u32-max.toml) | xdr | — | `ScVal::U32(u32::MAX)` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u32-truncated.toml`](xdr/scval/p28-xdr-scval-u32-truncated.toml) | xdr | — | A truncated `ScVal::U32` payload is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-u64-max.toml`](xdr/scval/p28-xdr-scval-u64-max.toml) | xdr | — | `ScVal::U64(u64::MAX)` round-trips byte-for-byte. |
+| [`xdr/scval/p28-xdr-scval-u64-truncated.toml`](xdr/scval/p28-xdr-scval-u64-truncated.toml) | xdr | — | A truncated `ScVal::U64` payload is correctly rejected, not silently accepted. |
+| [`xdr/scval/p28-xdr-scval-void.toml`](xdr/scval/p28-xdr-scval-void.toml) | xdr | — | `ScVal::Void` round-trips byte-for-byte. |
 | [`rpc/p28-rpc-network.toml`](rpc/p28-rpc-network.toml) | rpc | — | A configured RPC endpoint's `getNetwork` reports protocol 28 with a `passphrase` field. |
 | [`rpc/p28-rpc-latest-ledger.toml`](rpc/p28-rpc-latest-ledger.toml) | rpc | — | The same endpoint's `getLatestLedger` reports protocol 28, a numeric `sequence`, a string ledger `id`, and no `getNetwork`-only fields. |
 | [`soroban/p28-soroban-native-asset-name.toml`](soroban/p28-soroban-native-asset-name.toml) | soroban | — | The full construct → `simulateTransaction` → result pipeline works against real Protocol 28 infrastructure. |

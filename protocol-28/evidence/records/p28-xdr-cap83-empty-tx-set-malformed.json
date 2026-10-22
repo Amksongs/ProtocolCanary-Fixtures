@@ -3,10 +3,10 @@
   "fixtureId": "p28-xdr-cap83-empty-tx-set-malformed",
   "fixtureSha256": "53905367f2506925c1233cab397bcda6bcb46df48704221ed12b5c461b4bb17e",
   "method": "structural",
-  "checkedAt": "2026-10-22T07:46:50Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null
