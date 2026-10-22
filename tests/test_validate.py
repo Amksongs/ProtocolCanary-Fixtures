@@ -1267,6 +1267,51 @@ field = "id"
                 for supported in ("get-health", "get-version-info", "get-fee-stats"):
                     self.assertIn(supported, errors[0])
 
+    def test_the_test_fixtures_cover_each_health_and_diagnostic_method(self) -> None:
+        # Accepting a method and never using it leaves the vocabulary
+        # unproven, so F-017 also ships one fixture per method, under
+        # tests/fixtures/rpc/. They stay out of a protocol pack on purpose:
+        # a pack's RPC fixtures must all be capturable by
+        # tools/evidence/capture_live.py, whose allowlist is the three
+        # read-only methods CF-04 section 8 names.
+        rpc_fixtures = REPO_ROOT / "tests" / "fixtures" / "rpc"
+        report = validate.validate_directory(rpc_fixtures)
+        self.assertEqual(report.errors, [], report.errors)
+        methods: list[str] = []
+        for path in sorted(rpc_fixtures.glob("*.toml")):
+            with open(path, "rb") as handle:
+                methods.append(tomllib.load(handle)["method"])
+        self.assertEqual(
+            sorted(methods),
+            ["get-fee-stats", "get-health", "get-version-info"],
+        )
+
+    def test_the_schema_accepts_the_health_and_diagnostic_methods(self) -> None:
+        # The validator leg is covered above; this is the schema leg (F-017).
+        # jsonschema_lite cannot run the schema's allOf/if/then blocks, so the
+        # rpc method enum is checked directly, which is the part of the
+        # schema that decides whether these names are authorable.
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                self.assertIn(method, method_schema["enum"])
+                self.assertEqual(jsonschema_lite.validate(method, method_schema), [])
+
+    def test_the_schema_rejects_misspelled_health_method_names(self) -> None:
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                problems = jsonschema_lite.validate(invalid_method, method_schema)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(invalid_method, problems[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, problems[0])
+                    self.assertIn(supported, method_schema["enum"])
+
     def test_rpc_get_ledger_entries_valid_and_invalid(self) -> None:
         base = """
 id = "p28-rpc-entries"
@@ -2868,6 +2913,68 @@ class SourceReferenceFormatTests(unittest.TestCase):
             )
         )
 
+    def test_github_host_spellings_and_trailing_dot_accepted_when_pinned(self) -> None:
+        """Positive tests: commit-pinned and tag-pinned links on github.com.,
+        WWW.GITHUB.COM. and the raw host with a trailing dot; ordinary hosts (F-121, issue #415).
+        """
+        path = f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"
+        tag_path = "/stellar/stellar-protocol/blob/v28.0.1/core/cap-0083.md"
+        raw_commit_path = f"/stellar/stellar-protocol/{self.SHA}/core/cap-0083.md"
+        raw_tag_path = "/stellar/stellar-protocol/v28.0.1/core/cap-0083.md"
+
+        for base_url in (
+            f"https://github.com.{path}",
+            f"https://github.com.{tag_path}",
+            f"https://WWW.GITHUB.COM.{path}",
+            f"https://WWW.GITHUB.COM.{tag_path}",
+            f"https://raw.githubusercontent.com.{raw_commit_path}",
+            f"https://raw.githubusercontent.com.{raw_tag_path}",
+            "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork",
+            f"https://github.com:443{path}",
+        ):
+            with self.subTest(url=base_url):
+                self.assertIsNone(self.problem(base_url), base_url)
+
+    def test_github_host_spellings_and_malformed_hosts_rejected(self) -> None:
+        """Negative tests: branch refs on trailing dot spellings, malformed hosts,
+        percent, non-ASCII letters, empty labels, only dots (F-121, issue #415).
+        """
+        branch_path = "/stellar/stellar-protocol/blob/master/core/cap-0083.md"
+        raw_branch_path = "/stellar/stellar-protocol/master/core/cap-0083.md"
+
+        # Valid trailing-dot hosts with branch ref must be rejected with the pin message
+        for host, p in (
+            ("github.com.", branch_path),
+            ("WWW.GITHUB.COM.", branch_path),
+            ("www.github.com.", branch_path),
+            ("GITHUB.COM.", branch_path),
+            ("raw.githubusercontent.com.", raw_branch_path),
+        ):
+            with self.subTest(host=host, case="branch_ref"):
+                message = self.problem(f"https://{host}{p}")
+                self.assertIsNotNone(message, host)
+                self.assertIn("pin", message)
+                self.assertIn("branch name", message)
+
+        # Malformed host spellings must be rejected with host-character message naming source_reference
+        malformed_hosts = (
+            "github.com..",
+            "github..com",
+            ".github.com",
+            "git%68ub.com",
+            "github.com\u3002",
+            "g\u00edthub.com",
+            "....",
+            ".",
+        )
+        for host in malformed_hosts:
+            for p in (branch_path, f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"):
+                with self.subTest(host=host, path=p, case="malformed"):
+                    message = self.problem(f"https://{host}{p}")
+                    self.assertIsNotNone(message, host)
+                    self.assertIn("source_reference", message)
+                    self.assertIn("host", message)
+
     def test_rejects_a_short_commit_hash(self) -> None:
         # Seven characters is ambiguous and can start to collide; the link
         # must name the full object so it cannot silently change meaning.
@@ -2898,6 +3005,52 @@ class SourceReferenceFormatTests(unittest.TestCase):
         message = self.problem(value)
         self.assertIsNotNone(message)
         self.assertIn("characters", message)
+
+    def test_source_reference_boundaries_table_driven(self) -> None:
+        """Test source_reference length limits and URL shape rules at exact boundaries (F-123, issue #419)."""
+        self.assertEqual(validate.MAX_SOURCE_REFERENCE_LENGTH, 2048)
+        base = "https://example.com/"
+        h40 = "a" * 40
+        h64 = "b" * 64
+
+        p2047 = base + "x" * (2047 - len(base))
+        p2048 = base + "x" * (2048 - len(base))
+        p2049 = base + "x" * (2049 - len(base))
+
+        rows = [
+            (p2047, None, "2047 characters"),
+            (p2048, None, "2048 characters (exact limit)"),
+            (p2049, "characters", "2049 characters (limit plus one)"),
+            ("https://github.com/o/r", "repository root", "github repository root"),
+            ("https://github.com/o/r/", "repository root", "github repository root trailing slash"),
+            ("https://github.com/o/r/blob", "has no ref after", "github blob without ref"),
+            (f"https://github.com/o/r/blob/{h40}/f.md", None, "github blob 40-hex commit"),
+            (f"https://github.com/o/r/blob/{h64}/f.md", None, "github blob 64-hex commit"),
+            ("https://github.com/o/r/blob/v1.2.3/f.md", None, "github blob version tag"),
+            ("https://github.com/o/r/blob/protocol-28/f.md", None, "github blob tag with prefix"),
+            (f"https://github.com/o/r/tree/{h40}/core", None, "github tree with pinned ref"),
+            ("https://github.com/o/r/blob/master/f.md", "branch name", "github blob branch ref"),
+            ("https://raw.githubusercontent.com/o/r", "has no ref and file path", "raw github without ref and path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}", "has no ref and file path", "raw github without file path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}/f.md", None, "raw github with 40-hex commit and file path"),
+            ("https://raw.githubusercontent.com/o/r/master/f.md", "branch name", "raw github branch ref"),
+            ("https://raw.githubusercontent.com/o/r/refs/heads/master/f.md", "links to a branch (refs/heads/...)", "raw github refs/heads branch"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/v1.0.0/f.md", None, "raw github refs/tags release tag"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/master/f.md", "branch name", "raw github refs/tags branch name"),
+            ("https://user@example.com/x", "credentials", "credentials in url"),
+            ("https://example.com/a b", "whitespace", "whitespace inside url"),
+            (" https://example.com/x", "whitespace", "leading whitespace"),
+            ("https://example.com/x ", "whitespace", "trailing whitespace"),
+        ]
+
+        for value, expected_fragment, label in rows:
+            with self.subTest(label=label, value=value[:60] if len(value) > 60 else value):
+                result = self.problem(value)
+                if expected_fragment is None:
+                    self.assertIsNone(result, f"expected {value!r} to be accepted, got: {result}")
+                else:
+                    self.assertIsNotNone(result, f"expected {value!r} to be rejected")
+                    self.assertIn(expected_fragment, result)
 
     def test_the_error_names_the_field_the_value_and_the_fix(self) -> None:
         bad = VALID_XDR.replace(

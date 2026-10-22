@@ -45,6 +45,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.common.json_strict import JSONInputError, load_json
+from tools.common import paths
 
 NAME = "protocolcanary-fixtures"
 MANIFEST_VERSION = 1
@@ -252,6 +253,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    output = args.output or args.archive.with_name(
+        args.archive.name.removesuffix(".tar.gz") + ".manifest.json"
+    )
+    try:
+        paths.check_target_safety(output, [(args.archive, "the release archive")])
+        if args.sha256_file is not None:
+            paths.check_target_safety(args.sha256_file, [(args.archive, "the release archive")])
+            if paths.is_same_file(output, args.sha256_file):
+                raise ValueError(
+                    f"refusing to write {output}: --output and --sha256-file name the same file"
+                )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+
     try:
         manifest = build_manifest(args.archive, revision=args.revision, engines=args.engine)
     except ManifestError as error:

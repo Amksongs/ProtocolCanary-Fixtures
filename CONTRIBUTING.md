@@ -55,8 +55,10 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    credentials. A link into GitHub (`github.com/.../blob/...` or
    `raw.githubusercontent.com/...`) must name a full commit SHA or a release
    tag, not a branch such as `master`, so it keeps describing what the
-   fixture was written against; documentation pages have no ref to pin. The
-   header comment (a `#`
+   fixture was written against; documentation pages have no ref to pin.
+   The host name in a `source_reference` URL may only contain ASCII letters,
+   digits, `.` and `-` without empty labels or percent-encoding (non-ASCII hosts
+   must be written in punycode). The header comment (a `#`
    comment block above the TOML body) explains, in prose, how the expected
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
@@ -432,6 +434,7 @@ Quick reference for what contributors hit most often. Each line is the error as
 | `expect.message_contains must be a string, got ...` / `expect.message_contains must not be empty; ...` | The loader reads the field with `toml::Value::as_str`, so a non-string is silently dropped and an empty string matches every message — either way the fixture asserts less than it appears to. Quote the needle, or omit the key entirely to assert only that the simulation fails. |
 | `field 'expected_base64' is only allowed for kind 'encode-equals', not 'roundtrip'` | `expected_base64` states the expected encoding, and only an `encode-equals` fixture has one; the loader rejects the field for every other kind. Use `kind = "encode-equals"`, or drop the field. |
 | `README.md's fixtures badge is stale; run ...` | You added or removed a `*.toml`, so the fixture count in README.md is now wrong. Run `make badge` and commit the result. |
+| `git diff --exit-code` shows `registry-v1.json` as changed (CI step `check-registry`) | You changed a fixture or payload without regenerating the pack's registry manifest. Run `python3 tools/registry/generate.py protocol-28` (or, for an empty baseline, `python3 tools/registry/generate.py protocol-29 --allow-empty --protocol 29`) and commit the regenerated `registry-v1.json`. |
 | `missing required field '...'` with no obvious cause | Historically a typo'd duplicate of the intended field (e.g. `soure_reference`). Unknown keys are now rejected outright and named — see [Unknown top-level fields](#unknown-top-level-fields). |
 
 `make check` runs these in CI's order (`validate` → `badge-check` → `test`) and

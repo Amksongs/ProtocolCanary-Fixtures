@@ -26,11 +26,13 @@ import importlib.util
 import io
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACK = REPO_ROOT / "protocol-28"
@@ -359,6 +361,210 @@ class RecordToolCommandTests(unittest.TestCase):
         revision = record_structural.git_revision(REPO_ROOT)
         self.assertTrue(revision == "unknown" or len(revision) == 40)
         self.assertEqual(record_structural.git_revision(Path("/no/such/dir")), "unknown")
+
+
+# A minimal fixture the validator accepts; ``structural_check`` needs one to
+# return as a checkable fixture. Kept here rather than read from the pack so
+# the tests do not depend on a committed fixture's bytes.
+VALID_FIXTURE = """
+id = "p28-xdr-record-test"
+protocol = 28
+surface = "xdr"
+category = "cap-0083"
+description = "example"
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "decode-success"
+value_base64 = "AAAAAA=="
+"""
+
+
+class GitRevisionFallbackTests(unittest.TestCase):
+    """F-129 (issue #448): the fallbacks that make the version ``unknown``."""
+
+    REVISION = "0123456789abcdef0123456789abcdef01234567"
+
+    def revision_with(self, *, return_value=None, side_effect=None) -> str:
+        with mock.patch.object(
+            record_structural.subprocess,
+            "run",
+            return_value=return_value,
+            side_effect=side_effect,
+        ) as run:
+            revision = record_structural.git_revision(REPO_ROOT)
+        run.assert_called_once()
+        return revision
+
+    @staticmethod
+    def completed(returncode: int, stdout: str) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=["git", "rev-parse", "HEAD"],
+            returncode=returncode,
+            stdout=stdout,
+            stderr="",
+        )
+
+    def test_an_os_error_means_unknown(self) -> None:
+        self.assertEqual(
+            self.revision_with(side_effect=OSError("git is not installed")),
+            "unknown",
+        )
+
+    def test_a_timeout_means_unknown(self) -> None:
+        self.assertEqual(
+            self.revision_with(
+                side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)
+            ),
+            "unknown",
+        )
+
+    def test_a_failing_git_means_unknown_even_with_a_hash_shaped_answer(self) -> None:
+        self.assertEqual(
+            self.revision_with(return_value=self.completed(1, self.REVISION + "\n")),
+            "unknown",
+        )
+
+    def test_an_answer_of_the_wrong_length_means_unknown(self) -> None:
+        for stdout in ("", self.REVISION[:39], self.REVISION + "0", " " * 40):
+            with self.subTest(stdout=stdout):
+                self.assertEqual(
+                    self.revision_with(return_value=self.completed(0, stdout)),
+                    "unknown",
+                )
+
+    def test_a_successful_full_answer_is_returned(self) -> None:
+        for stdout in (self.REVISION, self.REVISION + "\n"):
+            with self.subTest(stdout=stdout):
+                self.assertEqual(
+                    self.revision_with(return_value=self.completed(0, stdout)),
+                    self.REVISION,
+                )
+
+
+class RenderRecordTests(unittest.TestCase):
+    """F-129: the documented record format is pinned, not incidental."""
+
+    def setUp(self) -> None:
+        self.record = {
+            "verificationVersion": 1,
+            "fixtureId": "p28-xdr-caf\u00e9",
+            "note": "na\u00efve",
+            "verifier": {"name": "protocolcanary-fixtures-validate", "version": "x"},
+        }
+
+    def test_two_space_indent_and_one_trailing_newline(self) -> None:
+        text = record_structural.render_record(self.record)
+        self.assertTrue(text.endswith("\n"))
+        self.assertFalse(text.endswith("\n\n"), "more than one trailing newline")
+        self.assertNotIn("\r", text)
+        self.assertIn('\n  "fixtureId"', text)
+        self.assertIn('\n  "verifier"', text)
+        self.assertIn('\n    "name"', text)
+
+    def test_non_ascii_characters_are_not_escaped(self) -> None:
+        text = record_structural.render_record(self.record)
+        self.assertIn("p28-xdr-caf\u00e9", text)
+        self.assertIn("na\u00efve", text)
+        self.assertNotIn("\\u", text)
+
+    def test_the_text_parses_back_to_the_record(self) -> None:
+        self.assertEqual(
+            json.loads(record_structural.render_record(self.record)), self.record
+        )
+
+
+class WriteRecordsTests(unittest.TestCase):
+    """F-129: where and how often records can be written."""
+
+    def setUp(self) -> None:
+        self.record = {
+            "verificationVersion": 1,
+            "fixtureId": "p28-xdr-record-test",
+            "fixtureSha256": "0" * 64,
+            "method": "structural",
+            "checkedAt": "2026-10-22T00:00:00Z",
+            "verifier": {"name": "protocolcanary-fixtures-validate", "version": "x"},
+            "outcome": "matched",
+            "evidenceRef": None,
+        }
+
+    def test_a_missing_nested_output_directory_is_created(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "one" / "two" / "records"
+            written = record_structural.write_records(
+                {self.record["fixtureId"]: self.record}, output
+            )
+            self.assertEqual(written, [output / "p28-xdr-record-test.json"])
+            self.assertTrue(written[0].is_file())
+            self.assertEqual(
+                json.loads(written[0].read_text(encoding="utf-8")), self.record
+            )
+
+    def test_writing_twice_into_the_same_directory_succeeds_and_overwrites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "records"
+            fixture_id = self.record["fixtureId"]
+            first = dict(self.record, checkedAt="2026-10-22T00:00:01Z")
+            second = dict(self.record, checkedAt="2026-10-22T00:00:02Z")
+            record_structural.write_records({fixture_id: first}, output)
+            written = record_structural.write_records({fixture_id: second}, output)
+            self.assertEqual(len(written), 1)
+            self.assertEqual(
+                json.loads(written[0].read_text(encoding="utf-8"))["checkedAt"],
+                second["checkedAt"],
+            )
+
+
+class StructuralCheckTests(unittest.TestCase):
+    """F-129: a fixture file that cannot be loaded is reported, not skipped."""
+
+    def test_a_valid_fixture_is_returned_and_the_invalid_one_named(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good = root / "good.toml"
+            good.write_text(VALID_FIXTURE, encoding="utf-8")
+            bad = root / "bad.toml"
+            bad.write_text("not = [valid\n", encoding="utf-8")
+            fixtures, problems = record_structural.structural_check(root)
+
+        self.assertEqual([fixture_id for fixture_id, _path in fixtures], ["p28-xdr-record-test"])
+        self.assertEqual([path.name for _fixture_id, path in fixtures], ["good.toml"])
+        self.assertTrue(problems, "the invalid fixture produced no problem")
+        self.assertTrue(
+            any("bad.toml" in problem for problem in problems),
+            f"no problem names the invalid file: {problems}",
+        )
+
+
+class RunErrorTests(unittest.TestCase):
+    """F-129: the two refusals that no other test executes."""
+
+    def test_a_pack_with_no_fixture_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp)
+            output = pack / "records"
+            with self.assertRaises(record_structural.RecordError) as caught:
+                record_structural.run(pack, output_dir=output)
+            self.assertIn("holds no fixture to record", str(caught.exception))
+            self.assertFalse(output.exists())
+
+    def test_a_record_the_validator_refuses_is_not_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pack = root / "protocol-28"
+            pack.mkdir()
+            (pack / "good.toml").write_text(VALID_FIXTURE, encoding="utf-8")
+            output = root / "records"
+            with mock.patch.object(
+                record_structural.validate,
+                "validate_evidence",
+                return_value=["a record problem"],
+            ):
+                with self.assertRaises(record_structural.RecordError) as caught:
+                    record_structural.run(pack, output_dir=output, version="test")
+            self.assertIn("does not satisfy the CF-04 rules", str(caught.exception))
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
