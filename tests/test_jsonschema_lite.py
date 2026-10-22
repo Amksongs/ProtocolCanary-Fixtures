@@ -64,6 +64,70 @@ class KeywordTests(unittest.TestCase):
         self.assertEqual(self.errors("xxabcxx", {"pattern": "abc"}), [])
         self.assertNotEqual(self.errors("xxabxx", {"pattern": "^abc$"}), [])
 
+    def test_dollar_anchors_at_the_end_of_the_input(self) -> None:
+        # ECMA-262: $ is the end of the input, not "just before a trailing
+        # newline" as Python's re would have it, so a value ending in \n
+        # fails an anchored pattern (issue #446).
+        digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        errors = self.errors("a" * 64 + "\n", digest)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("does not match pattern", errors[0])
+        self.assertEqual(self.errors("a" * 64, digest), [])
+
+        id_pattern = {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}
+        errors = self.errors("abc\n", id_pattern)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("does not match pattern", errors[0])
+        self.assertEqual(self.errors("abc", id_pattern), [])
+
+    def test_an_embedded_newline_is_not_a_trailing_newline(self) -> None:
+        self.assertNotEqual(self.errors("a\nb", {"pattern": "^[a-z]+$"}), [])
+
+    def test_an_escaped_dollar_stays_a_literal_dollar(self) -> None:
+        schema = {"pattern": r"^a\$$"}
+        self.assertEqual(self.errors("a$", schema), [])
+        self.assertNotEqual(self.errors("a", schema), [])
+
+    def test_a_dollar_inside_a_character_class_stays_a_literal(self) -> None:
+        schema = {"pattern": "^[a$]$"}
+        self.assertEqual(self.errors("a", schema), [])
+        self.assertEqual(self.errors("$", schema), [])
+        # the anchor after the class still means the end of the input
+        self.assertNotEqual(self.errors("a\n", schema), [])
+
+    def test_a_pattern_properties_key_follows_the_same_end_anchor(self) -> None:
+        schema = {
+            "type": "object",
+            "patternProperties": {"^[0-9]+$": {"type": "string"}},
+            "additionalProperties": False,
+        }
+        self.assertEqual(self.errors({"28": "x"}, schema), [])
+        errors = self.errors({"28\n": "x"}, schema)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("unexpected property", errors[0])
+
+    def test_uncompilable_patterns_are_schema_errors_with_schema_paths(self) -> None:
+        for pattern in ("(", r"^\p{L}+$", r"^(?<a>x)$"):
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(lite.SchemaError) as caught:
+                    lite.validate(
+                        {"id": "x"},
+                        {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "pattern": pattern}
+                            },
+                        },
+                    )
+                self.assertIn("$.id", str(caught.exception))
+                self.assertIn(repr(pattern), str(caught.exception))
+
+    def test_uncompilable_pattern_properties_key_is_a_schema_error(self) -> None:
+        with self.assertRaises(lite.SchemaError) as caught:
+            lite.validate({}, {"patternProperties": {"(": {"type": "string"}}})
+        self.assertIn("$", str(caught.exception))
+        self.assertIn("(", str(caught.exception))
+
     def test_numeric_bounds(self) -> None:
         schema = {"type": "integer", "minimum": 1, "maximum": 3}
         self.assertEqual(self.errors(2, schema), [])
@@ -202,4 +266,17 @@ class RegistrySchemaTests(unittest.TestCase):
         bad = self.manifest()
         bad["fixtures"] = []
         self.assertIn("fewer than 1", "\n".join(lite.validate(bad, self.SCHEMA)))
+
+    def test_a_trailing_newline_fails_the_anchored_patterns(self) -> None:
+        # The digest, path and packDigest patterns are anchored; a value
+        # carrying a trailing newline must not pass them (issue #446).
+        bad = self.manifest()
+        bad["fixtures"][0]["sha256"] = self.SHA + "\n"
+        bad["fixtures"][0]["path"] = "xdr/a.toml\n"
+        bad["packDigest"] = "sha256:" + self.SHA + "\n"
+        text = "\n".join(lite.validate(bad, self.SCHEMA))
+        self.assertIn("$.fixtures[0].sha256", text)
+        self.assertIn("$.fixtures[0].path", text)
+        self.assertIn("$.packDigest", text)
+        self.assertIn("does not match pattern", text)
 

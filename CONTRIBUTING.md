@@ -55,8 +55,10 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    credentials. A link into GitHub (`github.com/.../blob/...` or
    `raw.githubusercontent.com/...`) must name a full commit SHA or a release
    tag, not a branch such as `master`, so it keeps describing what the
-   fixture was written against; documentation pages have no ref to pin. The
-   header comment (a `#`
+   fixture was written against; documentation pages have no ref to pin.
+   The host name in a `source_reference` URL may only contain ASCII letters,
+   digits, `.` and `-` without empty labels or percent-encoding (non-ASCII hosts
+   must be written in punycode). The header comment (a `#`
    comment block above the TOML body) explains, in prose, how the expected
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
@@ -432,6 +434,7 @@ Quick reference for what contributors hit most often. Each line is the error as
 | `expect.message_contains must be a string, got ...` / `expect.message_contains must not be empty; ...` | The loader reads the field with `toml::Value::as_str`, so a non-string is silently dropped and an empty string matches every message — either way the fixture asserts less than it appears to. Quote the needle, or omit the key entirely to assert only that the simulation fails. |
 | `field 'expected_base64' is only allowed for kind 'encode-equals', not 'roundtrip'` | `expected_base64` states the expected encoding, and only an `encode-equals` fixture has one; the loader rejects the field for every other kind. Use `kind = "encode-equals"`, or drop the field. |
 | `README.md's fixtures badge is stale; run ...` | You added or removed a `*.toml`, so the fixture count in README.md is now wrong. Run `make badge` and commit the result. |
+| `git diff --exit-code` shows `registry-v1.json` as changed (CI step `check-registry`) | You changed a fixture or payload without regenerating the pack's registry manifest. Run `python3 tools/registry/generate.py protocol-28` (or, for an empty baseline, `python3 tools/registry/generate.py protocol-29 --allow-empty --protocol 29`) and commit the regenerated `registry-v1.json`. |
 | `missing required field '...'` with no obvious cause | Historically a typo'd duplicate of the intended field (e.g. `soure_reference`). Unknown keys are now rejected outright and named — see [Unknown top-level fields](#unknown-top-level-fields). |
 
 `make check` runs these in CI's order (`validate` → `badge-check` → `test`) and
@@ -462,6 +465,52 @@ introducing commit instead:
 
 A changelog entry without one of these links is not ready for review.
 
+### Automated CHANGELOG validation (rule [F-055])
+
+Pull request CI validates that a changelog entry is present whenever a pull
+request modifies governed files:
+
+- **Governed paths** requiring an entry under `## [Unreleased]`:
+  - Protocol packs (`protocol-*/`)
+  - Schemas (`schemas/`)
+  - Tools and scripts (`tools/`)
+- **Exempt paths** that do not require an entry when changed on their own:
+  - Documentation (`docs/`, root `README.md`, `CONTRIBUTING.md`, `SECURITY.md`)
+  - Tests (`tests/`)
+  - CI workflows (`.github/`)
+  - Repository configuration (`Makefile`, `.gitignore`, `.gitattributes`)
+
+If a pull request modifies governed files without modifying `CHANGELOG.md`, the
+pull request CI job will fail.
+
+#### Opting out with the `no-changelog` label
+
+If a pull request touches governed files but represents an internal refactoring,
+code cleanup, or other non-user-facing change that does not warrant a changelog
+entry, apply the **`no-changelog`** label to the pull request. CI reads pull
+request labels from the event payload and bypasses the changelog check when
+`no-changelog` is present.
+
+#### Checking changelog status locally
+
+Contributors can check changelog compliance locally before opening or pushing a
+PR:
+
+```bash
+# Compare working branch against origin/main:
+python3 tools/validate/check_changelog.py --base origin/main
+
+# Or check specific changed files:
+python3 tools/validate/check_changelog.py protocol-28/xdr/fixture.toml CHANGELOG.md
+
+# Or via make:
+make check-changelog
+```
+
+*(Note: CI does not require the changelog entry to include the PR number at check
+time, since the PR number is not known before the pull request is opened. You can
+add the link with the assigned PR number before merge.)*
+
 ## Development setup
 
 No build system is required. `tools/validate/validate.py` uses only the
@@ -473,6 +522,7 @@ For convenience, a `Makefile` wraps the commands CI runs:
 - `make badge` — regenerates README.md's fixture-count badge.
 - `make badge-check` — fails if that badge is stale.
 - `make test` — the repository test suite.
+- `make check-changelog` — verify CHANGELOG entry for changed files.
 - `make check-links` — check fixture source reference links across all packs.
 - `make coverage` — the test suite under branch coverage of `tools/`, failing
   below `.coveragerc`'s threshold. Needs the development-only dependency

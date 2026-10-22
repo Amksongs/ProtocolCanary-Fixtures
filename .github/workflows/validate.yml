@@ -49,6 +49,27 @@ jobs:
         # without regenerating it, so the count cannot silently drift.
         run: python3 tools/badge/badge.py --check
 
+      - name: check-registry
+        # Each pack's registry-v1.json is generated from the pack by
+        # tools/registry/generate.py (CF-02, issue #269). Regenerate both
+        # committed registries and fail if the result differs from what is
+        # committed: a fixture or payload edited without rerunning the
+        # generator shows up as a changed sha256, and `git diff --exit-code`
+        # prints that diff before exiting non-zero, so the log names the stale
+        # entries. protocol-29 is an empty baseline, hence --allow-empty with
+        # its matching --protocol (docs/releasing.md step 2.4).
+        #
+        # `git add --intent-to-add` runs first so a registry file that a
+        # commit deleted (or any not-yet-tracked registry) is shown by
+        # `git diff` as an added file instead of being invisible as untracked.
+        # It only records the path in the local index; nothing is committed or
+        # pushed. Runs on every push and pull request, like the steps above.
+        run: |
+          python3 tools/registry/generate.py protocol-28
+          python3 tools/registry/generate.py protocol-29 --allow-empty --protocol 29
+          git add --intent-to-add protocol-28/registry-v1.json protocol-29/registry-v1.json
+          git diff --exit-code -- protocol-28/registry-v1.json protocol-29/registry-v1.json
+
       - name: Repository tests
         run: python3 -m unittest discover tests -v
 
@@ -136,3 +157,29 @@ jobs:
 
       - name: Check fixture source reference links
         run: python3 tools/validate/check_source_links.py --summary-file "$GITHUB_STEP_SUMMARY"
+
+  changelog:
+    # A CHANGELOG entry under ## [Unreleased] is required for pull requests that
+    # modify fixtures, schemas, or tools (rule [F-055]). Exempt PRs can use
+    # the 'no-changelog' label. This check runs on pull requests only, never on
+    # pushes to main or scheduled runs.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11.16"
+
+      - name: Validate CHANGELOG entry
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: >-
+          python3 tools/validate/check_changelog.py
+          --base "origin/${{ github.base_ref }}"
+          --event-path "$GITHUB_EVENT_PATH"
+          --summary-file "$GITHUB_STEP_SUMMARY"
+

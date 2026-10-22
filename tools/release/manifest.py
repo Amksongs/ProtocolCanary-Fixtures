@@ -45,6 +45,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.release import run_records
+from tools.common.json_strict import JSONInputError, load_json
+from tools.common import paths
 
 NAME = "protocolcanary-fixtures"
 MANIFEST_VERSION = 1
@@ -162,8 +164,12 @@ def build_manifest(
     if registry_bytes is None:
         raise ManifestError(f"the archive has no {REGISTRY_NAME} at its root")
     try:
-        registry = json.loads(registry_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        registry = load_json(registry_bytes.decode("utf-8"), REGISTRY_NAME)
+    except (UnicodeDecodeError, JSONInputError) as error:
+        if isinstance(error, JSONInputError) and error.json_error is not None:
+            raise ManifestError(
+                f"{REGISTRY_NAME} is not valid JSON: {error.json_error}"
+            ) from None
         raise ManifestError(f"{REGISTRY_NAME} is not valid JSON: {error}") from None
     if not isinstance(registry, dict):
         raise ManifestError(f"{REGISTRY_NAME} must be a JSON object")
@@ -298,6 +304,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     records: list[dict] | None = None
+    output = args.output or args.archive.with_name(
+        args.archive.name.removesuffix(".tar.gz") + ".manifest.json"
+    )
+    try:
+        paths.check_target_safety(output, [(args.archive, "the release archive")])
+        if args.sha256_file is not None:
+            paths.check_target_safety(args.sha256_file, [(args.archive, "the release archive")])
+            if paths.is_same_file(output, args.sha256_file):
+                raise ValueError(
+                    f"refusing to write {output}: --output and --sha256-file name the same file"
+                )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+
     try:
         if args.runs is not None:
             records = run_records.load_run_records(args.runs)
