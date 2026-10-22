@@ -58,16 +58,21 @@ def _load(name: str, relative: str):
 # only once it is complete.
 atomic_write = _load("canary_atomic_write", "tools/common/atomic_write.py")
 write_bytes_atomic = atomic_write.write_bytes_atomic
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common import pack_limits
 
 ARCHIVE_PREFIX = "protocolcanary-fixtures"
 REGISTRY_NAME = "registry.json"
 FILE_MODE = 0o644
 DIRECTORY_MODE = 0o755
 
-MAX_ENTRIES = 2000
-MAX_TOTAL_BYTES = 16 * 1024 * 1024
-MAX_FILE_BYTES = 1024 * 1024
-MAX_DEPTH = 8
+MAX_ENTRIES = pack_limits.MAX_FILES
+MAX_FILES = pack_limits.MAX_FILES
+MAX_TOTAL_BYTES = pack_limits.MAX_TOTAL_BYTES
+MAX_FILE_BYTES = pack_limits.MAX_FILE_BYTES
+MAX_DEPTH = pack_limits.MAX_DEPTH
 
 _VERSION_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 

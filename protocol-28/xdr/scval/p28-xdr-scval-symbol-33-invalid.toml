@@ -1,0 +1,51 @@
+# Protocol 28 / ScVal: a 33-byte symbol is rejected.
+#
+# Complements p28-xdr-scval-symbol-32-boundary.toml: a decoder that accepts
+# malformed input is as much of a compatibility break as one that rejects
+# valid input, because two different byte strings would then decode to the
+# same value and "roundtrip byte identity" would stop meaning anything.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `const SCSYMBOL_LIMIT = 32;` — Stellar-contract.x line 11; `typedef string
+#     SCSymbol<SCSYMBOL_LIMIT>;` — line 12; `case SCV_SYMBOL: SCSymbol sym;` —
+#     lines 300-301.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced 40-byte 32-byte-symbol encoding with two changes: the
+# 4-byte length prefix at offset 4 is set from 32 to 33, and one extra `a`
+# (0x61) byte is inserted after the 32 payload bytes, followed by the three
+# zero pad bytes the new length requires. The crate cannot build this value
+# itself — `SCSymbol` refuses more than 32 bytes — which is why it is a
+# mutation of the valid boundary value rather than crate output.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): ScVal::from_xdr_base64 returns Err ("xdr value max length
+# exceeded") for this input, while the unmodified crate-produced encoding it
+# was derived from decodes and round-trips successfully with the same crate.
+# The source value was built by a program using the pinned crate, with the
+# expression recorded in p28-xdr-scval-symbol-32-boundary.toml's header; the
+# mutation above is the only change. The rejection is the bound, not the
+# encoding: length 33 is well-formed XDR but exceeds SCSYMBOL_LIMIT. A decoder
+# that only checked XDR syntax would accept it and disagree with the reference
+# crate.
+#
+# Every byte is a synthetic structural value, not a capture of a real network
+# object, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-symbol-33-invalid"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "A 33-byte symbol, one past SCSYMBOL_LIMIT, is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "decode-failure"
+value_base64 = "AAAADwAAACFhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NWEAAAA="

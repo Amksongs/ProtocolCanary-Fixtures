@@ -1,0 +1,98 @@
+# Protocol 28 / TransactionEnvelope: the ENVELOPE_TYPE_TX_V0 arm round-trips.
+#
+# `TransactionEnvelope` is the union every transaction reaches a network
+# in: the engine decodes it (canary-xdr's XdrTypeName::TransactionEnvelope)
+# and a signer signs it. The union has three arms, and this pack had no
+# evidence for any of them. This fixture covers the ENVELOPE_TYPE_TX_V0
+# arm — the pre-protocol-13 "old-style" envelope whose source account is
+# a bare ed25519 key instead of a MuxedAccount, and whose validity
+# conditions are an optional `TimeBounds` rather than `Preconditions`.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `union TransactionEnvelope` — Stellar-transaction.x lines 1001-1010
+#     (the union itself at 1002-1010);
+#   * `enum EnvelopeType` — Stellar-ledger-entries.x lines 653-669;
+#   * `struct TransactionV0Envelope` — Stellar-transaction.x lines 924-930;
+#   * `struct TransactionV0` — Stellar-transaction.x lines 902-922;
+#   * `struct Operation` — Stellar-transaction.x lines 653-719;
+#   * `struct PaymentOp` — Stellar-transaction.x lines 92-97;
+#   * `struct DecoratedSignature` — Stellar-transaction.x lines 33-37;
+#   * `typedef int64 SequenceNumber` — Stellar-ledger-entries.x line 15;
+#   * `typedef opaque Signature<64>` and `typedef opaque SignatureHint[4]`
+#     — Stellar-types.x lines 80 and 82.
+#
+# Why it matters: the v0 arm is the arm every other arm has to stay
+# compatible with — the protocol still accepts a v0 envelope, and a
+# decoder that mis-handles the bare `uint256 sourceAccountEd25519` (no
+# CryptoKeyType discriminant in front of it) or the `TimeBounds*`
+# presence flag would read a legacy transaction wrongly. This fixture
+# proves the arm round-trips: decoding the value and re-encoding it must
+# reproduce exactly these bytes.
+#
+# The payload was produced by a program that builds the typed value
+# with the official `stellar-xdr` 28.0.1 crate (features base64 and
+# alloc — the crate version Protocol-Canary's canary-xdr pins for
+# Protocol 28) and serialises it, never hand-assembled. Generation
+# expression, recorded verbatim (the crate's ReadXdr/WriteXdr impls
+# provide to_xdr_base64/from_xdr_base64 over Limits::none()):
+#
+#
+#   TransactionEnvelope::TxV0(TransactionV0Envelope {
+#       tx: TransactionV0 {
+#           source_account_ed25519: Uint256([0x11; 32]),
+#           fee: 100,
+#           seq_num: SequenceNumber(1_234_567),
+#           time_bounds: Some(TimeBounds {
+#               min_time: TimePoint(0),
+#               max_time: TimePoint(1_760_000_000),
+#           }),
+#           memo: Memo::None,
+#           operations: vec![Operation {
+#               source_account: None,
+#               body: OperationBody::Payment(PaymentOp {
+#                   destination: MuxedAccount::Ed25519(Uint256([0x22; 32])),
+#                   asset: Asset::Native,
+#                   amount: 1_000,
+#               }),
+#           }].try_into().unwrap(),
+#           ext: TransactionV0Ext::V0,
+#       },
+#       signatures: vec![DecoratedSignature {
+#           hint: SignatureHint([0x33; 4]),
+#           signature: Signature(BytesM::try_from(vec![0x33; 64]).unwrap()),
+#       }].try_into().unwrap(),
+#   }).to_xdr_base64(Limits::none())
+#
+# The whole program — every arm and every decode-failure value of this
+# issue, in one `main` — is quoted in the pull request that adds these
+# fixtures.
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13);
+# generated 2026-10-22 (UTC). The same crate round-tripped the value:
+# TransactionEnvelope::from_xdr_base64 followed by to_xdr reproduced the
+# 212-byte encoding exactly, byte for byte.
+#
+# Every payload byte is a synthetic structural value, not a capture of a
+# real network object: the 0x11-filled source account is not a real
+# account, the 0x22-filled payment destination is not a real account, the
+# 0x33-filled signature hint and signature are not a signature made by any
+# key (no secret key is used anywhere), the fee, the sequence number and the
+# time bounds are arbitrary fixed numbers, and the payment's amount is an
+# arbitrary fixed integer.
+#
+# The signature does not sign anything: it is not a submitted transaction
+# and was never observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x
+
+id = "p28-xdr-transaction-envelope-v0-roundtrip"
+protocol = 28
+surface = "xdr"
+category = "transaction-envelope"
+description = "A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX_V0` arm round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x"
+
+type = "TransactionEnvelope"
+kind = "roundtrip"
+value_base64 = "AAAAABERERERERERERERERERERERERERERERERERERERERERAAAAZAAAAAAAEtaHAAAAAQAAAAAAAAAAAAAAAGjneAAAAAAAAAAAAQAAAAAAAAABAAAAACIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAAAAAAAAAAAAAPoAAAAAAAAAAEzMzMzAAAAQDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM="

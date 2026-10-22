@@ -16,11 +16,18 @@ request. See README.md's "Fixtures badge" section.
 Usage:
     python3 tools/badge/badge.py            # rewrite README.md in place
     python3 tools/badge/badge.py --check    # exit 1 if README.md is stale
+    python3 tools/badge/badge.py --help     # print usage and exit 0
+
+Arguments are parsed with argparse: ``--help`` prints usage and exits 0, and
+an unknown or misspelt argument prints usage to stderr and exits 2 -- in both
+cases before README.md is read or written, so a typo in CI can neither run
+the write mode silently nor mask a stale badge.
 
 Requires Python 3.11+ (the validator it reuses uses the stdlib ``tomllib``).
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 from pathlib import Path
@@ -83,8 +90,36 @@ def render(readme: str, count: int) -> str:
     )
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """The command-line contract: only ``--check`` is an option.
+
+    argparse supplies ``--help`` (usage on stdout, exit 0) and rejects any
+    unknown argument (usage on stderr, exit 2) before this tool reads or
+    writes a single byte of README.md.
+    """
+    parser = argparse.ArgumentParser(
+        prog="badge.py",
+        allow_abbrev=False,
+        description="Generate (or verify) the fixture-count badge in README.md.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 if README.md's badge is stale instead of rewriting it (what CI runs)",
+    )
+    return parser
+
+
 def main(argv: list[str]) -> int:
-    check = "--check" in argv
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as exc:
+        # argparse has already printed usage and chosen the status (--help:
+        # stdout, exit 0; unknown argument: stderr, exit 2); translate it into
+        # this function's int-returning contract. README.md has not been read
+        # or written at this point, so a typo never touches it.
+        return exc.code if isinstance(exc.code, int) else 0
+    check = args.check
     try:
         readme = README_PATH.read_text(encoding="utf-8")
         count = count_fixtures(REPO_ROOT)

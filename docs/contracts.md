@@ -11,16 +11,23 @@ current behavior is the one described in the README and `CONTRIBUTING.md`.
 Implemented so far: the shared conformance vectors (`tests/vectors/cf-02/`,
 checked by `tests/test_cf02_vectors.py`), which is CF-02-A; the registry JSON
 Schema; and the registry generator (`tools/registry/generate.py`,
-`make registry`), which is CF-02-B and CF-02-C. The generated
-`registry-v1.json` is not committed yet: that, and the CI freshness check that
-goes with it, is CF-02-E. Also still open: CF-02-D (the registry validator
+`make registry`), which is CF-02-B and CF-02-C. The registry comparison tool
+(`tools/registry/diff.py`, `make registry-diff`) reports which fixtures were
+added, removed or changed between two registries, so a pack release can be
+described from the registry data instead of by hand; it reads only the two
+registry files and changes no contract. Both packs' generated
+`registry-v1.json` files are committed (`protocol-28/registry-v1.json`,
+`protocol-29/registry-v1.json`), and CI's `check-registry` step in
+`.github/workflows/validate.yml` regenerates them on every push and pull
+request and fails when either differs from the committed file — that is
+CF-02-E. Also still open: CF-02-D (the registry validator
 rules), CF-02-F (the Rust pack walker and digest that must match CF-02-A) and
 CF-02-H (`.gitattributes` pinning LF for pack files).
 
 | Contract | What this repository owns |
 |---|---|
 | [CF-02 Registry and pack digest](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-02-registry-and-digest.md) | The registry generator, the registry JSON Schema, the validator rules and the CI freshness check. Python must agree byte for byte with the Rust implementation in the engine; the shared conformance vectors (CF-02-A) live in [`tests/vectors/cf-02/`](../tests/vectors/cf-02/). |
-| [CF-04 Verification evidence](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-04-verification-evidence.md) | Evidence records for fixtures, the freshness report, and the Protocol 29 boundary text. No Protocol 29 fixture is added without live evidence recorded under that contract. |
+| [CF-04 Verification evidence](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-04-verification-evidence.md) | Evidence records for fixtures, the freshness report, and the Protocol 29 boundary text. No Protocol 29 fixture is added without live evidence recorded under that contract. The scheduled read-only job that keeps the live evidence fresh is described in [`docs/live-verification.md`](live-verification.md). |
 | [CF-06 Canonical fixture releases](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-06-fixture-releases.md) | The deterministic archive builder, the release manifest, the release workflow and the immutability rules. The existing `protocol-28` tag keeps its meaning. |
 | [CF-07 Project detection](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-07-project-roots-and-detection.md) | Only the `required_capabilities` vocabulary: it must match the engine's `Capability` set, enforced by a cross-language test. |
 
@@ -90,6 +97,18 @@ them are closed vocabularies that contributors hit first:
   `4418690`) and contract `ca-01-rpc-requests-and-assertions.md`.
   `field-number-range` accepts `field`, and at least one of `min` and `max`
   (integers or finite floats, with `min <= max`).
+- **RPC `method` and `[request]` validation (F-052, F-017).** `tools/validate/validate.py`
+  and `schemas/fixture-v1.schema.json` accept `get-network`, `get-latest-ledger`,
+  `get-health`, `get-version-info`, `get-fee-stats`, `get-ledger-entries`,
+  `get-transaction`, `get-ledgers`, `get-transactions` and `get-events`, mirroring
+  `crates/canary-rpc/src/request.rs` (read at Protocol-Canary commit
+  `94d7c794780a7c87944c5177ff1f8eb3edec300e`) and contract CA-01-K:
+  - `get-network`, `get-latest-ledger`, `get-health`, `get-version-info` and
+    `get-fee-stats` take no parameters and reject a `[request]` table;
+  - `get-ledger-entries` requires `keys` (an array of non-empty base64 strings, at most 50 entries) and optionally accepts `xdrFormat = "base64"`;
+  - `get-transaction` requires `hash` (64 lowercase hex characters) and optionally accepts `xdrFormat = "base64"`;
+  - `get-ledgers` and `get-transactions` optionally accept `startLedger` (a 32-bit unsigned integer, `0 <= startLedger <= 4294967295`), `[pagination]` (with `cursor` as a non-empty string and/or `limit` as an integer `1 <= limit <= 50`), and `xdrFormat = "base64"`;
+  - `get-events` optionally accepts `startLedger`, `endLedger`, `pagination`, `xdrFormat`, and `[[filters]]` (at most 2 filter tables; each filter may specify `type` from `"contract"`, `"system"`, `"diagnostic"`, `contractIds` with up to 5 strings, and `topics` with up to 5 arrays of up to 5 strings).
 
 `tools/validate/schema_sync.py` keeps the validator and
 [`schemas/fixture-v1.schema.json`](../schemas/fixture-v1.schema.json) in

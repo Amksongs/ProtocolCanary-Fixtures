@@ -58,6 +58,11 @@ def _load(name: str, relative: str):
 # only once it is complete.
 atomic_write = _load("canary_atomic_write", "tools/common/atomic_write.py")
 write_bytes_atomic = atomic_write.write_bytes_atomic
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common.json_strict import JSONInputError, load_json
+from tools.common import paths
 
 NAME = "protocolcanary-fixtures"
 MANIFEST_VERSION = 1
@@ -78,6 +83,18 @@ class ManifestError(Exception):
 
 def _utf8_key(text: str) -> bytes:
     return text.encode("utf-8")
+
+
+def archive_version(name: str) -> str | None:
+    """The version embedded in a pack archive's file name, if it has one.
+
+    ``protocolcanary-fixtures-1.2.3.tar.gz`` gives ``1.2.3``; any other name
+    gives ``None``. The consumer side reads the version of an archive from
+    the same helper, so the two tools cannot disagree about what the name
+    says.
+    """
+    match = _ARCHIVE_RE.fullmatch(name)
+    return match.group(1) if match else None
 
 
 def _pack_digest(files: dict[str, bytes]) -> str:
@@ -128,14 +145,13 @@ def build_manifest(
     """The manifest mapping, in the key order the contract shows."""
     if not archive.is_file():
         raise ManifestError(f"archive not found: {archive}")
-    match = _ARCHIVE_RE.fullmatch(archive.name)
     if version is None:
-        if not match:
+        version = archive_version(archive.name)
+        if version is None:
             raise ManifestError(
                 f"cannot read the version from {archive.name!r}; expected "
                 f"{NAME}-MAJOR.MINOR.PATCH.tar.gz"
             )
-        version = match.group(1)
     elif not re.fullmatch(_ENGINE_RE.pattern, version):
         raise ManifestError(f"version {version!r} is not MAJOR.MINOR.PATCH")
     if not _REVISION_RE.fullmatch(revision):
@@ -156,8 +172,12 @@ def build_manifest(
     if registry_bytes is None:
         raise ManifestError(f"the archive has no {REGISTRY_NAME} at its root")
     try:
-        registry = json.loads(registry_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        registry = load_json(registry_bytes.decode("utf-8"), REGISTRY_NAME)
+    except (UnicodeDecodeError, JSONInputError) as error:
+        if isinstance(error, JSONInputError) and error.json_error is not None:
+            raise ManifestError(
+                f"{REGISTRY_NAME} is not valid JSON: {error.json_error}"
+            ) from None
         raise ManifestError(f"{REGISTRY_NAME} is not valid JSON: {error}") from None
     if not isinstance(registry, dict):
         raise ManifestError(f"{REGISTRY_NAME} must be a JSON object")
@@ -250,6 +270,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    output = args.output or args.archive.with_name(
+        args.archive.name.removesuffix(".tar.gz") + ".manifest.json"
+    )
+    try:
+        paths.check_target_safety(output, [(args.archive, "the release archive")])
+        if args.sha256_file is not None:
+            paths.check_target_safety(args.sha256_file, [(args.archive, "the release archive")])
+            if paths.is_same_file(output, args.sha256_file):
+                raise ValueError(
+                    f"refusing to write {output}: --output and --sha256-file name the same file"
+                )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+
     try:
         manifest = build_manifest(args.archive, revision=args.revision, engines=args.engine)
     except ManifestError as error:

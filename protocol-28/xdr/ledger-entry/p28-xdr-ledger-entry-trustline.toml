@@ -1,0 +1,65 @@
+# Protocol 28 / LedgerEntry: a `TRUSTLINE` entry round-trips.
+#
+# What this tests:
+# a `TRUSTLINE` ledger entry: `lastModifiedLedgerSeq` 1_234_568, the
+# `TRUSTLINE` discriminant (1), and a `TrustLineEntry` for a synthetic account
+# holding an `ASSET_TYPE_CREDIT_ALPHANUM4` asset with code `USD\0` and a
+# synthetic issuer, balance 25_000_000, limit `i64::MAX`, flags 1 and the V0
+# ext arm.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `struct TrustLineEntry` — Stellar-ledger-entries.x lines 276-307; `union
+#     TrustLineAsset` — lines 247-262; `enum AssetType` — lines 24-30; `struct
+#     AlphaNum4` — lines 43-47; `typedef opaque AssetCode4[4]` — line 19;
+#     `typedef PublicKey AccountID` — Stellar-types.x line 85.
+#   * `enum LedgerEntryType` — Stellar-ledger-entries.x lines 92-104;
+#   * `struct LedgerEntry` (lastModifiedLedgerSeq, the data union and the ext
+#     union) — lines 548-586.
+#
+# Why it matters:
+# Trustlines carry issued assets, and the asset arm is a union whose
+# `AlphaNum4` body is a fixed 4-byte code plus an issuer account. Getting the
+# asset arm wrong changes which asset the line is for — a value-integrity
+# failure, not a formatting one.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this entry and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   LedgerEntry { last_modified_ledger_seq: 1_234_568, data: LedgerEntryData::Trustline(TrustLineEntry { account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0x33; 32]))), asset: TrustLineAsset::CreditAlphanum4(AlphaNum4 { asset_code: AssetCode4([b'U', b'S', b'D', 0]), issuer: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0x44; 32]))) }), balance: 25_000_000, limit: i64::MAX, flags: 1, ext: TrustLineEntryExt::V0 }), ext: LedgerEntryExt::V0 }
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# ledger entry and not an account, trustline, contract or balance that exists
+# on any network: the 0x11/0x33-filled account ids, the 0x44-filled issuer,
+# the 0x22-filled contract id, the 0x55-filled code hash and the 0x66-filled
+# TTL key hash are fixed placeholders, no secret key is used or represented
+# anywhere, and the balances, sequence numbers and ledger numbers are
+# arbitrary constants. The contract-code bytes are opaque synthetic bytes, not
+# a real WASM module. Nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x
+
+id = "p28-xdr-ledger-entry-trustline"
+protocol = 28
+surface = "xdr"
+category = "ledger-entry"
+description = "A `TRUSTLINE` `LedgerEntry` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x"
+
+type = "LedgerEntry"
+kind = "roundtrip"
+value_base64 = "ABLWiAAAAAEAAAAAMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMAAAABVVNEAAAAAABERERERERERERERERERERERERERERERERERERERERERAAAAAABfXhAf/////////8AAAABAAAAAAAAAAA="

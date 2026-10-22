@@ -15,6 +15,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -769,6 +770,8 @@ class ValidatorTests(unittest.TestCase):
     def test_load_fixture_handles_unreadable_file_oserror(self) -> None:
         report = validate.Report()
         path = Path("unreadable.toml")
+        # load_fixture reads bytes (F-112), so the read error must come from
+        # read_bytes and still be reported as "failed to read file".
         with mock.patch.object(Path, "read_bytes", side_effect=OSError("Permission denied")):
             result = validate.load_fixture(path, report)
         self.assertIsNone(result)
@@ -1178,6 +1181,597 @@ field = "error"
 """
         report = self.run_validation({"a.toml": fixture})
         self.assertEqual(report.errors, [])
+
+    # --- F-052 (issue #326): RPC methods and [request] table validation ---
+
+    def test_rpc_parameterless_methods_reject_request_table(self) -> None:
+        for method in ("get-network", "get-latest-ledger"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    # --- F-017 (issue #280): the health and diagnostic RPC methods
+    def test_rpc_health_and_diagnostic_methods_are_accepted(self) -> None:
+        # canary-rpc parses get-health, get-version-info and get-fee-stats
+        # (crates/canary-rpc/src/request.rs, read at Protocol-Canary commit
+        # 94d7c794780a7c87944c5177ff1f8eb3edec300e), so a fixture naming one
+        # of them is a request the engine can run, not a misspelling.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                good = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{method}"'
+                )
+                report = self.run_validation({"a.toml": good})
+                self.assertEqual(report.errors, [], report.errors)
+
+    def test_rpc_health_and_diagnostic_methods_reject_a_request_table(self) -> None:
+        # The engine's parameter table lists these three as taking no
+        # parameters, so a [request] table must be rejected the same way it
+        # is for get-network and get-latest-ledger.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    def test_rpc_fixture_rejects_misspelled_health_method_names(self) -> None:
+        # The accepted names are the engine's own kebab-case spellings;
+        # an underscore or camelCase spelling of the same method is not
+        # accepted, and the diagnostic must name the allowed methods.
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                bad = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{invalid_method}"'
+                )
+                report = self.run_validation({"a.toml": bad})
+                errors = [e for e in report.errors if "'method'" in e]
+                self.assertEqual(len(errors), 1, report.errors)
+                self.assertIn(invalid_method, errors[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, errors[0])
+
+    def test_the_test_fixtures_cover_each_health_and_diagnostic_method(self) -> None:
+        # Accepting a method and never using it leaves the vocabulary
+        # unproven, so F-017 also ships one fixture per method, under
+        # tests/fixtures/rpc/. They stay out of a protocol pack on purpose:
+        # a pack's RPC fixtures must all be capturable by
+        # tools/evidence/capture_live.py, whose allowlist is the three
+        # read-only methods CF-04 section 8 names.
+        rpc_fixtures = REPO_ROOT / "tests" / "fixtures" / "rpc"
+        report = validate.validate_directory(rpc_fixtures)
+        self.assertEqual(report.errors, [], report.errors)
+        methods: list[str] = []
+        for path in sorted(rpc_fixtures.glob("*.toml")):
+            with open(path, "rb") as handle:
+                methods.append(tomllib.load(handle)["method"])
+        self.assertEqual(
+            sorted(methods),
+            ["get-fee-stats", "get-health", "get-version-info"],
+        )
+
+    def test_the_schema_accepts_the_health_and_diagnostic_methods(self) -> None:
+        # The validator leg is covered above; this is the schema leg (F-017).
+        # jsonschema_lite cannot run the schema's allOf/if/then blocks, so the
+        # rpc method enum is checked directly, which is the part of the
+        # schema that decides whether these names are authorable.
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                self.assertIn(method, method_schema["enum"])
+                self.assertEqual(jsonschema_lite.validate(method, method_schema), [])
+
+    def test_the_schema_rejects_misspelled_health_method_names(self) -> None:
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                problems = jsonschema_lite.validate(invalid_method, method_schema)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(invalid_method, problems[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, problems[0])
+                    self.assertIn(supported, method_schema["enum"])
+
+    def test_rpc_get_ledger_entries_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-entries"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-ledger-entries"
+"""
+        # Missing [request] table entirely
+        no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": no_req})
+        self.assertTrue(any("requires a [request] table with 'keys'" in e for e in rep.errors))
+
+        # Valid keys and xdrFormat
+        valid = base + """
+[request]
+keys = ["AAAAAA=="]
+xdrFormat = "base64"
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # Empty keys
+        empty_keys = base + """
+[request]
+keys = []
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": empty_keys})
+        self.assertTrue(any("keys: must not be empty" in e for e in rep.errors))
+
+        # 50 keys accepted
+        fifty = base + f"""
+[request]
+keys = {['AAAA'] * 50}
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": fifty})
+        self.assertEqual(rep.errors, [])
+
+        # 51 keys rejected (> MAX_KEYS)
+        fifty_one = base + f"""
+[request]
+keys = {['AAAA'] * 51}
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": fifty_one})
+        self.assertTrue(any("allows at most 50" in e for e in rep.errors))
+
+        # Non-base64 key
+        bad_b64 = base + """
+[request]
+keys = ["not base64!"]
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": bad_b64})
+        self.assertTrue(any("not a base64 string" in e for e in rep.errors))
+
+        # Unknown key in request
+        extra_key = base + """
+[request]
+keys = ["AAAAAA=="]
+unknownKey = 123
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": extra_key})
+        self.assertTrue(any("unknown [request] key(s)" in e for e in rep.errors))
+
+        # Invalid xdrFormat
+        bad_format = base + """
+[request]
+keys = ["AAAAAA=="]
+xdrFormat = "json"
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": bad_format})
+        self.assertTrue(any("only 'base64' is supported" in e for e in rep.errors))
+
+    def test_rpc_get_transaction_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-tx"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-transaction"
+"""
+        # Missing hash
+        no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": no_req})
+        self.assertTrue(any("requires a [request] table with 'hash'" in e for e in rep.errors))
+
+        # Valid 64 lowercase hex
+        valid = base + f"""
+[request]
+hash = "{"ab" * 32}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # Uppercase hex rejected
+        bad_upper = base + f"""
+[request]
+hash = "{"AB" * 32}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_upper})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+        # Wrong length (63 chars)
+        bad_len = base + f"""
+[request]
+hash = "{"a" * 63}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_len})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+        # Non-hex characters
+        bad_chars = base + f"""
+[request]
+hash = "{"g" * 64}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_chars})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+    def test_rpc_paged_methods_pagination_and_limits(self) -> None:
+        for method in ("get-ledgers", "get-transactions"):
+            with self.subTest(method=method):
+                base = f"""
+id = "p28-rpc-paged"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+"""
+                # Valid without [request] table
+                valid_no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": valid_no_req})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 1 accepted
+                lim1 = base + """
+[request]
+startLedger = 0
+[request.pagination]
+limit = 1
+cursor = "c1"
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim1})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 50 accepted
+                lim50 = base + """
+[request.pagination]
+limit = 50
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim50})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 0 rejected
+                lim0 = base + """
+[request.pagination]
+limit = 0
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim0})
+                self.assertTrue(any("limit 0 is outside 1..=50" in e for e in rep.errors))
+
+                # Pagination limit = 51 rejected
+                lim51 = base + """
+[request.pagination]
+limit = 51
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim51})
+                self.assertTrue(any("limit 51 is outside 1..=50" in e for e in rep.errors))
+
+                # Empty cursor rejected
+                empty_cur = base + """
+[request.pagination]
+cursor = ""
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": empty_cur})
+                self.assertTrue(any("cursor must be a non-empty string" in e for e in rep.errors))
+
+                # Unknown key in pagination
+                bad_pag_key = base + """
+[request.pagination]
+unknown = 1
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": bad_pag_key})
+                self.assertTrue(any("expected 'cursor' or 'limit'" in e for e in rep.errors))
+
+                # startLedger out of range: negative
+                neg_ledger = base + """
+[request]
+startLedger = -1
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": neg_ledger})
+                self.assertTrue(any("is not a ledger sequence" in e for e in rep.errors))
+
+                # startLedger > 4294967295
+                huge_ledger = base + """
+[request]
+startLedger = 4294967296
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": huge_ledger})
+                self.assertTrue(any("is not a ledger sequence" in e for e in rep.errors))
+
+    def test_rpc_get_events_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-events"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-events"
+"""
+        # Valid events request
+        valid = base + """
+[request]
+startLedger = 100
+endLedger = 200
+[[request.filters]]
+type = "contract"
+contractIds = ["CAAA", "CBBB"]
+topics = [["topic1"], ["topic2"]]
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # More than 2 filters rejected
+        three_filters = base + """
+[request]
+[[request.filters]]
+type = "contract"
+[[request.filters]]
+type = "system"
+[[request.filters]]
+type = "diagnostic"
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": three_filters})
+        self.assertTrue(any("has 3 filters; the engine allows at most 2" in e for e in rep.errors))
+
+        # Invalid filter type
+        bad_type = base + """
+[request]
+[[request.filters]]
+type = "other"
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": bad_type})
+        self.assertTrue(any("type must be 'contract', 'system' or 'diagnostic'" in e for e in rep.errors))
+
+        # Filter contractIds > 5 rejected
+        six_cids = base + f"""
+[request]
+[[request.filters]]
+type = "contract"
+contractIds = {['C' + str(i) for i in range(6)]}
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": six_cids})
+        self.assertTrue(any("contractIds has more than 5 entries" in e for e in rep.errors))
+
+        # Filter topics > 5 rejected
+        six_topics = base + f"""
+[request]
+[[request.filters]]
+type = "contract"
+topics = {[["t"] for _ in range(6)]}
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": six_topics})
+        self.assertTrue(any("topics has more than 5 entries" in e for e in rep.errors))
+
+    def test_rpc_request_structural_edge_cases(self) -> None:
+        from tools.validate.validate import validate_rpc_request, Report
+
+        # 1. request is not a dict
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": "not-a-table"}, Path("a.toml"), rep)
+        self.assertTrue(any("[request] must be a table" in e for e in rep.errors))
+
+        # 2. keys is not a list
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": {"keys": "not-a-list"}}, Path("a.toml"), rep)
+        self.assertTrue(any("keys: must be an array of strings" in e for e in rep.errors))
+
+        # 3. keys entry is not a string
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": {"keys": [123]}}, Path("a.toml"), rep)
+        self.assertTrue(any("keys: entry 0 must be a string" in e for e in rep.errors))
+
+        # 4. hash is not a string
+        rep = Report()
+        validate_rpc_request("get-transaction", {"request": {"hash": 123}}, Path("a.toml"), rep)
+        self.assertTrue(any("hash: must be a string" in e for e in rep.errors))
+
+        # 5. startLedger is bool or not int
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"startLedger": True}}, Path("a.toml"), rep)
+        self.assertTrue(any("startLedger: must be an integer" in e for e in rep.errors))
+
+        # 6. pagination is not a table
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"pagination": "not-a-table"}}, Path("a.toml"), rep)
+        self.assertTrue(any("pagination: must be a table" in e for e in rep.errors))
+
+        # 7. pagination limit is bool or not int
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"pagination": {"limit": "not-int"}}}, Path("a.toml"), rep)
+        self.assertTrue(any("pagination: limit must be an integer" in e for e in rep.errors))
+
+        # 8. filters is not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": "not-a-list"}}, Path("a.toml"), rep)
+        self.assertTrue(any("filters: must be an array of tables" in e for e in rep.errors))
+
+        # 9. filter is not a dict
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": ["not-a-dict"]}}, Path("a.toml"), rep)
+        self.assertTrue(any("filter 0 must be a table" in e for e in rep.errors))
+
+        # 10. filter unknown key
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"bad_key": 1}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("unknown key 'bad_key'" in e for e in rep.errors))
+
+        # 11. filter contractIds not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"contractIds": "not-a-list"}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("contractIds must be an array of strings" in e for e in rep.errors))
+
+        # 12. filter contractIds contains non-string
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"contractIds": [123]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("contractIds must contain only strings" in e for e in rep.errors))
+
+        # 13. filter topics not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": "not-a-list"}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("topics must be an array of arrays" in e for e in rep.errors))
+
+        # 14. filter topics row not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": ["not-a-row-list"]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry must be an array of strings" in e for e in rep.errors))
+
+        # 15. filter topics row len > 5
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": [["a", "b", "c", "d", "e", "f"]]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry has more than 5 entries" in e for e in rep.errors))
+
+        # 16. filter topics row contains non-string
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": [[123]]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry must contain only strings" in e for e in rep.errors))
 
     def test_soroban_fixture_requires_expect(self) -> None:
         bad = VALID_SOROBAN.replace("[expect]\nkind = \"simulation-success\"\n", "")
@@ -1610,6 +2204,110 @@ field = "error"
         self.assertIn("0 fixture file(s) valid across 1 root(s)", out.getvalue())
 
 
+class ExpectedBase64KindTests(unittest.TestCase):
+    """expected_base64 belongs to an encode-equals fixture only (F-116, #398).
+
+    canary-xdr's loader accepts "kind", "type" and "value_base64" for every
+    other kind and rejects the whole fixture when it finds another key, so
+    a fixture that carries expected_base64 with, say, kind = "roundtrip"
+    used to pass this validator and be refused by the engine.
+    """
+
+    def fixture(self, kind: str, expected: str | None = "AAAAAA==") -> str:
+        text = VALID_XDR.replace('kind = "decode-success"', f'kind = "{kind}"')
+        if expected is not None:
+            text += f'expected_base64 = "{expected}"\n'
+        return text
+
+    def run_validation(self, contents: str) -> "validate.Report":
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "a.toml", contents)
+            return validate.validate_directory(root)
+
+    def test_every_other_kind_rejects_the_field(self) -> None:
+        for kind in ("roundtrip", "decode-success", "decode-failure"):
+            with self.subTest(kind=kind):
+                report = self.run_validation(self.fixture(kind))
+                self.assertEqual(len(report.errors), 1, report.errors)
+                self.assertIn(
+                    "field 'expected_base64' is only allowed for kind "
+                    f"'encode-equals', not {kind!r}",
+                    report.errors[0],
+                )
+
+    def test_the_error_points_at_the_expected_base64_key(self) -> None:
+        text = self.fixture("roundtrip")
+        report = self.run_validation(text)
+        self.assertEqual(len(report.error_entries), 1, report.errors)
+        self.assertEqual(
+            report.error_entries[0].line, len(text.splitlines()), report.errors
+        )
+
+    def test_an_empty_value_on_another_kind_is_this_error_and_not_a_base64_one(self) -> None:
+        report = self.run_validation(self.fixture("roundtrip", expected=""))
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("only allowed for kind 'encode-equals'", report.errors[0])
+        self.assertNotIn("must not be empty", report.errors[0])
+
+    def test_encode_equals_still_accepts_a_valid_value(self) -> None:
+        report = self.run_validation(self.fixture("encode-equals"))
+        self.assertEqual(report.errors, [])
+
+    def test_encode_equals_still_rejects_an_empty_or_invalid_value(self) -> None:
+        empty = self.run_validation(self.fixture("encode-equals", expected=""))
+        self.assertTrue(
+            any("field 'expected_base64' must not be empty" in e for e in empty.errors),
+            empty.errors,
+        )
+        invalid = self.run_validation(self.fixture("encode-equals", expected="!!!not-base64!!!"))
+        self.assertTrue(
+            any("not valid base64" in e for e in invalid.errors), invalid.errors
+        )
+
+    def test_a_fixture_without_the_field_is_unaffected_for_every_kind(self) -> None:
+        for kind in sorted(validate.XDR_KINDS):
+            with self.subTest(kind=kind):
+                report = self.run_validation(self.fixture(kind, expected=None))
+                if kind == "encode-equals":
+                    # The field is required for this kind: the existing
+                    # missing-field error is unchanged.
+                    self.assertTrue(
+                        any(
+                            "missing required field 'expected_base64'" in e
+                            for e in report.errors
+                        ),
+                        report.errors,
+                    )
+                else:
+                    self.assertEqual(report.errors, [])
+
+    def test_an_unknown_or_missing_kind_reports_only_the_kind_error(self) -> None:
+        unknown = (
+            VALID_XDR.replace('kind = "decode-success"', 'kind = "bogus-kind"')
+            + 'expected_base64 = "AAAAAA=="\n'
+        )
+        report = self.run_validation(unknown)
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("field 'kind' must be one of", report.errors[0])
+
+        missing = (
+            VALID_XDR.replace('kind = "decode-success"\n', "")
+            + 'expected_base64 = "AAAAAA=="\n'
+        )
+        report = self.run_validation(missing)
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("missing required field 'kind'", report.errors[0])
+
+        not_a_string = (
+            VALID_XDR.replace('kind = "decode-success"', "kind = 42")
+            + 'expected_base64 = "AAAAAA=="\n'
+        )
+        report = self.run_validation(not_a_string)
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("field 'kind' must be of type str", report.errors[0])
+
+
 class QuietFlagTests(unittest.TestCase):
     """`--quiet` suppresses warnings while keeping errors and the summary.
 
@@ -1913,10 +2611,10 @@ class SchemaSyncTests(unittest.TestCase):
         drift = copy.deepcopy(self.schema)
         block = schema_sync.surface_block(drift, "rpc")
         assert block is not None
-        block["properties"]["method"]["enum"].append("get-transaction")
+        block["properties"]["method"]["enum"].append("get-unreleased-method")
         errors = schema_sync.check_sync(drift, self.validator)
         self.assertTrue(any("rpc method enum" in e for e in errors), errors)
-        self.assertTrue(any("get-transaction" in e for e in errors), errors)
+        self.assertTrue(any("get-unreleased-method" in e for e in errors), errors)
 
     def test_detects_xdr_type_drift(self) -> None:
         drift = copy.deepcopy(self.schema)
@@ -2215,6 +2913,68 @@ class SourceReferenceFormatTests(unittest.TestCase):
             )
         )
 
+    def test_github_host_spellings_and_trailing_dot_accepted_when_pinned(self) -> None:
+        """Positive tests: commit-pinned and tag-pinned links on github.com.,
+        WWW.GITHUB.COM. and the raw host with a trailing dot; ordinary hosts (F-121, issue #415).
+        """
+        path = f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"
+        tag_path = "/stellar/stellar-protocol/blob/v28.0.1/core/cap-0083.md"
+        raw_commit_path = f"/stellar/stellar-protocol/{self.SHA}/core/cap-0083.md"
+        raw_tag_path = "/stellar/stellar-protocol/v28.0.1/core/cap-0083.md"
+
+        for base_url in (
+            f"https://github.com.{path}",
+            f"https://github.com.{tag_path}",
+            f"https://WWW.GITHUB.COM.{path}",
+            f"https://WWW.GITHUB.COM.{tag_path}",
+            f"https://raw.githubusercontent.com.{raw_commit_path}",
+            f"https://raw.githubusercontent.com.{raw_tag_path}",
+            "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork",
+            f"https://github.com:443{path}",
+        ):
+            with self.subTest(url=base_url):
+                self.assertIsNone(self.problem(base_url), base_url)
+
+    def test_github_host_spellings_and_malformed_hosts_rejected(self) -> None:
+        """Negative tests: branch refs on trailing dot spellings, malformed hosts,
+        percent, non-ASCII letters, empty labels, only dots (F-121, issue #415).
+        """
+        branch_path = "/stellar/stellar-protocol/blob/master/core/cap-0083.md"
+        raw_branch_path = "/stellar/stellar-protocol/master/core/cap-0083.md"
+
+        # Valid trailing-dot hosts with branch ref must be rejected with the pin message
+        for host, p in (
+            ("github.com.", branch_path),
+            ("WWW.GITHUB.COM.", branch_path),
+            ("www.github.com.", branch_path),
+            ("GITHUB.COM.", branch_path),
+            ("raw.githubusercontent.com.", raw_branch_path),
+        ):
+            with self.subTest(host=host, case="branch_ref"):
+                message = self.problem(f"https://{host}{p}")
+                self.assertIsNotNone(message, host)
+                self.assertIn("pin", message)
+                self.assertIn("branch name", message)
+
+        # Malformed host spellings must be rejected with host-character message naming source_reference
+        malformed_hosts = (
+            "github.com..",
+            "github..com",
+            ".github.com",
+            "git%68ub.com",
+            "github.com\u3002",
+            "g\u00edthub.com",
+            "....",
+            ".",
+        )
+        for host in malformed_hosts:
+            for p in (branch_path, f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"):
+                with self.subTest(host=host, path=p, case="malformed"):
+                    message = self.problem(f"https://{host}{p}")
+                    self.assertIsNotNone(message, host)
+                    self.assertIn("source_reference", message)
+                    self.assertIn("host", message)
+
     def test_rejects_a_short_commit_hash(self) -> None:
         # Seven characters is ambiguous and can start to collide; the link
         # must name the full object so it cannot silently change meaning.
@@ -2245,6 +3005,52 @@ class SourceReferenceFormatTests(unittest.TestCase):
         message = self.problem(value)
         self.assertIsNotNone(message)
         self.assertIn("characters", message)
+
+    def test_source_reference_boundaries_table_driven(self) -> None:
+        """Test source_reference length limits and URL shape rules at exact boundaries (F-123, issue #419)."""
+        self.assertEqual(validate.MAX_SOURCE_REFERENCE_LENGTH, 2048)
+        base = "https://example.com/"
+        h40 = "a" * 40
+        h64 = "b" * 64
+
+        p2047 = base + "x" * (2047 - len(base))
+        p2048 = base + "x" * (2048 - len(base))
+        p2049 = base + "x" * (2049 - len(base))
+
+        rows = [
+            (p2047, None, "2047 characters"),
+            (p2048, None, "2048 characters (exact limit)"),
+            (p2049, "characters", "2049 characters (limit plus one)"),
+            ("https://github.com/o/r", "repository root", "github repository root"),
+            ("https://github.com/o/r/", "repository root", "github repository root trailing slash"),
+            ("https://github.com/o/r/blob", "has no ref after", "github blob without ref"),
+            (f"https://github.com/o/r/blob/{h40}/f.md", None, "github blob 40-hex commit"),
+            (f"https://github.com/o/r/blob/{h64}/f.md", None, "github blob 64-hex commit"),
+            ("https://github.com/o/r/blob/v1.2.3/f.md", None, "github blob version tag"),
+            ("https://github.com/o/r/blob/protocol-28/f.md", None, "github blob tag with prefix"),
+            (f"https://github.com/o/r/tree/{h40}/core", None, "github tree with pinned ref"),
+            ("https://github.com/o/r/blob/master/f.md", "branch name", "github blob branch ref"),
+            ("https://raw.githubusercontent.com/o/r", "has no ref and file path", "raw github without ref and path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}", "has no ref and file path", "raw github without file path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}/f.md", None, "raw github with 40-hex commit and file path"),
+            ("https://raw.githubusercontent.com/o/r/master/f.md", "branch name", "raw github branch ref"),
+            ("https://raw.githubusercontent.com/o/r/refs/heads/master/f.md", "links to a branch (refs/heads/...)", "raw github refs/heads branch"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/v1.0.0/f.md", None, "raw github refs/tags release tag"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/master/f.md", "branch name", "raw github refs/tags branch name"),
+            ("https://user@example.com/x", "credentials", "credentials in url"),
+            ("https://example.com/a b", "whitespace", "whitespace inside url"),
+            (" https://example.com/x", "whitespace", "leading whitespace"),
+            ("https://example.com/x ", "whitespace", "trailing whitespace"),
+        ]
+
+        for value, expected_fragment, label in rows:
+            with self.subTest(label=label, value=value[:60] if len(value) > 60 else value):
+                result = self.problem(value)
+                if expected_fragment is None:
+                    self.assertIsNone(result, f"expected {value!r} to be accepted, got: {result}")
+                else:
+                    self.assertIsNotNone(result, f"expected {value!r} to be rejected")
+                    self.assertIn(expected_fragment, result)
 
     def test_the_error_names_the_field_the_value_and_the_fix(self) -> None:
         bad = VALID_XDR.replace(
@@ -2306,6 +3112,11 @@ class SourceReferenceFormatTests(unittest.TestCase):
 class VerificationEvidenceTests(unittest.TestCase):
     """validate_evidence (F-006, CF-04 sections 3 and 8)."""
 
+    # The clock every record in this class is judged against. It is injected
+    # rather than read from the machine, so the tests never depend on the
+    # date they happen to run on (F-115, issue #397).
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+
     LIVE = {
         "verificationVersion": 1,
         "fixtureId": "p28-rpc-network",
@@ -2339,18 +3150,18 @@ class VerificationEvidenceTests(unittest.TestCase):
                 record.pop(key, None)
             else:
                 record[key] = value
-        return validate.validate_evidence(record)
+        return validate.validate_evidence(record, now=self.NOW)
 
     def test_valid_live_and_offline_records_pass(self) -> None:
-        self.assertEqual(validate.validate_evidence(self.LIVE), [])
-        self.assertEqual(validate.validate_evidence(self.OFFLINE), [])
+        self.assertEqual(validate.validate_evidence(self.LIVE, now=self.NOW), [])
+        self.assertEqual(validate.validate_evidence(self.OFFLINE, now=self.NOW), [])
 
     def test_offline_methods_may_carry_null_network_fields(self) -> None:
         record = copy.deepcopy(self.OFFLINE)
         record.update(
             method="source-checked", network=None, endpointHost=None, evidenceRef=None
         )
-        self.assertEqual(validate.validate_evidence(record), [])
+        self.assertEqual(validate.validate_evidence(record, now=self.NOW), [])
 
     def test_a_record_must_be_an_object(self) -> None:
         for bad in ([], "text", 7, None):
@@ -2507,9 +3318,132 @@ class VerificationEvidenceTests(unittest.TestCase):
                 # The validator is at least as strict as the schema: whatever
                 # the schema rejects, it rejects too.
                 if lite.validate(record, schema):
-                    self.assertTrue(validate.validate_evidence(record))
-                if not validate.validate_evidence(record):
+                    self.assertTrue(validate.validate_evidence(record, now=self.NOW))
+                if not validate.validate_evidence(record, now=self.NOW):
                     self.assertEqual(lite.validate(record, schema), [])
+
+
+class FutureCheckedAtTests(unittest.TestCase):
+    """A verification record cannot be dated in the future (F-115, #397).
+
+    A verification is made by a person or a scheduled job that actually
+    ran the step (CF-04 section 3), so a ``checkedAt`` in the future
+    describes a step that has not happened yet. The freshness states of
+    CF-04 section 4 are derived from ``checkedAt``, so a forward-dated
+    record would look "verified" for years.
+    """
+
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+
+    def record(self, checked_at: str) -> dict:
+        return {
+            "verificationVersion": 1,
+            "fixtureId": "p28-xdr-example",
+            "fixtureSha256": "0" * 64,
+            "method": "structural",
+            "checkedAt": checked_at,
+            "verifier": {"name": "s", "version": "1"},
+            "outcome": "matched",
+        }
+
+    def problems(self, checked_at: str) -> list[str]:
+        """The problems of one record, judged against the injected clock."""
+        return validate.validate_evidence(self.record(checked_at), now=self.NOW)
+
+    def test_the_table_of_accepted_and_rejected_instants(self) -> None:
+        cases = [
+            # (checkedAt, accepted?)
+            ("2026-10-21T10:00:00Z", True),  # exactly now
+            ("2026-10-21T10:05:00Z", True),  # now + the whole tolerance
+            ("2026-10-21T10:05:01Z", False),  # now + the tolerance + 1 second
+            ("2026-10-21T10:05:00.5Z", False),  # a fraction past the tolerance
+            ("2099-01-01T00:00:00Z", False),  # a mistyped year
+            ("2026-10-21T09:59:59.9Z", True),  # a fraction before now
+            ("2026-10-21T09:59:59Z", True),  # a second before now
+            ("2000-01-01T00:00:00Z", True),  # the CF-04 contract example
+        ]
+        for checked_at, accepted in cases:
+            with self.subTest(checkedAt=checked_at):
+                problems = self.problems(checked_at)
+                if accepted:
+                    self.assertEqual(problems, [], checked_at)
+                else:
+                    self.assertEqual(len(problems), 1, problems)
+                    self.assertIn("is later than the current time", problems[0])
+                    self.assertIn("allowed clock skew 5 minutes", problems[0])
+
+    def test_the_message_names_the_field_the_value_and_the_clock(self) -> None:
+        problems = self.problems("2099-01-01T00:00:00Z")
+        self.assertEqual(
+            problems,
+            [
+                "checkedAt '2099-01-01T00:00:00Z' is later than the current time "
+                "2026-10-21T10:00:00Z (allowed clock skew 5 minutes)"
+            ],
+        )
+
+    def test_fractional_seconds_beyond_microseconds_are_handled(self) -> None:
+        # Nine digits of fraction: the extra digits are truncated downwards,
+        # so the comparison errs on the side of accepting.
+        self.assertEqual(self.problems("2026-10-21T09:59:59.123456789Z"), [])
+        problems = self.problems("2026-10-21T10:05:00.123456789Z")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is later than the current time", problems[0])
+
+    def test_a_malformed_checked_at_gets_only_the_format_message(self) -> None:
+        for bad in (
+            "2026-10-21",  # a date, not an instant
+            "yesterday",
+            "2026-10-21T23:59:60Z",  # a leap second
+            "2026-13-40T10:00:00Z",  # not a real date
+        ):
+            with self.subTest(bad=bad):
+                problems = self.problems(bad)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertNotIn("is later than the current time", problems[0])
+
+    def test_a_naive_now_is_refused(self) -> None:
+        naive = datetime(2026, 10, 21, 10, 0, 0)
+        with self.assertRaises(ValueError):
+            validate.validate_evidence(
+                self.record("2026-10-21T10:00:00Z"), now=naive
+            )
+
+    def test_the_default_clock_accepts_the_past_and_rejects_the_far_future(self) -> None:
+        # The only test here that reads the real clock: the default path
+        # (now=None) must accept an obviously past date and reject an
+        # obviously future one.
+        past = validate.validate_evidence(
+            self.record("2000-01-01T00:00:00Z"), now=None
+        )
+        self.assertEqual(past, [])
+        problems = validate.validate_evidence(
+            self.record("2999-01-01T00:00:00Z"), now=None
+        )
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is later than the current time", problems[0])
+
+    def test_the_file_helper_judges_the_record_against_the_given_instant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "record.json"
+            path.write_text(
+                json.dumps(self.record("2099-01-01T00:00:00Z")), encoding="utf-8"
+            )
+            report = validate.Report()
+            self.assertIsNone(
+                validate.validate_evidence_file(path, report, now=self.NOW)
+            )
+            self.assertTrue(
+                any("is later than the current time" in e for e in report.errors),
+                report.errors,
+            )
+            # The same file is fine when the record is not in the future.
+            later = datetime(2100, 1, 1, tzinfo=timezone.utc)
+            report = validate.Report()
+            self.assertIsNotNone(
+                validate.validate_evidence_file(path, report, now=later)
+            )
+            self.assertEqual(report.errors, [])
 
 
 class EvidenceCommandLineTests(unittest.TestCase):
@@ -2531,6 +3465,10 @@ class EvidenceCommandLineTests(unittest.TestCase):
     def record(self, **changes) -> dict:
         data = dict(VerificationEvidenceTests.OFFLINE)
         data.update(fixtureId=self.fixture_id, fixtureSha256=self.sha)
+        # A date in the past, so these command-line tests do not depend on
+        # the date they happen to run on: the validator rejects a record
+        # whose checkedAt is in the future (F-115).
+        data.update(checkedAt="2000-01-01T00:00:00Z")
         data.update(changes)
         return data
 
@@ -2580,6 +3518,17 @@ class EvidenceCommandLineTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("bad.json", err)
         self.assertIn("requires a network object", err)
+
+    def test_a_future_record_fails_and_only_it_is_named(self) -> None:
+        # Both records are judged against the same instant, read once for the
+        # run, so the past one is valid and only the future one is reported.
+        self.write("past.json", self.record(checkedAt="2000-01-01T00:00:00Z"))
+        self.write("future.json", self.record(checkedAt="2999-01-01T00:00:00Z"))
+        code, out, err = self.run_main("--evidence", str(self.evidence))
+        self.assertEqual(code, 1)
+        self.assertIn("future.json", err)
+        self.assertNotIn("past.json", err)
+        self.assertIn("is later than the current time", err)
 
     def test_unknown_fixture_id_fails(self) -> None:
         path = self.write("ghost.json", self.record(fixtureId="p28-xdr-ghost"))
@@ -2803,6 +3752,92 @@ class PortableFixtureNameTests(unittest.TestCase):
             with self.subTest(name=name):
                 report = self.run_validation(name)
                 self.assertEqual(report.errors, [])
+
+
+class FixtureFileReadingTests(unittest.TestCase):
+    """F-112: fixtures are read from bytes, like the engine reads them.
+
+    No newline translation (a lone carriage return must reach the TOML parser
+    and fail there with a line number) and exactly one leading UTF-8 BOM is
+    accepted, matching the engine. Every test writes raw bytes to a
+    temporary directory.
+    """
+
+    @staticmethod
+    def run_validation(contents: bytes) -> validate.Report:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.toml").write_bytes(contents)
+            return validate.validate_directory(root)
+
+    def test_ordinary_lf_fixture_is_unchanged(self) -> None:
+        # Control: the same file without a BOM still validates, so the BOM
+        # test below proves only the BOM handling changed.
+        report = self.run_validation(VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_one_leading_utf8_bom_is_accepted(self) -> None:
+        report = self.run_validation(b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_a_second_bom_is_rejected_as_invalid_toml(self) -> None:
+        report = self.run_validation(
+            b"\xef\xbb\xbf\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        )
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(any("line 1" in error for error in matching), matching)
+
+    def test_lone_carriage_return_fails_with_a_toml_error_and_line_number(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r").encode("utf-8"))
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        # Negative: the failure is the TOML parser's complaint about the
+        # newline, not a decoding error.
+        self.assertFalse(
+            any("not valid UTF-8" in error for error in report.errors), report.errors
+        )
+        self.assertTrue(any("line " in error for error in matching), matching)
+        # The structured diagnostic carries the same line number.
+        entries = [
+            entry for entry in report.error_entries if "invalid TOML" in entry.message
+        ]
+        self.assertTrue(all(isinstance(entry.line, int) for entry in entries), entries)
+
+    def test_crlf_line_endings_are_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_missing_final_newline_is_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.rstrip("\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_field_line_reports_the_same_line_the_parser_saw(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.toml"
+            path.write_bytes(contents)
+            # VALID_XDR opens with an empty line, so `id` is line 2 whether or
+            # not the BOM is present -- the BOM must not shift it to line 3.
+            self.assertEqual(validate._field_line(path, "id"), 2)
+
+    def test_type_error_on_a_bom_file_still_points_at_the_right_line(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.replace(
+            "protocol = 28", 'protocol = "28"'
+        ).encode("utf-8")
+        report = self.run_validation(contents)
+        matching = [
+            entry
+            for entry in report.error_entries
+            if "'protocol' must be of type int" in entry.message
+        ]
+        self.assertTrue(matching, report.errors)
+        # `protocol` is the third line of VALID_XDR; the BOM occupies part of
+        # line 1 and must not change the line _field_line attributes to the
+        # diagnostic (the machine-readable view; text format omits it).
+        self.assertEqual(matching[0].line, 3)
 
 
 _MISSING = object()

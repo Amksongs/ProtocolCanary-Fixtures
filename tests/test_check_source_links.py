@@ -21,6 +21,7 @@ from tools.validate.check_source_links import (
     CheckResult,
     clean_comment_url,
     check_link,
+    DEFAULT_MAX_REDIRECTS,
     extract_links_from_file,
     generate_markdown_table,
     main,
@@ -99,6 +100,38 @@ class MockServerHandler(BaseHTTPRequestHandler):
             # Rejects GET with 405 Method Not Allowed
             self.send_response(405)
             self.end_headers()
+        elif path.startswith("/redirect-status/"):
+            code = int(path.split("/")[-1])
+            self.send_response(code)
+            self.send_header("Location", "/200")
+            self.end_headers()
+        elif path.startswith("/status/"):
+            code = int(path.split("/")[-1])
+            self.send_response(code)
+            self.end_headers()
+        elif path.startswith("/chain/"):
+            n = int(path.split("/")[-1])
+            if n == 0:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"OK")
+            else:
+                self.send_response(302)
+                self.send_header("Location", f"/chain/{n - 1}")
+                self.end_headers()
+        elif path == "/redirect-no-location":
+            self.send_response(302)
+            self.end_headers()
+        elif path == "/redirect-relative":
+            self.send_response(302)
+            self.send_header("Location", "/relative-target")
+            self.end_headers()
+        elif path == "/relative-target":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
         else:
             self.send_response(404)
             self.end_headers()
@@ -277,20 +310,32 @@ source_reference = "ftp://example.com/spec.txt"
 
     def test_check_link_post_fallback_failures(self) -> None:
         url = f"{self.base_url}/rpc-endpoint"
+        # An explicit empty body, not None: HTTPError is an addinfourl, and
+        # on Python 3.14 that base class wraps the body in a
+        # tempfile._TemporaryFileWrapper, whose __del__ warns
+        # (ResourceWarning) when it is collected unclosed. check_link closes
+        # what it catches and only reads `code`, so an empty body changes
+        # nothing it observes.
         cases = (
             (
-                urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None),
+                urllib.error.HTTPError(url, 429, "Too Many Requests", {}, io.BytesIO(b"")),
                 "Inconclusive",
                 "429",
             ),
-            (urllib.error.HTTPError(url, 503, "Unavailable", {}, None), "Failed", "503"),
+            (
+                urllib.error.HTTPError(url, 503, "Unavailable", {}, io.BytesIO(b"")),
+                "Failed",
+                "503",
+            ),
             (RuntimeError("connection reset"), "Failed", "POST fallback failed"),
         )
         for post_error, expected_status, expected_detail in cases:
             with self.subTest(error=type(post_error).__name__):
                 opener = Mock()
                 opener.open.side_effect = [
-                    urllib.error.HTTPError(url, 405, "Method Not Allowed", {}, None),
+                    urllib.error.HTTPError(
+                        url, 405, "Method Not Allowed", {}, io.BytesIO(b"")
+                    ),
                     post_error,
                 ]
                 result = check_link(url, opener=opener)
@@ -340,6 +385,63 @@ source_reference = "ftp://example.com/spec.txt"
         # Limit of 4 should succeed
         res_ok = check_link(f"{self.base_url}/redirect-chain-1", max_redirects=4)
         self.assertEqual(res_ok.status, "OK")
+
+    def test_every_redirect_status_followed_and_non_redirect_3xx_failed(self) -> None:
+        """Every redirect status code (301, 302, 303, 307, 308) is followed to 200 OK, while 300/304 fail (F-125, issue #421)."""
+        redirect_statuses = (301, 302, 303, 307, 308)
+        for status in redirect_statuses:
+            with self.subTest(redirect_status=status):
+                res = check_link(f"{self.base_url}/redirect-status/{status}")
+                self.assertEqual(res.status, "OK", f"expected status {status} to be followed to OK")
+                self.assertEqual(res.formatted(), "OK")
+
+        non_redirect_statuses = (300, 304)
+        for status in non_redirect_statuses:
+            with self.subTest(non_redirect_status=status):
+                res = check_link(f"{self.base_url}/status/{status}")
+                self.assertEqual(res.status, "Failed")
+                self.assertIn(f"HTTP {status}", res.formatted())
+
+    def test_redirect_limit_exact_boundaries(self) -> None:
+        """A chain of exactly N redirects passes; N - 1 fails; max_redirects=0 with 1 redirect fails and 0 passes (F-125, issue #421)."""
+        # Chain of 3 redirects
+        res_exact = check_link(f"{self.base_url}/chain/3", max_redirects=3)
+        self.assertEqual(res_exact.status, "OK")
+
+        res_over = check_link(f"{self.base_url}/chain/3", max_redirects=2)
+        self.assertEqual(res_over.status, "Failed")
+        self.assertIn("too many redirects (exceeded limit of 2)", res_over.formatted())
+
+        # max_redirects = 0
+        res_zero_ok = check_link(f"{self.base_url}/chain/0", max_redirects=0)
+        self.assertEqual(res_zero_ok.status, "OK")
+
+        res_zero_fail = check_link(f"{self.base_url}/chain/1", max_redirects=0)
+        self.assertEqual(res_zero_fail.status, "Failed")
+        self.assertIn("too many redirects (exceeded limit of 0)", res_zero_fail.formatted())
+
+    def test_default_max_redirects_boundary(self) -> None:
+        """Assert DEFAULT_MAX_REDIRECTS == 5, 5 redirects pass with default, 6 fail (F-125, issue #421)."""
+        self.assertEqual(DEFAULT_MAX_REDIRECTS, 5)
+
+        res_5 = check_link(f"{self.base_url}/chain/5")
+        self.assertEqual(res_5.status, "OK")
+
+        res_6 = check_link(f"{self.base_url}/chain/6")
+        self.assertEqual(res_6.status, "Failed")
+        self.assertIn("too many redirects (exceeded limit of 5)", res_6.formatted())
+
+    def test_redirect_location_handling_relative_and_missing(self) -> None:
+        """Relative Location resolves against current URL; redirect without Location fails (F-125, issue #421)."""
+        # Relative Location
+        res_rel = check_link(f"{self.base_url}/redirect-relative")
+        self.assertEqual(res_rel.status, "OK")
+
+        # Missing Location header
+        res_missing = check_link(f"{self.base_url}/redirect-no-location")
+        self.assertEqual(res_missing.status, "Failed")
+        self.assertIn("missing Location header", res_missing.formatted())
+        self.assertIn("HTTP 302", res_missing.formatted())
 
     def test_check_link_redirect_loop_detection(self) -> None:
         res = check_link(f"{self.base_url}/loop-a")

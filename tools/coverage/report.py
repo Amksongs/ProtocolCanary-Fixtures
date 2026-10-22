@@ -39,7 +39,11 @@ tree are byte-identical and a diff means the tree changed.
 
 ``--validator PATH`` loads a different copy of the validator (used by the
 test suite to check that a new capability constant appears here
-automatically).
+automatically). A path that cannot be used as a validator copy -- it is
+not Python, it raises while executing, or it lacks the attributes the
+report reads -- is reported as one error line naming the path and the
+reason, and the tool exits 1 like it does for any other unusable
+argument.
 
 Requires Python 3.11+ (the validator it reuses uses the stdlib
 ``tomllib``); no third-party dependencies.
@@ -69,6 +73,39 @@ _spec.loader.exec_module(validate)
 
 class CoverageError(RuntimeError):
     """Raised for a pack path this tool cannot report on (e.g. missing)."""
+
+
+class ValidatorLoadError(RuntimeError):
+    """Raised when a ``--validator`` path cannot be used as a validator copy."""
+
+
+# What the report needs from a validator copy: the API it calls, and the
+# capability constants whose values it counts. A module that lacks any of
+# them is not a copy of the validator, so the report would either crash
+# deep inside a run or report a silently incomplete matrix. The names are
+# checked here so the failure is one clear line naming the file.
+REQUIRED_VALIDATOR_ATTRS = (
+    "Report",
+    "find_fixture_files",
+    "load_fixture",
+    "validate_directory",
+)
+
+# The capability constants the report's counting rules are keyed on. They
+# are the ones the repository's validator declares; a copy of it declares
+# them too, and a copy with an extra constant is still fine (new constants
+# are discovered by shape, see ``capability_constants``).
+REQUIRED_CAPABILITY_CONSTANTS = (
+    "CAPABILITIES",
+    "RPC_ASSERT_KINDS",
+    "RPC_ASSERT_TYPES",
+    "RPC_METHODS",
+    "SOROBAN_ARG_KINDS",
+    "SOROBAN_EXPECT_KINDS",
+    "SURFACES",
+    "XDR_KINDS",
+    "XDR_TYPES",
+)
 
 
 # A fixture's ``category`` is a CAP category when it looks like cap-<4-digit
@@ -105,6 +142,44 @@ def capability_constants(validator: object) -> dict[str, tuple[str, ...]]:
         if isinstance(value, (set, frozenset)) and all(isinstance(v, str) for v in value):
             found[name] = tuple(sorted(value))
     return found
+
+
+def load_validator(path: Path) -> object:
+    """Load a copy of the validator from ``path``.
+
+    Raises :class:`ValidatorLoadError` with a message naming the path and
+    the reason when the file cannot be used as a validator copy: it is not
+    loadable as Python, it raises while it is executed, or it lacks the
+    attributes and capability constants the report reads.
+    """
+    spec = importlib.util.spec_from_file_location("validate_scratch", path)
+    if spec is None or spec.loader is None:
+        raise ValidatorLoadError(f"{path}: not loadable as a Python module")
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec: validate.py defines dataclasses, and
+    # dataclasses resolves annotations through ``sys.modules``.
+    sys.modules["validate_scratch"] = module
+    try:
+        spec.loader.exec_module(module)
+    except SyntaxError as exc:
+        del sys.modules["validate_scratch"]
+        raise ValidatorLoadError(f"{path}: not loadable as Python: {exc}") from exc
+    except Exception as exc:
+        del sys.modules["validate_scratch"]
+        raise ValidatorLoadError(
+            f"{path}: raised while executing the module: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    missing = [name for name in REQUIRED_VALIDATOR_ATTRS if not hasattr(module, name)]
+    missing += [
+        name for name in REQUIRED_CAPABILITY_CONSTANTS if not hasattr(module, name)
+    ]
+    if missing:
+        del sys.modules["validate_scratch"]
+        raise ValidatorLoadError(
+            f"{path}: not a usable validator copy: missing " + ", ".join(missing)
+        )
+    return module
 
 
 def _single_field(key: str) -> Callable[[dict], list[str]]:
@@ -418,13 +493,11 @@ def main(argv: list[str]) -> int:
         if not args.validator.is_file():
             print(f"error: {args.validator}: no such validator file", file=sys.stderr)
             return 1
-        spec = importlib.util.spec_from_file_location("validate_scratch", args.validator)
-        assert spec is not None and spec.loader is not None
-        validator = importlib.util.module_from_spec(spec)
-        # Register before exec: validate.py defines dataclasses, and
-        # dataclasses resolves annotations through ``sys.modules``.
-        sys.modules["validate_scratch"] = validator
-        spec.loader.exec_module(validator)
+        try:
+            validator = load_validator(args.validator)
+        except ValidatorLoadError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     if args.packs:
         pack_dirs = [Path(a) for a in args.packs]

@@ -1,0 +1,136 @@
+name: archive-baseline
+
+# Cross-platform baseline for the pack archive (issue #365).
+#
+# The release archive is a gzip stream, so it has two digests:
+#
+#   * the SHA-256 of the compressed .tar.gz, which a consumer pins, and which
+#     depends on the zlib implementation in the Python build that produced it;
+#   * the SHA-256 of the uncompressed tar stream, which is produced by this
+#     repository's own code (fixed metadata, sorted entries, mtime 0) and does
+#     not depend on the compression library.
+#
+# Only the second one is enforced here: the job fails when the uncompressed
+# digest differs between cells, because that is a defect in this repository's
+# determinism or a platform-dependent path in its code. A difference in the
+# compressed digest is reported as an observation and never fails the run --
+# whether the compressed bytes are stable across platforms is a maintainer
+# decision that needs this baseline first (see docs/archive-reproducibility.md).
+
+on:
+  # A manual run is how the baseline is measured, and how a maintainer
+  # re-measures it after a change.
+  workflow_dispatch:
+  # A change to the pack, to the archive builder or to this workflow can change
+  # the digests, so the baseline is re-measured for those pull requests. The
+  # path filter keeps unrelated pull requests from paying for the matrix.
+  pull_request:
+    paths:
+      - ".github/workflows/archive-baseline.yml"
+      - "tools/pack/**"
+      - "protocol-28/**"
+      - "tests/test_archive_digests.py"
+      - "docs/archive-reproducibility.md"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/archive-baseline.yml"
+      - "tools/pack/**"
+      - "protocol-28/**"
+      - "tests/test_archive_digests.py"
+      - "docs/archive-reproducibility.md"
+
+# Read-only: the job measures the tree it checks out and writes nothing back
+# to the repository.
+permissions:
+  contents: read
+
+env:
+  # The cells the comparison job expects. It names the same cells as the
+  # matrix below (GitHub does not allow the env context in a job's strategy):
+  # a cell that produced no digest is reported as a cell failure, and a run
+  # with more cells than this list is reported as an inconsistency, so the two
+  # lists cannot drift apart unnoticed.
+  ARCHIVE_MATRIX: >-
+    {"os": ["ubuntu-latest", "macos-latest", "windows-latest"],
+     "python": ["3.11", "3.12", "3.13"]}
+
+jobs:
+  digests:
+    name: digests (${{ matrix.os }}, python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One failing cell must not hide the digests of the other cells.
+      fail-fast: false
+      matrix:
+        # The same cells as ARCHIVE_MATRIX above.
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # The minor version floats on purpose: the point of the baseline is
+          # to measure what different Python builds produce. The exact patch
+          # version of every cell is recorded in the result document.
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build the archive and compute both digests
+        # The fixed version string names the archive; the archive bytes do not
+        # depend on it.
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          else
+            PY=python
+          fi
+          "$PY" tools/pack/archive_digests.py build \
+            --pack protocol-28 \
+            --version 0.0.0 \
+            --cell "${{ matrix.os }}-py${{ matrix.python-version }}" \
+            --output digests.json \
+            --stream stream.tar
+
+      - name: Upload the digests of this cell
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # One artifact per cell; the name carries the cell so the comparison
+          # job can report which cell produced what.
+          name: digests-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            digests.json
+            stream.tar
+          if-no-files-found: error
+          retention-days: 30
+
+  compare:
+    name: compare the cells
+    # The comparison runs even when a cell failed, so a cell that could not
+    # build is reported as a cell failure instead of silently disappearing.
+    if: always()
+    needs: digests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the digests of every cell
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-*
+          path: artifacts
+          merge-multiple: false
+
+      - name: Compare the digests across the cells
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          else
+            PY=python
+          fi
+          "$PY" tools/pack/archive_digests.py compare \
+            --results artifacts \
+            --expected-matrix "$ARCHIVE_MATRIX" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
