@@ -188,9 +188,16 @@ def check_link(
         try:
             resp = opener.open(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            if exc.code == 429:
+            # The error carries the response body. Close it here, so the
+            # connection is released now rather than by the garbage
+            # collector; since Python 3.12 an implicitly cleaned-up
+            # response warns (ResourceWarning) at whatever later point the
+            # collection happens to land.
+            code = exc.code
+            exc.close()
+            if code == 429:
                 return CheckResult("Inconclusive", "HTTP 429 Too Many Requests")
-            if exc.code == 405:
+            if code == 405:
                 # Some RPC endpoints (e.g., soroban-testnet) reject GET with 405 Method Not Allowed.
                 # Try POST with empty payload as a fallback check.
                 try:
@@ -204,13 +211,15 @@ def check_link(
                     )
                     resp = opener.open(post_req, timeout=timeout)
                 except urllib.error.HTTPError as post_exc:
-                    if post_exc.code == 429:
+                    post_code = post_exc.code
+                    post_exc.close()
+                    if post_code == 429:
                         return CheckResult("Inconclusive", "HTTP 429 Too Many Requests")
-                    return CheckResult("Failed", f"HTTP {post_exc.code}")
+                    return CheckResult("Failed", f"HTTP {post_code}")
                 except Exception as post_err:
                     return CheckResult("Failed", f"POST fallback failed: {post_err}")
             else:
-                return CheckResult("Failed", f"HTTP {exc.code}")
+                return CheckResult("Failed", f"HTTP {code}")
         except (TimeoutError, urllib.error.URLError) as exc:
             reason = getattr(exc, "reason", str(exc))
             if "timed out" in str(reason).lower() or isinstance(exc, TimeoutError):
@@ -304,6 +313,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parents[2]
     if args.roots:
         scan_paths = [Path(r) for r in args.roots]
+        for scan_path in scan_paths:
+            if not scan_path.exists():
+                sys.stderr.write(f"Error: root does not exist: {scan_path}\n")
+                return 2
+            if not scan_path.is_dir() and not (
+                scan_path.is_file() and scan_path.suffix == ".toml"
+            ):
+                sys.stderr.write(
+                    f"Error: root must be a directory or .toml file: {scan_path}\n"
+                )
+                return 2
     else:
         scan_paths = sorted(p for p in repo_root.glob("protocol-*") if p.is_dir())
         if not scan_paths:
@@ -312,6 +332,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     fixture_files: list[Path] = []
     for sp in scan_paths:
         fixture_files.extend(find_fixture_files(sp))
+
+    if args.roots and not fixture_files:
+        roots = ", ".join(str(path) for path in scan_paths)
+        sys.stderr.write(f"Error: no .toml fixture files found in explicit roots: {roots}\n")
+        return 2
 
     # Remove duplicates while preserving order
     unique_files: list[Path] = []

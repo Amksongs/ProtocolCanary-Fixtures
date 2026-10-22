@@ -126,6 +126,7 @@ def soroban_fixture(
     protocol: int = 28,
     capabilities: list[str] | None = None,
     category: str = "network",
+    args_toml: str = "",
 ) -> str:
     lines = [
         "# Synthetic structural fixture built for a unit test.",
@@ -135,8 +136,8 @@ def soroban_fixture(
         f'category = "{category}"',
         f'description = "{fid}"',
         'source_reference = "CAP-0083"',
-        'source_account = "GEXAMPLESYNTHETICACCOUNT00000000000000000000000"',
-        'contract_id = "CEXAMPLESYNTHETICCONTRACT000000000000000000000"',
+        'source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"',
+        'contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"',
         'function = "name"',
         "sequence_number = 1",
     ]
@@ -146,6 +147,9 @@ def soroban_fixture(
             + ", ".join(_toml_value(c) for c in capabilities)
             + "]"
         )
+    if args_toml:
+        lines.append("")
+        lines.append(args_toml.rstrip("\n"))
     lines += ["", "[expect]", f'kind = "{expect_kind}"']
     if message_contains is not None:
         lines.append(f"message_contains = {_toml_value(message_contains)}")
@@ -254,6 +258,7 @@ EXPECTED_EXAMPLE_REPORT = {
             "field-exists": 1,
             "field-absent": 1,
             "field-equals": 1,
+            "field-number-range": 0,
             "field-type": 1,
         },
         "RPC_ASSERT_TYPES": {
@@ -264,7 +269,18 @@ EXPECTED_EXAMPLE_REPORT = {
             "object": 0,
             "string": 0,
         },
-        "RPC_METHODS": {"get-network": 1, "get-latest-ledger": 1},
+        "RPC_METHODS": {
+            "get-events": 0,
+            "get-fee-stats": 0,
+            "get-health": 0,
+            "get-latest-ledger": 1,
+            "get-ledger-entries": 0,
+            "get-ledgers": 0,
+            "get-network": 1,
+            "get-transaction": 0,
+            "get-transactions": 0,
+            "get-version-info": 0,
+        },
         "SOROBAN_ARG_KINDS": {
             "address": 0,
             "bool": 0,
@@ -325,10 +341,11 @@ CAPABILITIES
   wasm-artifact             0  no fixture
 
 RPC_ASSERT_KINDS
-  field-absent    1
-  field-equals    1
-  field-exists    1
-  field-type      1
+  field-absent          1
+  field-equals          1
+  field-exists          1
+  field-number-range    0  no fixture
+  field-type            1
 
 RPC_ASSERT_TYPES
   array     0  no fixture
@@ -339,8 +356,16 @@ RPC_ASSERT_TYPES
   string    0  no fixture
 
 RPC_METHODS
-  get-latest-ledger    1
-  get-network          1
+  get-events            0  no fixture
+  get-fee-stats         0  no fixture
+  get-health            0  no fixture
+  get-latest-ledger     1
+  get-ledger-entries    0  no fixture
+  get-ledgers           0  no fixture
+  get-network           1
+  get-transaction       0  no fixture
+  get-transactions      0  no fixture
+  get-version-info      0  no fixture
 
 SOROBAN_ARG_KINDS
   address      0  no fixture
@@ -639,6 +664,110 @@ class MissingDirectoryTests(unittest.TestCase):
         self.assertIn("no such validator file", err)
 
 
+class ValidatorLoadErrorTests(unittest.TestCase):
+    """``--validator PATH`` that cannot be used is one error line, not a crash.
+
+    The option exists so other tools and tests can point the report at
+    another copy of the validator. A file that is not Python, a file with
+    a syntax error, a module that raises while it is executed and a module
+    that lacks the capability constants the report reads must all be
+    reported as one clear line naming the path -- never as an internal
+    assertion or a traceback.
+    """
+
+    def run_with_validator(self, path: Path, *packs: str) -> tuple[int, str, str]:
+        return run_main(["--validator", str(path), *packs])
+
+    def assert_one_error_line(self, err: str, path: Path, *fragments: str) -> None:
+        self.assertNotIn("Traceback", err)
+        self.assertNotIn("AssertionError", err)
+        lines = [line for line in err.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith("error: "), err)
+        self.assertIn(str(path), lines[0])
+        for fragment in fragments:
+            self.assertIn(fragment, lines[0])
+
+    def test_a_file_that_is_not_python_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "not-python.json"
+            path.write_text("{}\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "not loadable")
+
+    def test_a_python_file_with_a_syntax_error_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.py"
+            path.write_text("def broken(:\n    pass\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "not loadable as Python")
+
+    def test_a_module_that_raises_while_executing_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raises.py"
+            path.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "raised while executing the module")
+
+    def test_a_module_without_the_expected_constants_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.py"
+            path.write_text("SOMETHING_ELSE = 1\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "not a usable validator copy")
+        for name in coverage_report.REQUIRED_CAPABILITY_CONSTANTS:
+            self.assertIn(name, err)
+
+    def test_a_failed_load_leaves_no_broken_module_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raises.py"
+            path.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+            self.run_with_validator(path, tmp)
+            self.assertNotIn("validate_scratch", sys.modules)
+
+    def test_a_valid_validator_copy_is_accepted_and_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = build_example_pack(Path(tmp))
+            code, out, err = self.run_with_validator(VALIDATE_PATH, str(pack))
+            self.assertEqual(code, 0, err)
+            self.assertEqual(err, "")
+            expected = coverage_report.render_text(
+                coverage_report.build_report([pack], validator=validate)
+            )
+            self.assertEqual(out, expected)
+            code, out, err = run_main(
+                ["--format", "json", "--validator", str(VALIDATE_PATH), str(pack)]
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(
+                json.loads(out),
+                coverage_report.build_report([pack], validator=validate),
+            )
+
+    def test_load_validator_raises_a_named_error_for_each_bad_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            not_python = root / "not-python.json"
+            not_python.write_text("{}\n", encoding="utf-8")
+            broken = root / "broken.py"
+            broken.write_text("def broken(:\n    pass\n", encoding="utf-8")
+            empty = root / "empty.py"
+            empty.write_text("SOMETHING_ELSE = 1\n", encoding="utf-8")
+            for path in (not_python, broken, empty):
+                with self.subTest(path=path.name):
+                    with self.assertRaises(coverage_report.ValidatorLoadError) as ctx:
+                        coverage_report.load_validator(path)
+                    self.assertIn(str(path), str(ctx.exception))
+
+
 class ValidatorConstantTests(unittest.TestCase):
     """A constant added to the validator shows up here without a change here."""
 
@@ -646,11 +775,24 @@ class ValidatorConstantTests(unittest.TestCase):
     def scratch_validator(tmp: Path) -> Path:
         """A copy of validate.py with one more method and one more constant."""
         source = VALIDATE_PATH.read_text(encoding="utf-8")
-        original = 'RPC_METHODS = {"get-network", "get-latest-ledger"}'
+        original = (
+            'RPC_METHODS = {\n'
+            '    "get-events",\n'
+            '    "get-fee-stats",\n'
+            '    "get-health",\n'
+            '    "get-latest-ledger",\n'
+            '    "get-ledger-entries",\n'
+            '    "get-ledgers",\n'
+            '    "get-network",\n'
+            '    "get-transaction",\n'
+            '    "get-transactions",\n'
+            '    "get-version-info",\n'
+            '}'
+        )
         assert original in source, "validator's RPC_METHODS line moved"
         patched = source.replace(
             original,
-            'RPC_METHODS = {"get-network", "get-latest-ledger", "get-ledgers"}',
+            original[:-1] + '    "get-epoch",\n}',
         )
         patched += (
             "\n# A new capability constant added by a scratch copy of the validator.\n"
@@ -677,14 +819,14 @@ class ValidatorConstantTests(unittest.TestCase):
             module = self.load(scratch, "validate_scratch_for_test")
             report = coverage_report.build_report([pack], validator=module)
 
-        self.assertEqual(report["capabilities"]["RPC_METHODS"]["get-ledgers"], 0)
-        self.assertIn("get-ledgers", report["capabilities"]["RPC_METHODS"])
+        self.assertEqual(report["capabilities"]["RPC_METHODS"]["get-epoch"], 0)
+        self.assertIn("get-epoch", report["capabilities"]["RPC_METHODS"])
         # A brand-new set has no counting rule, so its zeros are structural
         # and it says so rather than pretending to have been measured.
         self.assertEqual(report["capabilities"]["BRAND_NEW_CAPABILITY"], {"newer": 0, "shiny": 0})
         self.assertEqual(report["unmapped_capabilities"], ["BRAND_NEW_CAPABILITY"])
         # The unmodified report does not mention either.
-        self.assertNotIn("get-ledgers", EXPECTED_EXAMPLE_REPORT["capabilities"]["RPC_METHODS"])
+        self.assertNotIn("get-epoch", EXPECTED_EXAMPLE_REPORT["capabilities"]["RPC_METHODS"])
         self.assertNotIn("BRAND_NEW_CAPABILITY", EXPECTED_EXAMPLE_REPORT["capabilities"])
 
     def test_cli_loads_a_scratch_validator_via_the_flag(self) -> None:
@@ -697,7 +839,7 @@ class ValidatorConstantTests(unittest.TestCase):
             )
         self.assertEqual(code, 0, err)
         document = json.loads(out)
-        self.assertEqual(document["capabilities"]["RPC_METHODS"]["get-ledgers"], 0)
+        self.assertEqual(document["capabilities"]["RPC_METHODS"]["get-epoch"], 0)
         self.assertIn("BRAND_NEW_CAPABILITY", document["capabilities"])
 
     def test_every_capability_constant_of_the_validator_is_in_the_report(self) -> None:
@@ -837,6 +979,361 @@ class RealProtocolPackTests(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertIn("protocol-28", out)
         self.assertIn("Fixture coverage report:", out)
+
+
+# --------------------------------------------------------------------------
+# Soroban argument counting and the report's edge outputs (issue #412).
+# --------------------------------------------------------------------------
+
+# A flat argument list: one [[args]] entry per kind, each with a value the
+# validator accepts, so each kind is counted exactly once here.
+FLAT_ARGS_TOML = """\
+[[args]]
+kind = "void"
+
+[[args]]
+kind = "bool"
+value = true
+
+[[args]]
+kind = "u32"
+value = 1
+
+[[args]]
+kind = "i32"
+value = -3
+
+[[args]]
+kind = "symbol"
+value = "alpha"
+
+[[args]]
+kind = "string"
+value = "hello"
+
+[[args]]
+kind = "duration"
+value = 7
+
+[[args]]
+kind = "address"
+value = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+"""
+
+# Nested containers. The walk counts each container's own kind and then
+# every entry inside it: the outer vec once plus the inner vec plus each
+# scalar; the outer map once plus each key and value, and the map nested
+# in the second value once more plus its own key and value.
+NESTED_ARGS_TOML = """\
+[[args]]
+kind = "vec"
+value = [
+  { kind = "vec", value = [ { kind = "u64", value = 2 }, { kind = "bool", value = false } ] },
+  { kind = "i32", value = -3 },
+]
+
+[[args]]
+kind = "map"
+value = [
+  { key = { kind = "symbol", value = "k1" }, value = { kind = "u32", value = 9 } },
+  { key = { kind = "string", value = "k2" }, value = { kind = "map", value = [ { key = { kind = "symbol", value = "nk" }, value = { kind = "bool", value = true } } ] } },
+]
+"""
+
+# The per-kind totals of FLAT_ARGS_TOML plus NESTED_ARGS_TOML, written by
+# hand from the fixture text above -- never read back from the tool. The
+# walk order is flat (void bool u32 i32 symbol string duration address),
+# then vec vec u64 bool i32, then map symbol u32 string map symbol bool:
+# bool 1+1+1, i32 1+1, symbol 1+1+1, string 1+1, u32 1+1, vec 2, map 2.
+EXPECTED_ARG_KIND_COUNTS = {
+    "address": 1,
+    "bool": 3,
+    "bytes": 0,
+    "duration": 1,
+    "i128": 0,
+    "i256": 0,
+    "i32": 2,
+    "i64": 0,
+    "map": 2,
+    "string": 2,
+    "symbol": 3,
+    "timepoint": 0,
+    "u128": 0,
+    "u256": 0,
+    "u32": 2,
+    "u64": 1,
+    "vec": 2,
+    "void": 1,
+}
+
+
+class SorobanArgumentCountTests(unittest.TestCase):
+    """The recursive [[args]] walk counts exactly the kinds present (issue #412)."""
+
+    @staticmethod
+    def build_args_pack(root: Path) -> Path:
+        """Two countable fixtures and three the validator must reject."""
+        pack = root / "protocol-88"
+        write(
+            pack,
+            "soroban/p88-soroban-args-flat.toml",
+            soroban_fixture(
+                "p88-soroban-args-flat",
+                expect_kind="simulation-success",
+                args_toml=FLAT_ARGS_TOML,
+            ),
+        )
+        write(
+            pack,
+            "soroban/p88-soroban-args-nested.toml",
+            soroban_fixture(
+                "p88-soroban-args-nested",
+                expect_kind="simulation-success",
+                args_toml=NESTED_ARGS_TOML,
+            ),
+        )
+        write(
+            pack,
+            "soroban/p88-soroban-args-bad-vec-entry.toml",
+            soroban_fixture(
+                "p88-soroban-args-bad-vec-entry",
+                expect_kind="simulation-success",
+                args_toml='[[args]]\nkind = "vec"\nvalue = [ "not-a-table" ]\n',
+            ),
+        )
+        write(
+            pack,
+            "soroban/p88-soroban-args-bad-map-item.toml",
+            soroban_fixture(
+                "p88-soroban-args-bad-map-item",
+                expect_kind="simulation-success",
+                args_toml='[[args]]\nkind = "map"\nvalue = [ "not-a-table" ]\n',
+            ),
+        )
+        write(
+            pack,
+            "soroban/p88-soroban-args-bad-kind.toml",
+            soroban_fixture(
+                "p88-soroban-args-bad-kind",
+                expect_kind="simulation-success",
+                args_toml='[[args]]\nkind = 3\nvalue = 1\n',
+            ),
+        )
+        return pack
+
+    def test_nested_arguments_are_counted_per_kind_as_hand_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = coverage_report.build_report([self.build_args_pack(Path(tmp))])
+        self.assertEqual(
+            report["capabilities"]["SOROBAN_ARG_KINDS"], EXPECTED_ARG_KIND_COUNTS
+        )
+        self.assertEqual(report["totals"], {"files": 5, "valid": 2, "invalid": 3})
+
+    def test_malformed_arguments_are_invalid_and_change_no_count(self) -> None:
+        # The module docstring's rule: a fixture the validator rejects is
+        # reported separately under "invalid" rather than folded into the
+        # counts -- so a non-table vec entry, a non-table map item and a
+        # non-string kind are counted nowhere, and the two valid fixtures
+        # alone produce EXPECTED_ARG_KIND_COUNTS.
+        with tempfile.TemporaryDirectory() as tmp:
+            report = coverage_report.build_report([self.build_args_pack(Path(tmp))])
+        self.assertEqual(report["invalid"], {
+            "count": 3,
+            "files": sorted(
+                "protocol-88/soroban/" + name
+                for name in (
+                    "p88-soroban-args-bad-kind.toml",
+                    "p88-soroban-args-bad-map-item.toml",
+                    "p88-soroban-args-bad-vec-entry.toml",
+                )
+            ),
+        })
+        counts = report["capabilities"]["SOROBAN_ARG_KINDS"]
+        self.assertEqual(counts, EXPECTED_ARG_KIND_COUNTS)
+        # ... and no value outside the validator's own vocabulary snuck in.
+        self.assertEqual(set(counts), set(validate.SOROBAN_ARG_KINDS))
+
+    def test_the_walk_skips_entries_it_cannot_follow(self) -> None:
+        # Called directly, because a fixture containing any of these shapes
+        # is invalid end to end and never reaches the extractor.
+        data = {
+            "args": [
+                {"kind": "vec", "value": ["not-a-table", {"kind": "u32", "value": 1}]},
+                "not-a-table",
+                {"kind": 3, "value": [{"kind": "u64", "value": 1}]},
+                {
+                    "kind": "map",
+                    "value": [
+                        "not-a-table",
+                        {
+                            "key": {"kind": "symbol", "value": "k"},
+                            "value": {"kind": "bool", "value": True},
+                        },
+                    ],
+                },
+            ]
+        }
+        self.assertEqual(
+            coverage_report._soroban_argument_kinds(data),
+            ["vec", "u32", "map", "symbol", "bool"],
+        )
+
+    def test_a_fixture_without_a_list_of_arguments_counts_nothing(self) -> None:
+        self.assertEqual(coverage_report._soroban_argument_kinds({}), [])
+        self.assertEqual(coverage_report._soroban_argument_kinds({"args": "x"}), [])
+
+
+class PackLabelTests(unittest.TestCase):
+    """An absolute pack path is reported by name; a relative one as written."""
+
+    def test_an_absolute_pack_path_is_reported_by_its_name_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = build_example_pack(Path(tmp))
+            report = coverage_report.build_report([pack])
+            self.assertEqual([p["name"] for p in report["packs"]], ["protocol-99"])
+            self.assertNotIn(tmp, json.dumps(report))
+
+    def test_a_relative_pack_path_is_reported_as_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_example_pack(tmp_path / "staging")
+            with contextlib.chdir(tmp_path):
+                report = coverage_report.build_report([Path("staging/protocol-99")])
+        self.assertEqual(
+            [p["name"] for p in report["packs"]], ["staging/protocol-99"]
+        )
+
+
+class MissingValidatorSectionTests(unittest.TestCase):
+    """A validator copy missing a counted section still produces a report."""
+
+    # The repository's validator re-exported without RPC_ASSERT_TYPES, one
+    # of the counted sections. load_validator (the --validator loader)
+    # refuses a copy missing a required constant by design -- that refusal
+    # is already pinned by ValidatorLoadErrorTests -- so the stand-in is
+    # passed to build_report the way a caller-supplied copy would be, and
+    # the counting loop's "the validator copy no longer declares it" guard
+    # is what must keep the run alive.
+    STANDIN = '\n'.join([
+        '"""A validator copy without RPC_ASSERT_TYPES (issue #412)."""',
+        "import importlib.util as _importlib",
+        "import sys as _sys",
+        "from pathlib import Path as _Path",
+        "",
+        "_spec = _importlib.spec_from_file_location(",
+        '    "_standin_real_validate", _Path("__VALIDATE_PATH__"))',
+        "assert _spec is not None and _spec.loader is not None",
+        "_real = _importlib.module_from_spec(_spec)",
+        '_sys.modules["_standin_real_validate"] = _real',
+        "_spec.loader.exec_module(_real)",
+        "",
+        "Report = _real.Report",
+        "find_fixture_files = _real.find_fixture_files",
+        "load_fixture = _real.load_fixture",
+        "validate_directory = _real.validate_directory",
+        "",
+        "CAPABILITIES = _real.CAPABILITIES",
+        "RPC_ASSERT_KINDS = _real.RPC_ASSERT_KINDS",
+        "RPC_METHODS = _real.RPC_METHODS",
+        "SOROBAN_ARG_KINDS = _real.SOROBAN_ARG_KINDS",
+        "SOROBAN_EXPECT_KINDS = _real.SOROBAN_EXPECT_KINDS",
+        "SURFACES = _real.SURFACES",
+        "XDR_KINDS = _real.XDR_KINDS",
+        "XDR_TYPES = _real.XDR_TYPES",
+        "# RPC_ASSERT_TYPES is deliberately not re-exported.",
+    ])
+
+    def test_a_copy_without_one_counted_constant_still_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            standin = tmp_path / "validator_minus_rpc_assert_types.py"
+            standin.write_text(
+                self.STANDIN.replace("__VALIDATE_PATH__", str(VALIDATE_PATH)),
+                encoding="utf-8",
+            )
+            module = ValidatorConstantTests.load(
+                standin, "validate_minus_rpc_assert_types"
+            )
+            pack = tmp_path / "protocol-77"
+            write(
+                pack,
+                "rpc/p77-rpc-network.toml",
+                rpc_fixture(
+                    "p77-rpc-network",
+                    method="get-network",
+                    asserts=[
+                        {"kind": "field-type", "field": "sequence", "expected_type": "number"},
+                    ],
+                ),
+            )
+            report = coverage_report.build_report([pack], validator=module)
+
+        self.assertNotIn("RPC_ASSERT_TYPES", report["capabilities"])
+        self.assertEqual(
+            report["capabilities"]["RPC_ASSERT_KINDS"],
+            {
+                "field-absent": 0,
+                "field-equals": 0,
+                "field-exists": 0,
+                "field-number-range": 0,
+                "field-type": 1,
+            },
+        )
+        self.assertEqual(report["capabilities"]["RPC_METHODS"]["get-network"], 1)
+        self.assertEqual(report["unmapped_capabilities"], [])
+        self.assertEqual(report["totals"], {"files": 1, "valid": 1, "invalid": 0})
+
+
+class ZeroPacksTests(unittest.TestCase):
+    """The text report over no packs at all says so instead of crashing."""
+
+    def test_the_text_report_with_zero_packs(self) -> None:
+        report = coverage_report.build_report([])
+        self.assertEqual(report["packs"], [])
+        self.assertEqual(report["totals"], {"files": 0, "valid": 0, "invalid": 0})
+        self.assertEqual(report["unmapped_capabilities"], [])
+
+        text = coverage_report.render_text(report)
+        self.assertTrue(
+            text.startswith(
+                "Fixture coverage report: 0 fixture file(s), 0 valid, 0 invalid\n"
+                "\nPacks\n  no fixture\n"
+            ),
+            text,
+        )
+        self.assertIn("\nCAP categories\n  no fixture\n", text)
+        self.assertTrue(text.endswith("Invalid fixtures\n  none\n"), text)
+        self.assertNotIn("Unmapped capability constants", text)
+        # Every capability value is still listed, each marked "no fixture".
+        vocabulary = sum(
+            len(values) for values in report["capabilities"].values()
+        )
+        self.assertEqual(text.count("  no fixture"), vocabulary + 2)  # + Packs, CAPs
+
+
+class UnmappedCapabilitiesTextTests(unittest.TestCase):
+    """The unmapped-capability line appears exactly when one exists."""
+
+    def test_the_line_is_absent_for_the_repository_validator(self) -> None:
+        text = coverage_report.render_text(coverage_report.build_report([]))
+        self.assertNotIn("Unmapped capability constants", text)
+
+    def test_the_line_names_the_unmapped_constant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scratch = ValidatorConstantTests.scratch_validator(tmp_path)
+            module = ValidatorConstantTests.load(
+                scratch, "validate_scratch_for_unmapped_text"
+            )
+            pack = build_example_pack(tmp_path)
+            text = coverage_report.render_text(
+                coverage_report.build_report([pack], validator=module)
+            )
+        self.assertIn(
+            "Unmapped capability constants (structural zeros, not measured): "
+            "BRAND_NEW_CAPABILITY\n",
+            text,
+        )
 
 
 if __name__ == "__main__":

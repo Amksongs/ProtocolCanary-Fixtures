@@ -1,0 +1,46 @@
+# Protocol 28 / ScVal: a truncated `SCV_U256` payload is rejected.
+#
+# Complements p28-xdr-scval-u256-max.toml: a decoder that accepts malformed
+# input is as much of a compatibility break as one that rejects valid input,
+# because two different byte strings would then decode to the same value and
+# "roundtrip byte identity" would stop meaning anything.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `case SCV_U256: UInt256Parts u256;` — Stellar-contract.x lines 282-283;
+#     `struct UInt256Parts` — lines 154-159.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced 36-byte `ScVal::U256` (all four limbs at `u64::MAX`) with
+# its last 8 bytes removed (the first 28 bytes are kept): the fourth uint64
+# limb is missing entirely and four bytes of the third limb are gone.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): ScVal::from_xdr_base64 returns Err ("failed to fill whole
+# buffer") for this input, while the unmodified crate-produced encoding it was
+# derived from decodes and round-trips successfully with the same crate. The
+# source value was built by a program using the pinned crate, with the
+# expression recorded in p28-xdr-scval-u256-max.toml's header; the mutation
+# above is the only change. A decoder that treated a short read as a zero-
+# filled limb would accept this and change the value, so the error is the
+# point of the fixture.
+#
+# Every byte is a synthetic structural value, not a capture of a real network
+# object, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-u256-truncated"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "A truncated `ScVal::U256` payload is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "decode-failure"
+value_base64 = "AAAAC////////////////////////////////w=="

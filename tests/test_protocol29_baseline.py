@@ -141,6 +141,22 @@ class Protocol29BaselineTests(unittest.TestCase):
         roots = [Path(root) for root in document["summary"]["roots"]]
         self.assertIn(PACK_DIR, roots, roots)
 
+    def test_generator_tool_reproduces_protocol_29_registry_byte_for_byte(self) -> None:
+        # F-098 (issue #370): --allow-empty generates protocol-29 byte for byte
+        generate_path = REPO_ROOT / "tools" / "registry" / "generate.py"
+        spec = importlib.util.spec_from_file_location("generate_for_protocol29", generate_path)
+        gen = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules["generate_for_protocol29"] = gen
+        spec.loader.exec_module(gen)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = gen.main([str(PACK_DIR), "--allow-empty", "--protocol", "29", "--stdout"])
+        self.assertEqual(code, 0, stderr.getvalue())
+        committed = REGISTRY_PATH.read_text(encoding="utf-8")
+        self.assertEqual(stdout.getvalue(), committed)
+
 
 if __name__ == "__main__":
     unittest.main()

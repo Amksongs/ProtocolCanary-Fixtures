@@ -54,6 +54,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common import pack_limits, paths
+
 SCHEMA_PATH = REPO_ROOT / "schemas" / "registry-v1.schema.json"
 DEFAULT_REGISTRY_NAME = "registry-v1.json"
 
@@ -63,10 +68,10 @@ SURFACES = ("xdr", "rpc", "soroban")
 PAYLOAD_FIELDS = ("input_file", "expected_file")
 
 # Extraction limits approved under D-06 (CF-02 section 7, CF-06 section 6).
-MAX_FILES = 2000
-MAX_TOTAL_BYTES = 16 * 1024 * 1024
-MAX_FILE_BYTES = 1024 * 1024
-MAX_DEPTH = 8
+MAX_FILES = pack_limits.MAX_FILES
+MAX_TOTAL_BYTES = pack_limits.MAX_TOTAL_BYTES
+MAX_FILE_BYTES = pack_limits.MAX_FILE_BYTES
+MAX_DEPTH = pack_limits.MAX_DEPTH
 
 
 class PackError(Exception):
@@ -131,8 +136,8 @@ def check_pack_path(path: str) -> None:
     for char in path:
         if char == "\x00" or unicodedata.category(char) == "Cc":
             raise PackError(f"pack path {path!r} contains a control character")
-    if len(segments) - 1 > MAX_DEPTH:
-        raise PackError(f"pack path {path!r} is nested deeper than {MAX_DEPTH} directories")
+    if len(segments) > MAX_DEPTH:
+        raise PackError(f"pack path {path!r} is deeper than {MAX_DEPTH} path segments")
 
 
 def check_reference(value: str) -> None:
@@ -239,11 +244,36 @@ def _utf8_key(text: str) -> bytes:
     return text.encode("utf-8")
 
 
-def build_registry(files: dict[str, bytes]) -> dict:
+def build_registry(
+    files: dict[str, bytes],
+    *,
+    allow_empty: bool = False,
+    protocol: int | None = None,
+    pack_name: str | None = None,
+) -> dict:
     """Build the registry mapping from the pack's files."""
+    if allow_empty:
+        if protocol is None:
+            raise PackError("--allow-empty requires --protocol N")
+        if isinstance(protocol, bool) or not isinstance(protocol, int) or protocol <= 0:
+            raise PackError(f"--protocol must be a positive integer, got {protocol!r}")
+        if pack_name and re.match(r"^protocol-(\d+)$", pack_name):
+            dir_protocol = int(re.match(r"^protocol-(\d+)$", pack_name).group(1))
+            if protocol != dir_protocol:
+                raise PackError(
+                    f"--protocol {protocol} conflicts with pack directory name {pack_name!r}"
+                )
+
     fixture_paths = sorted(p for p in files if p.endswith(".toml"))
     if not fixture_paths:
-        raise PackError("the pack contains no *.toml fixture files")
+        if not allow_empty:
+            raise PackError("the pack contains no *.toml fixture files")
+        return {
+            "registryVersion": REGISTRY_VERSION,
+            "protocol": protocol,
+            "fixtures": [],
+            "packDigest": pack_digest([]),
+        }
 
     entries: list[dict] = []
     protocols: dict[int, str] = {}
@@ -271,8 +301,12 @@ def build_registry(files: dict[str, bytes]) -> dict:
             )
         category = _required_str(fixture, "category", path)
         description = _required_str(fixture, "description", path)
-        protocol = fixture.get("protocol")
-        if not isinstance(protocol, int) or isinstance(protocol, bool) or protocol < 0:
+        fixture_protocol = fixture.get("protocol")
+        if (
+            not isinstance(fixture_protocol, int)
+            or isinstance(fixture_protocol, bool)
+            or fixture_protocol < 0
+        ):
             raise PackError(f"{path}: field 'protocol' must be a non-negative integer")
 
         if fixture_id in seen_ids:
@@ -280,7 +314,7 @@ def build_registry(files: dict[str, bytes]) -> dict:
                 f"duplicate fixture id {fixture_id!r} in {seen_ids[fixture_id]} and {path}"
             )
         seen_ids[fixture_id] = path
-        protocols.setdefault(protocol, path)
+        protocols.setdefault(fixture_protocol, path)
 
         payloads: dict[str, str] = {}
         directory = path.rpartition("/")[0]
@@ -334,12 +368,16 @@ def build_registry(files: dict[str, bytes]) -> dict:
         raise PackError(
             f"a pack targets exactly one protocol, but its fixtures declare: {listing}"
         )
-    (protocol,) = protocols
+    (pack_protocol,) = protocols
+    if protocol is not None and protocol != pack_protocol:
+        raise PackError(
+            f"--protocol {protocol} conflicts with fixture protocol {pack_protocol}"
+        )
 
     entries.sort(key=lambda e: _utf8_key(e["id"]))
     return {
         "registryVersion": REGISTRY_VERSION,
-        "protocol": protocol,
+        "protocol": pack_protocol,
         "fixtures": entries,
         "packDigest": pack_digest(pack_files.values()),
     }
@@ -361,9 +399,17 @@ def render_registry(registry: dict) -> str:
     return json.dumps(registry, indent=2, ensure_ascii=False) + "\n"
 
 
-def check_against_schema(registry: dict, schema_path: Path = SCHEMA_PATH) -> None:
+def check_against_schema(
+    registry: dict,
+    schema_path: Path = SCHEMA_PATH,
+    *,
+    allow_empty: bool = False,
+) -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     problems = _load_schema_validator().validate(registry, schema)
+    if allow_empty and not registry.get("fixtures"):
+        # Documented exception for empty baseline (Option B): minItems floor is filtered out
+        problems = [p for p in problems if "fewer than 1" not in p]
     # The schema cannot express ordering (it says so itself); check it here.
     ids = [e["id"] for e in registry["fixtures"]]
     if ids != sorted(ids, key=_utf8_key):
@@ -375,10 +421,26 @@ def check_against_schema(registry: dict, schema_path: Path = SCHEMA_PATH) -> Non
         )
 
 
-def generate(pack: Path) -> str:
+def generate(
+    pack: Path,
+    *,
+    allow_empty: bool = False,
+    protocol: int | None = None,
+) -> str:
     """Return the rendered registry for ``pack``, or raise PackError."""
-    registry = build_registry(scan_pack(pack))
-    check_against_schema(registry)
+    if allow_empty:
+        if protocol is None:
+            raise PackError("--allow-empty requires --protocol N")
+        if isinstance(protocol, bool) or not isinstance(protocol, int) or protocol <= 0:
+            raise PackError(f"--protocol must be a positive integer, got {protocol!r}")
+    scanned = scan_pack(pack)
+    registry = build_registry(
+        scanned,
+        allow_empty=allow_empty,
+        protocol=protocol,
+        pack_name=pack.name,
+    )
+    check_against_schema(registry, allow_empty=allow_empty)
     return render_registry(registry)
 
 
@@ -392,6 +454,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("pack", type=Path, help="pack directory, for example protocol-28")
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="allow generating an empty baseline registry (requires --protocol N)",
+    )
+    parser.add_argument(
+        "--protocol",
+        type=str,
+        default=None,
+        metavar="N",
+        help="protocol number for the pack (required with --allow-empty)",
+    )
     where = parser.add_mutually_exclusive_group()
     where.add_argument(
         "--output",
@@ -405,10 +479,67 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def collect_pack_protected_inputs(pack: Path, files: dict[str, bytes]) -> list[tuple[Path, str]]:
+    """Return protected input targets (fixtures, payloads, and the pack directory itself)."""
+    protected: list[tuple[Path, str]] = [(pack, "the pack directory")]
+    for path, data in files.items():
+        if path.endswith(".toml"):
+            protected.append((pack / path, "a pack fixture"))
+            try:
+                fixture = tomllib.loads(data.decode("utf-8"))
+            except Exception:
+                continue
+            directory = path.rpartition("/")[0]
+            for field in PAYLOAD_FIELDS:
+                reference = fixture.get(field)
+                if isinstance(reference, str) and reference:
+                    payload_path = f"{directory}/{reference}" if directory else reference
+                    protected.append((pack / payload_path, "a pack payload"))
+    return protected
+
+
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    protocol_num = None
+    if args.allow_empty:
+        if args.protocol is None:
+            print("error: --allow-empty requires --protocol N", file=sys.stderr)
+            print("FAILED: no registry written", file=sys.stderr)
+            return 1
+        try:
+            if "." in args.protocol or args.protocol.startswith("-"):
+                raise ValueError
+            protocol_num = int(args.protocol)
+            if protocol_num <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            print(
+                f"error: --protocol must be a positive integer, got {args.protocol!r}",
+                file=sys.stderr,
+            )
+            print("FAILED: no registry written", file=sys.stderr)
+            return 1
+    elif args.protocol is not None:
+        try:
+            if "." in args.protocol or args.protocol.startswith("-"):
+                raise ValueError
+            protocol_num = int(args.protocol)
+            if protocol_num <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            print(
+                f"error: --protocol must be a positive integer, got {args.protocol!r}",
+                file=sys.stderr,
+            )
+            print("FAILED: no registry written", file=sys.stderr)
+            return 1
+
     try:
-        text = generate(args.pack)
+        text = generate(
+            args.pack,
+            allow_empty=args.allow_empty,
+            protocol=protocol_num,
+        )
     except PackError as error:
         print(f"error: {error}", file=sys.stderr)
         print("FAILED: no registry written", file=sys.stderr)
@@ -429,6 +560,15 @@ def main(argv: list[str]) -> int:
             sys.stdout.write(text)
         return 0
     output = args.output or (args.pack / DEFAULT_REGISTRY_NAME)
+    try:
+        scanned = scan_pack(args.pack)
+        protected = collect_pack_protected_inputs(args.pack, scanned)
+        paths.check_target_safety(output, protected)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no registry written", file=sys.stderr)
+        return 1
+
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(text.encode("utf-8"))

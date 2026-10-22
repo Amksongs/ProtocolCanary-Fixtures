@@ -21,7 +21,8 @@ To add one:
   comment explaining how the expected value was derived.
 - **Write it** — stable, repository-unique `p<protocol>-<surface>-<slug>` ID;
   deterministic input; an explicit expected result using the surface's typed
-  assertion vocabulary.
+  assertion vocabulary. Use `python3 tools/scaffold/new_fixture.py` to generate
+  a skeleton template with explicit `TODO` placeholders.
 - **Check it** — run `make validate` (or `python3 tools/validate/validate.py` directly).
 - **Document, test & refresh it** — update the relevant `docs/protocol-NN.md`
   table (and the pack's `README.md` for a new CAP or surface), run
@@ -54,8 +55,10 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    credentials. A link into GitHub (`github.com/.../blob/...` or
    `raw.githubusercontent.com/...`) must name a full commit SHA or a release
    tag, not a branch such as `master`, so it keeps describing what the
-   fixture was written against; documentation pages have no ref to pin. The
-   header comment (a `#`
+   fixture was written against; documentation pages have no ref to pin.
+   The host name in a `source_reference` URL may only contain ASCII letters,
+   digits, `.` and `-` without empty labels or percent-encoding (non-ASCII hosts
+   must be written in punycode). The header comment (a `#`
    comment block above the TOML body) explains, in prose, how the expected
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
@@ -67,7 +70,11 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    `*.toml` files under a given `--fixtures-dir`, not just one file), and
    never renamed just because an implementation detail changed — if the
    semantic assertion itself changes, add a new fixture ID instead of
-   silently repurposing an old one.
+   silently repurposing an old one. To scaffold a skeleton fixture with the
+   required five-section header comment and explicit placeholders, run
+   `python3 tools/scaffold/new_fixture.py --surface <surface> --protocol <N> --id <id> --category <cat>`.
+   The generated skeleton intentionally fails validation until every placeholder
+   is replaced with verified evidence.
 4. **Create deterministic input.** No fixture may depend on ledger state
    that changes between runs (a current ledger sequence, "the latest
    anything") unless the assertion is explicitly scoped as a live-network
@@ -189,16 +196,22 @@ retrofitted by guesswork.
 
 A fixture's `protocol` field declares which protocol pack it belongs to.
 When a consumer runs with a protocol filter — for example
-`stellar-canary check --fixtures-dir <checkout> --protocol 28 --json` — every
+`stellar-canary check --fixtures-dir <protocol-NN-directory> --protocol 28 --json` — every
 fixture whose `protocol` does not equal the requested value is **skipped,
 not failed**. This matches `schemas/fixture-v1.schema.json`'s `protocol`
 description verbatim: "A run whose `--protocol` does not match is skipped,
 not failed."
 
+The `--fixtures-dir` argument must point at a `protocol-NN/` pack directory
+(e.g. `protocol-28/`), not at the repository root. The repository root
+contains test vectors under `tests/vectors/` (some deliberately invalid) that
+the loader would attempt to parse as fixtures, causing the run to fail.
+See README.md "Repository relationship" for details.
+
 Once this repository holds more than one populated protocol pack (see the
-`protocol-27/` pack, expected to be populated eventually), that has a
-practical consequence for CI: a run scoped with `--protocol` over the whole
-repository reports fewer fixtures than the tree contains, and a mostly
+`protocol-27/` pack, expected to be populated eventually), a run scoped with
+`--protocol` over a staging directory containing multiple `protocol-NN/`
+directories reports fewer fixtures than the tree contains, and a mostly
 skipped run is **not** a validation failure. Do not read a low fixture count
 under `--protocol` filtering as something being wrong with the fixtures.
 `tools/validate/validate.py` itself does not filter by protocol — it
@@ -245,7 +258,7 @@ Per-surface body (everything else in the file):
 | Surface | Fields |
 |---|---|
 | `xdr` | `type` (currently `"StellarValue"`, `"ContractExecutable"` or `"ScVal"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, `expected_base64` (only for `encode-equals`) |
-| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`) |
+| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"` \| `"get-health"` \| `"get-version-info"` \| `"get-fee-stats"` \| `"get-ledger-entries"` \| `"get-transaction"` \| `"get-ledgers"` \| `"get-transactions"` \| `"get-events"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`), optional `[request]` table |
 | `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]` tables (`{kind, value?}`; kinds `"bool"`, `"u32"`, `"i32"`, `"u64"`, `"i64"`, `"i128"`, `"u128"`, `"i256"`, `"u256"`, `"void"`, `"duration"`, `"timepoint"`, `"symbol"`, `"string"`, `"bytes"`, `"address"`, `"vec"`, `"map"`; `void` omits `value`, `vec`/`map` nest at most 8 levels), `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
 
 ### Unknown top-level fields
@@ -277,10 +290,49 @@ issue/PR against `Protocol-Canary`'s `canary-xdr` crate first (see its own
 `CONTRIBUTING.md`), and only add the fixture here once that support exists
 and is released.
 
-The same applies to an RPC `method` outside the `get-network` |
-`get-latest-ledger` pair the table above lists: open an issue/PR against
-`Protocol-Canary`'s `canary-rpc` crate first, and only add the fixture here
-once that support exists and is released.
+The same applies to an RPC `method` outside the methods the table above lists:
+open an issue/PR against `Protocol-Canary`'s `canary-rpc` crate first, and only
+add the fixture here once that support exists and is released.
+
+### The engine-vocabulary vector
+
+The names this repository's validator accepts — XDR types and kinds, RPC
+methods, RPC assertion kinds, Soroban expectation kinds and the surfaces —
+must be exactly the names `Protocol-Canary`'s parsers accept. The shared
+list is `tests/fixtures/engine-vocabulary.json`: one array per vocabulary,
+the engine source file each array was read from, and the `engineCommit` (a
+full 40-character commit SHA) they were read at.
+`tests/test_engine_vocabulary_parity.py` compares every array with
+`tools/validate/validate.py`'s constant and with the matching enum in
+`schemas/fixture-v1.schema.json`, so a name the engine accepts but the
+validator rejects — or the other way round — fails the test suite by name
+instead of surfacing later as a fixture one side accepts and the other
+rejects.
+
+To update the vector when the engine changes:
+
+1. Read the engine sources named next to each array in the vector
+   (`crates/canary-xdr/src/decoder.rs`, `crates/canary-xdr/src/runner.rs`,
+   `crates/canary-rpc/src/request.rs`, `crates/canary-rpc/src/runner.rs`,
+   `crates/canary-soroban/src/runner.rs`, `crates/canary-core/src/model.rs`)
+   at the `Protocol-Canary` commit you are moving to.
+2. Rewrite the affected arrays and set `engineCommit` to that commit's full
+   SHA. Only names the parser accepts belong in an array: a name a contract
+   document describes but the parser rejects goes into
+   `contractOnlyNotImplemented` instead.
+3. Change `tools/validate/validate.py`'s constant and the matching enum in
+   `schemas/fixture-v1.schema.json` in the same pull request, and update the
+   documents that list the vocabulary (`README.md`, the per-surface table
+   above, `docs/contracts.md`).
+4. Run `python3 -m unittest discover tests`; the parity test must pass
+   before the pull request is opened.
+
+A name the engine's parser accepts but this repository's validator does not
+yet accept is recorded in `engineOnlyNotYetAccepted`, together with the
+engine commit that added it. That list is documentation only — the parity
+test does not compare it — and moving the pin to that commit is a
+deliberate change that has to update the arrays, the validator and the
+schema together.
 
 ## What never belongs in a fixture
 
@@ -327,7 +379,29 @@ rules therefore apply to every change:
 
 Both rules are repository contracts, not style advice: a fixture that breaks
 one fails `make validate` (and therefore CI), and the archive and registry
-tools reject the pack before it can be released.
+tools reject the pack before it can be released. The full procedure for
+packaging, verifying, attesting, and publishing a pack release is documented in
+[`docs/releasing.md`](docs/releasing.md).
+
+## Pack limits
+
+Fixture packs are subject to extraction limits approved under decision D-06
+(CF-02 section 7 and CF-06 section 6 in `Protocol-Canary`), enforced
+identically by `tools/validate/validate.py`, `tools/registry/generate.py`,
+and `tools/pack/pack.py`:
+
+- **File count**: at most 2,000 member files per pack.
+- **Total uncompressed size**: at most 16 MiB (16,777,216 bytes) across all
+  pack members.
+- **Per-file size**: at most 1 MiB (1,048,576 bytes) for any individual pack
+  member.
+- **Path depth**: at most 8 `/`-separated segments for any member path relative
+  to the pack root (including the file name).
+
+Pack members are defined by CF-02 section 2: every `*.toml` file (excluding
+anything under `.git`), plus every payload file referenced by `input_file` or
+`expected_file`. Non-member files (such as `README.md`) are outside the pack
+and do not count toward these limits during validation.
 
 ## Deprecating a fixture
 
@@ -358,7 +432,9 @@ Quick reference for what contributors hit most often. Each line is the error as
 | `duplicate fixture id '...': already defined in ...` | Two fixtures share an `id`. Ids must be unique across the whole tree — rename the new one. |
 | `unexpected key(s) '...' in 'expect'; canary-soroban accepts only ['kind', 'message_contains']` | Unlike the top level of a fixture, `[expect]` is closed: `canary-soroban` rejects an unknown key there. Usually a typo (`message_contain`) or a field that belongs at the top level. |
 | `expect.message_contains must be a string, got ...` / `expect.message_contains must not be empty; ...` | The loader reads the field with `toml::Value::as_str`, so a non-string is silently dropped and an empty string matches every message — either way the fixture asserts less than it appears to. Quote the needle, or omit the key entirely to assert only that the simulation fails. |
+| `field 'expected_base64' is only allowed for kind 'encode-equals', not 'roundtrip'` | `expected_base64` states the expected encoding, and only an `encode-equals` fixture has one; the loader rejects the field for every other kind. Use `kind = "encode-equals"`, or drop the field. |
 | `README.md's fixtures badge is stale; run ...` | You added or removed a `*.toml`, so the fixture count in README.md is now wrong. Run `make badge` and commit the result. |
+| `git diff --exit-code` shows `registry-v1.json` as changed (CI step `check-registry`) | You changed a fixture or payload without regenerating the pack's registry manifest. Run `python3 tools/registry/generate.py protocol-28` (or, for an empty baseline, `python3 tools/registry/generate.py protocol-29 --allow-empty --protocol 29`) and commit the regenerated `registry-v1.json`. |
 | `missing required field '...'` with no obvious cause | Historically a typo'd duplicate of the intended field (e.g. `soure_reference`). Unknown keys are now rejected outright and named — see [Unknown top-level fields](#unknown-top-level-fields). |
 
 `make check` runs these in CI's order (`validate` → `badge-check` → `test`) and
@@ -389,6 +465,52 @@ introducing commit instead:
 
 A changelog entry without one of these links is not ready for review.
 
+### Automated CHANGELOG validation (rule [F-055])
+
+Pull request CI validates that a changelog entry is present whenever a pull
+request modifies governed files:
+
+- **Governed paths** requiring an entry under `## [Unreleased]`:
+  - Protocol packs (`protocol-*/`)
+  - Schemas (`schemas/`)
+  - Tools and scripts (`tools/`)
+- **Exempt paths** that do not require an entry when changed on their own:
+  - Documentation (`docs/`, root `README.md`, `CONTRIBUTING.md`, `SECURITY.md`)
+  - Tests (`tests/`)
+  - CI workflows (`.github/`)
+  - Repository configuration (`Makefile`, `.gitignore`, `.gitattributes`)
+
+If a pull request modifies governed files without modifying `CHANGELOG.md`, the
+pull request CI job will fail.
+
+#### Opting out with the `no-changelog` label
+
+If a pull request touches governed files but represents an internal refactoring,
+code cleanup, or other non-user-facing change that does not warrant a changelog
+entry, apply the **`no-changelog`** label to the pull request. CI reads pull
+request labels from the event payload and bypasses the changelog check when
+`no-changelog` is present.
+
+#### Checking changelog status locally
+
+Contributors can check changelog compliance locally before opening or pushing a
+PR:
+
+```bash
+# Compare working branch against origin/main:
+python3 tools/validate/check_changelog.py --base origin/main
+
+# Or check specific changed files:
+python3 tools/validate/check_changelog.py protocol-28/xdr/fixture.toml CHANGELOG.md
+
+# Or via make:
+make check-changelog
+```
+
+*(Note: CI does not require the changelog entry to include the PR number at check
+time, since the PR number is not known before the pull request is opened. You can
+add the link with the assigned PR number before merge.)*
+
 ## Development setup
 
 No build system is required. `tools/validate/validate.py` uses only the
@@ -400,6 +522,7 @@ For convenience, a `Makefile` wraps the commands CI runs:
 - `make badge` — regenerates README.md's fixture-count badge.
 - `make badge-check` — fails if that badge is stale.
 - `make test` — the repository test suite.
+- `make check-changelog` — verify CHANGELOG entry for changed files.
 - `make check-links` — check fixture source reference links across all packs.
 - `make coverage` — the test suite under branch coverage of `tools/`, failing
   below `.coveragerc`'s threshold. Needs the development-only dependency

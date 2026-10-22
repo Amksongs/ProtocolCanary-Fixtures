@@ -4,7 +4,7 @@
 ![ProtocolCanary-Fixtures](assets/ProtocolCanary-Fixtures-banner.svg)
 
 
-[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 23](https://img.shields.io/badge/fixtures-23-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
+[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 90](https://img.shields.io/badge/fixtures-90-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
 
 Canonical compatibility fixtures for Stellar Protocol Canary.
 
@@ -66,7 +66,7 @@ data.
 exposed via:
 
 ```bash
-stellar-canary check --fixtures-dir <path-to-a-checkout-of-this-repo> --json
+stellar-canary check --fixtures-dir <path-to-a-protocol-NN-directory> --json
 ```
 
 The loader recursively walks the given directory and parses **every**
@@ -87,9 +87,14 @@ layout:
   and `category` fields — not its file path — are what the loader and the
   planner act on.
 
-You can point `--fixtures-dir` at this repository's root, or at a single
-`protocol-NN/` directory to scope one pack; the loader's protocol filtering
-makes a mixed-protocol directory safe either way.
+**The `--fixtures-dir` argument must point at a `protocol-NN/` pack directory
+(e.g. `protocol-28/`), not at the repository root.** The repository root
+contains test vectors under `tests/vectors/` (some deliberately invalid) that
+the loader would attempt to parse as fixtures, causing the run to fail.
+Pointing at a pack directory avoids this because only that pack's fixtures
+are discovered. If you need to test multiple protocol packs together, create
+a staging directory containing only the desired `protocol-NN/` directories;
+the loader's protocol filtering (`--protocol`) then selects which to run.
 
 Interfaces shared with the other two repositories (registry and digest,
 verification evidence, fixture releases) are specified in
@@ -100,6 +105,14 @@ Core, Stellar RPC, Stellar Horizon and the Soroban host environment, with their
 release tags, commits and the network passphrases) is in
 [`docs/upstream-matrix.md`](docs/upstream-matrix.md); the same information as
 data is in [`upstream-matrix.json`](upstream-matrix.json).
+
+The command-line behavior, exit codes, and output streams of repository tools
+are documented in [`docs/tools.md`](docs/tools.md).
+
+The scheduled job that keeps the live read-only RPC evidence fresh -- its
+schedule, the endpoints it calls, the captures and verification records it
+writes, and how it fails -- is described in
+[`docs/live-verification.md`](docs/live-verification.md).
 
 ## Protocol packs
 
@@ -158,9 +171,14 @@ but the format supports them. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the fuller field
 table.
 
-**Currently supported RPC methods.** The `rpc` surface accepts only two
-methods today — `get-network` and `get-latest-ledger`, the same pair listed
-in [`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table.
+**Currently supported RPC methods.** The `rpc` surface accepts the ten
+methods the engine's `canary-rpc` crate parses — `get-network`,
+`get-latest-ledger`, `get-health`, `get-version-info`, `get-fee-stats`,
+`get-ledger-entries`, `get-transaction`, `get-ledgers`, `get-transactions`
+and `get-events` — the same set listed in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table, and
+pinned together with the engine commit it was read from in
+[`tests/fixtures/engine-vocabulary.json`](tests/fixtures/engine-vocabulary.json).
 Stellar RPC exposes many more (for example `getTransaction`); a fixture
 naming any other method is rejected by the validator. Adding support for
 another method is a `Protocol-Canary` change first (its `canary-rpc` crate),
@@ -186,6 +204,7 @@ table.
 | `rpc` | `[[assert]].kind` | `field-absent` | The response does not contain the named `field`. |
 | `rpc` | `[[assert]].kind` | `field-equals` | The named `field` equals `value` exactly. |
 | `rpc` | `[[assert]].kind` | `field-type` | The named `field` has the JSON type named by `expected_type`. |
+| `rpc` | `[[assert]].kind` | `field-number-range` | The named `field` is a numeric value within `min` and/or `max` (engine commit `4418690`, contract `ca-01-rpc-requests-and-assertions.md`). |
 | `soroban` | `[expect].kind` | `simulation-success` | `simulateTransaction` succeeds with no error. |
 | `soroban` | `[expect].kind` | `simulation-error` | `simulateTransaction` fails — optionally requiring `message_contains` to appear in the error message. |
 
@@ -205,7 +224,13 @@ an upstream XDR definition, or an official release/API reference — and
 carries a header comment explaining what was verified, how, and (for
 anything involving a live network call) when and against which endpoint.
 No fixture asserts a value that isn't traceable to an authoritative
-upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md). The full procedure
+for packaging, verifying, attesting, and publishing a pack release is documented
+in [`docs/releasing.md`](docs/releasing.md).
+
+Published pack release archives and manifests also carry cryptographically
+signed build provenance attestations; see [`SECURITY.md`](SECURITY.md#build-provenance-and-attestation)
+for verification instructions.
 
 ## Validation
 

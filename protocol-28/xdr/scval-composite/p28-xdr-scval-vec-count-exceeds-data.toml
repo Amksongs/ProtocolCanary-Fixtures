@@ -1,0 +1,47 @@
+# Protocol 28 / ScVal: a vec whose count exceeds its data is rejected.
+#
+# Complements p28-xdr-scval-vec-multi.toml: a decoder that accepts malformed
+# input is as much of a compatibility break as one that rejects valid input,
+# because two different byte strings would then decode to the same value and
+# "roundtrip byte identity" would stop meaning anything.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `typedef SCVal SCVec<>;` — Stellar-contract.x line 242; `case SCV_VEC:
+#     SCVec *vec;` — lines 298-299.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced `ScVal::Vec` of three elements with exactly one field
+# changed: the 4-byte element count at offset 8 is set from 3 to 4, so the
+# count claims one more element than the data contains. Every other byte is
+# unchanged.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): ScVal::from_xdr_base64 returns Err ("failed to fill whole
+# buffer") for this input, while the unmodified crate-produced encoding it was
+# derived from decodes and round-trips successfully with the same crate. The
+# source value was built by a program using the pinned crate, with the
+# expression recorded in p28-xdr-scval-vec-multi.toml's header; the mutation
+# above is the only change. This is the negative case the issue names: the
+# decoder must run out of input on the fourth element rather than silently
+# stop after three.
+#
+# Every byte is a synthetic structural value, not a capture of a real network
+# object, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-vec-count-exceeds-data"
+protocol = 28
+surface = "xdr"
+category = "scval-composite"
+description = "A `ScVal::Vec` whose element count exceeds its data is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "decode-failure"
+value_base64 = "AAAAEAAAAAEAAAAEAAAAAwAAAAcAAAAPAAAACHRyYW5zZmVyAAAAAAAAAAE="

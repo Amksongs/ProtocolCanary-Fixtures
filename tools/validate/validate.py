@@ -44,6 +44,13 @@ text (and evidence JSON read through ``--evidence``) must not contain
 bidirectional, invisible or disallowed control characters, and every
 pack-relative path segment must be a name Windows can create. Both report
 and never rewrite; see CONTRIBUTING.md, "Portable paths and safe text".
+
+A verification record read through ``--evidence`` must also have a
+``checkedAt`` that is not in the future. A verification is made by a person
+or a scheduled job that actually ran the step, so it cannot have happened
+at a later instant; a record dated 2099 would otherwise look "verified"
+for 73 years. A record may be up to five minutes ahead of this run's clock,
+the tolerance for skew between the verifier's machine and this one.
 """
 from __future__ import annotations
 
@@ -53,14 +60,29 @@ import binascii
 import hashlib
 import importlib.util
 import json
+import math
 import re
 import sys
 import tomllib
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common import pack_limits
+from tools.common.json_strict import JSONInputError, load_json
+
+# Extraction limits approved under D-06 (CF-02 section 7, CF-06 section 6).
+MAX_FILES = pack_limits.MAX_FILES
+MAX_TOTAL_BYTES = pack_limits.MAX_TOTAL_BYTES
+MAX_FILE_BYTES = pack_limits.MAX_FILE_BYTES
+MAX_DEPTH = pack_limits.MAX_DEPTH
 
 # Mirrors canary-fixtures' supported surfaces; must be kept in sync with
 # docs/fixture-contract.md in the upstream canary-fixtures repo. Changing
@@ -89,8 +111,48 @@ XDR_KINDS = {"decode-success", "decode-failure", "roundtrip", "encode-equals"}
 # Set of RPC methods supported by canary-rpc. Must be kept in sync with the
 # methods canary-rpc actually implements: a value added here only names a string;
 # the corresponding method must already exist upstream in canary-rpc.
-RPC_METHODS = {"get-network", "get-latest-ledger"}
-RPC_ASSERT_KINDS = {"field-exists", "field-absent", "field-type", "field-equals"}
+RPC_METHODS = {
+    "get-events",
+    "get-fee-stats",
+    "get-health",
+    "get-latest-ledger",
+    "get-ledger-entries",
+    "get-ledgers",
+    "get-network",
+    "get-transaction",
+    "get-transactions",
+    "get-version-info",
+}
+_RPC_METHOD_PARAMS: dict[str, dict[str, bool]] = {
+    "get-network": {},
+    "get-latest-ledger": {},
+    "get-health": {},
+    "get-version-info": {},
+    "get-fee-stats": {},
+    "get-ledger-entries": {"keys": True, "xdrFormat": False},
+    "get-transaction": {"hash": True, "xdrFormat": False},
+    "get-ledgers": {"startLedger": False, "pagination": False, "xdrFormat": False},
+    "get-transactions": {"startLedger": False, "pagination": False, "xdrFormat": False},
+    "get-events": {
+        "startLedger": False,
+        "endLedger": False,
+        "filters": False,
+        "pagination": False,
+        "xdrFormat": False,
+    },
+}
+_RPC_MAX_KEYS = 50
+_RPC_MAX_LIMIT = 50
+_RPC_MAX_FILTERS = 2
+_RPC_MAX_LEDGER = 4294967295
+_RPC_EVENT_FILTER_TYPES = {"contract", "system", "diagnostic"}
+RPC_ASSERT_KINDS = {
+    "field-exists",
+    "field-absent",
+    "field-type",
+    "field-equals",
+    "field-number-range",
+}
 # JSON type names accepted for RPC field-type assertions. Keep this set in
 # sync with the `expected_type` enum in schemas/fixture-v1.schema.json.
 RPC_ASSERT_TYPES = {"string", "number", "bool", "object", "array", "null"}
@@ -263,7 +325,7 @@ XDR_CONDITIONAL_REQUIRED_FIELDS = {"encode-equals": ("expected_base64",)}
 COMMON_OPTIONAL_FIELDS = ("required_capabilities", "input_file", "expected_file")
 SURFACE_FIELDS = {
     "xdr": ("type", "kind", "value_base64", "expected_base64"),
-    "rpc": ("method", "assert"),
+    "rpc": ("method", "assert", "request"),
     "soroban": (
         "source_account",
         "contract_id",
@@ -487,14 +549,31 @@ def check_source_reference(value: str) -> str | None:
         return None
 
     parts = urlsplit(value)
-    host = (parts.hostname or "").lower()
+    raw_host = parts.hostname or ""
     segments = [s for s in parts.path.split("/") if s]
-    if not host or "." not in host:
+    if not raw_host or "." not in raw_host:
         return f"has no valid host name in {value!r}"
     if parts.username is not None or parts.password is not None:
         return "must not embed credentials (user@host) in the URL"
 
-    if host in _GITHUB_HOSTS:
+    lower_host = raw_host.lower()
+    if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for ch in lower_host):
+        return (
+            "source_reference host must contain only ASCII letters, digits, '.' and '-' "
+            "without empty labels or percent-encoding (non-ASCII hosts must use punycode)"
+        )
+
+    stripped_host = lower_host[:-1] if lower_host.endswith(".") else lower_host
+    labels = stripped_host.split(".")
+    if not stripped_host or any(not label for label in labels):
+        return (
+            "source_reference host must contain only ASCII letters, digits, '.' and '-' "
+            "without empty labels or percent-encoding (non-ASCII hosts must use punycode)"
+        )
+
+    canonical_host = stripped_host
+
+    if canonical_host in _GITHUB_HOSTS:
         if len(segments) < 3:
             return (
                 "points at a GitHub repository root, which follows the default "
@@ -514,7 +593,7 @@ def check_source_reference(value: str) -> str | None:
                     "moves; pin the link to a full commit SHA or a release tag "
                     f"(for example .../{kind}/<40-hex commit>/...)"
                 )
-    elif host == _GITHUB_RAW_HOST:
+    elif canonical_host == _GITHUB_RAW_HOST:
         # /<owner>/<repo>/<ref>/<path...>, or /<owner>/<repo>/refs/(heads|tags)/<name>/...
         if len(segments) < 4:
             return "has no ref and file path; link to a file at a commit or tag"
@@ -536,7 +615,17 @@ def check_source_reference(value: str) -> str | None:
 
 
 def find_fixture_files(root: Path) -> list[Path]:
-    return sorted(p for p in root.rglob("*.toml") if p.is_file())
+    fixtures = []
+    for p in root.rglob("*.toml"):
+        if not p.is_file():
+            continue
+        try:
+            if ".git" in p.relative_to(root).parts:
+                continue
+        except ValueError:
+            continue
+        fixtures.append(p)
+    return sorted(fixtures)
 
 
 def _toml_error_line(exc: tomllib.TOMLDecodeError) -> int | None:
@@ -554,17 +643,41 @@ def _toml_error_line(exc: tomllib.TOMLDecodeError) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _strip_one_leading_bom(text: str) -> str:
+    """Remove exactly one leading UTF-8 BOM from ``text``, if present.
+
+    Windows editors commonly save UTF-8 files with a byte order mark, and the
+    engine accepts such a file, so the validator must accept it too. Exactly
+    one is removed: a second BOM is left in the text, where the TOML parser
+    rejects it at line 1 instead of the file silently validating twice over.
+    """
+    if text.startswith(BYTE_ORDER_MARK):
+        return text[1:]
+    return text
+
+
 def _field_line(path: Path, key: str) -> int | None:
     """The 1-based line defining top-level ``key`` in ``path``, else ``None``.
 
     Only used for fields the validator has already found must exist (so the
     key is a top-level fixture field, not an arbitrary needle). ``None`` is
-    returned when the file cannot be read or the key is not defined exactly
-    once -- for example it also appears in a comment -- because pointing at the
-    wrong line would mislead more than omitting the line does.
+    returned when the file cannot be read, exceeds the pack file size limit,
+    or the key is not defined exactly once -- for example it also appears in a
+    comment -- because pointing at the wrong line would mislead more than
+    omitting the line does.
+
+    The file is read exactly the way ``load_fixture`` reads it (bytes, decoded
+    as UTF-8, one leading BOM removed, no newline translation) so the line
+    numbers reported here match the text the TOML parser saw.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        if path.stat().st_size > pack_limits.MAX_FILE_BYTES:
+            return None
+        with open(path, "rb") as f:
+            data = f.read(pack_limits.MAX_FILE_BYTES + 1)
+        if len(data) > pack_limits.MAX_FILE_BYTES:
+            return None
+        text = _strip_one_leading_bom(data.decode("utf-8", errors="replace"))
     except OSError:
         return None
     pattern = re.compile(rf"^[ \t]*{re.escape(key)}[ \t]*=")
@@ -572,20 +685,172 @@ def _field_line(path: Path, key: str) -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def load_fixture(path: Path, report: Report) -> Fixture | None:
+# The engine reads every TOML integer as a signed 64-bit value (Rust's
+# toml::Value::Integer), so a fixture holding e.g. ``sequence_number =
+# 9223372036854775808`` parses fine in Python but is refused by the engine
+# with a fixture parse error (docs/fixture-contract.md section 3 in
+# StellarCanary/Protocol-Canary). Accepting it here would be the opposite
+# of the validator's purpose, so every parsed integer is range-checked
+# (issue #341).
+INT64_MIN = -(2**63)
+INT64_MAX = 2**63 - 1
+
+
+def _iter_integer_values(data: object) -> Iterator[tuple[str, int]]:
+    """Yield ``(key path, value)`` for every integer anywhere in parsed TOML.
+
+    Deliberately iterative rather than recursive: a fixture whose tables
+    nest just deeply enough to parse must not crash this walk with a
+    RecursionError of its own (issue #341). Key paths look like
+    ``sequence_number``, ``assert[0].min`` or ``args[1].value[2]``.
+    """
+    stack: list[tuple[str, object]] = [("", data)]
+    while stack:
+        key_path, node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                stack.append((f"{key_path}.{key}" if key_path else key, value))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                stack.append((f"{key_path}[{index}]", value))
+        elif isinstance(node, int) and not isinstance(node, bool):
+            yield key_path, node
+
+
+def _magnitude_phrase(value: int) -> str:
+    """Describe ``abs(value)`` without ever stringifying a huge integer.
+
+    ``str()`` on an out-of-range integer can itself raise ValueError (the
+    ``int_max_str_digits`` limit applies to int-to-string conversion too),
+    so a magnitude beyond 64 bits is described by its size instead of by
+    its full digits.
+    """
+    magnitude = abs(value)
+    bits = magnitude.bit_length()
+    if bits <= 64:
+        return str(magnitude)
+    return f"a {bits}-bit number (>= 2^{bits - 1})"
+
+
+def report_out_of_range_integers(path: Path, data: dict, report: Report) -> bool:
+    """Report every integer outside the signed 64-bit range (issue #341).
+
+    Names the file, the key path and the value's magnitude -- never the
+    full digits of a huge literal. Returns True when at least one integer
+    was reported, so ``load_fixture`` can refuse to further validate a
+    document the engine would refuse to load at all.
+    """
+    reported = False
+    for key_path, value in _iter_integer_values(data):
+        if not INT64_MIN <= value <= INT64_MAX:
+            reported = True
+            line = None
+            if key_path and "." not in key_path and "[" not in key_path:
+                line = _field_line(path, key_path)
+            report.error(
+                path,
+                f"integer at {key_path!r} is outside the signed 64-bit range "
+                "-2^63..2^63-1 (the engine reads TOML integers as i64); "
+                f"its magnitude is {_magnitude_phrase(value)}",
+                line=line,
+            )
+    return reported
+
+
+def load_fixture(path: Path, report: Report, root: Path | None = None) -> Fixture | None:
     try:
-        raw = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        report.error(path, f"not valid UTF-8: {exc}")
+        st = path.stat()
+        file_size = st.st_size
+    except OSError as exc:
+        try:
+            path.read_bytes()
+        except OSError as read_exc:
+            report.error(path, f"failed to read file: {read_exc}")
+            return None
+        report.error(path, f"failed to read file: {exc}")
         return None
+
+    rel = None
+    if root is not None:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            pass
+    if rel is None:
+        for parent in path.parents:
+            if parent.name.startswith("protocol-"):
+                try:
+                    rel = path.relative_to(parent).as_posix()
+                    break
+                except ValueError:
+                    pass
+    if rel is None:
+        rel = path.name
+
+    if file_size > pack_limits.MAX_FILE_BYTES:
+        report.error(
+            path,
+            f"{rel} is {file_size} bytes, over the {pack_limits.MAX_FILE_BYTES} byte limit for one pack file",
+        )
+        return None
+
+    # Read raw bytes with a bounded read rather than reading the entire file
+    # into memory, enforcing MAX_FILE_BYTES even if the file grew after stat().
+    try:
+        with open(path, "rb") as f:
+            raw_bytes = f.read(pack_limits.MAX_FILE_BYTES + 1)
     except OSError as exc:
         report.error(path, f"failed to read file: {exc}")
         return None
+
+    if len(raw_bytes) > pack_limits.MAX_FILE_BYTES:
+        size = max(len(raw_bytes), path.stat().st_size)
+        report.error(
+            path,
+            f"{rel} is {size} bytes, over the {pack_limits.MAX_FILE_BYTES} byte limit for one pack file",
+        )
+        return None
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # exc.start is the offset of the first bad byte in the file.
+        report.error(
+            path,
+            f"file is not valid UTF-8 (byte 0x{raw_bytes[exc.start]:02x} "
+            f"at offset {exc.start}); fixture files must be UTF-8 encoded",
+        )
+        return None
     report_unsafe_characters(path, raw, report)
     try:
-        data = tomllib.loads(raw)
+        data = tomllib.loads(_strip_one_leading_bom(raw))
     except tomllib.TOMLDecodeError as exc:
         report.error(path, f"invalid TOML: {exc}", line=_toml_error_line(exc))
+        return None
+    except RecursionError:
+        # Hostile input: tens of thousands of nested brackets drive the
+        # recursive TOML parser past the interpreter's limit. Report it like
+        # any other parse error instead of dying with a traceback (issue
+        # #341, row 2); the engine likewise rejects it with a parse error.
+        report.error(
+            path,
+            "invalid TOML: nesting is too deep (the tables and arrays nest "
+            "deeper than the TOML parser's recursion limit); flatten the "
+            "structure",
+        )
+        return None
+    except ValueError as exc:
+        # tomllib converts integer literals with int(); a literal beyond
+        # Python's digit limit (sys.int_max_str_digits) raises a plain
+        # ValueError, not a TOMLDecodeError (issue #341, row 3).
+        if "Exceeds the limit" in str(exc):
+            report.error(path, f"invalid TOML: integer literal is too large; {exc}")
+        else:
+            report.error(path, f"invalid TOML: {exc}")
+        return None
+    if report_out_of_range_integers(path, data, report):
+        # The engine would refuse to load this fixture outright, so there is
+        # nothing to gain by validating a document it never sees (issue #341,
+        # row 4).
         return None
     return Fixture(path=path, data=data)
 
@@ -609,11 +874,12 @@ def _require(data: dict, key: str, expected_type: type, path: Path, report: Repo
     if key not in data:
         report.error(path, f"missing required field {key!r}")
         return False
-    if not isinstance(data[key], expected_type):
+    val = data[key]
+    if (expected_type is int and isinstance(val, bool)) or not isinstance(val, expected_type):
         report.error(
             path,
             f"field {key!r} must be of type {expected_type.__name__}, "
-            f"got {type(data[key]).__name__}",
+            f"got {type(val).__name__}",
             line=_field_line(path, key),
         )
         return False
@@ -753,7 +1019,7 @@ def validate_top_level_keys(fx: Fixture, report: Report) -> None:
     bury the real error in noise.
     """
     surface = fx.data.get("surface")
-    if surface not in SURFACE_FIELDS:
+    if not isinstance(surface, str) or surface not in SURFACE_FIELDS:
         return
     allowed = (
         set(COMMON_REQUIRED_FIELDS)
@@ -771,11 +1037,18 @@ def validate_top_level_keys(fx: Fixture, report: Report) -> None:
 
 def _validate_base64(value: str, field_name: str, path: Path, report: Report) -> None:
     try:
-        base64.b64decode(value, validate=True)
+        decoded = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError) as exc:
         report.error(
             path,
             f"field {field_name!r} is not valid base64: {exc}",
+            line=_field_line(path, field_name),
+        )
+        return
+    if base64.b64encode(decoded).decode("ascii") != value:
+        report.error(
+            path,
+            f"field {field_name!r} is not canonical base64",
             line=_field_line(path, field_name),
         )
 
@@ -793,10 +1066,14 @@ def validate_xdr_body(fx: Fixture, report: Report) -> None:
         )
 
     ok_kind = _require(data, "kind", str, path, report)
-    if ok_kind and data["kind"] not in XDR_KINDS:
+    kind = data.get("kind") if ok_kind else None
+    # A kind the engine does not support is reported once, by the check
+    # below; no rule that depends on the kind can be applied to it.
+    supported_kind = ok_kind and kind in XDR_KINDS
+    if ok_kind and not supported_kind:
         report.error(
             path,
-            f"field 'kind' must be one of {sorted(XDR_KINDS)}, got {data['kind']!r}",
+            f"field 'kind' must be one of {sorted(XDR_KINDS)}, got {kind!r}",
             line=_field_line(path, "kind"),
         )
 
@@ -809,7 +1086,10 @@ def validate_xdr_body(fx: Fixture, report: Report) -> None:
             )
         _validate_base64(data["value_base64"], "value_base64", path, report)
 
-    if (ok_kind and data["kind"] == "encode-equals") or "expected_base64" in data:
+    if supported_kind and kind == "encode-equals":
+        # For this kind the expected encoding is the point of the fixture,
+        # so the field is required and must be a non-empty, valid base64
+        # string.
         if _require(data, "expected_base64", str, path, report):
             if not data["expected_base64"]:
                 report.error(
@@ -818,6 +1098,286 @@ def validate_xdr_body(fx: Fixture, report: Report) -> None:
                     line=_field_line(path, "expected_base64"),
                 )
             _validate_base64(data["expected_base64"], "expected_base64", path, report)
+    elif supported_kind and "expected_base64" in data:
+        # canary-xdr's loader accepts "kind", "type" and "value_base64" for
+        # every other kind and rejects the whole fixture when it finds
+        # another key, so a fixture with expected_base64 and, say,
+        # kind = "roundtrip" passes this validator but is refused by the
+        # engine. The rule is enforced here so the two agree (F-116,
+        # issue #398).
+        report.error(
+            path,
+            f"field 'expected_base64' is only allowed for kind 'encode-equals', "
+            f"not {kind!r}",
+            line=_field_line(path, "expected_base64"),
+        )
+
+
+def _is_canonical_base64_string(text: str) -> bool:
+    if not isinstance(text, str) or not text or len(text) % 4 != 0:
+        return False
+    body = text.rstrip("=")
+    pad = len(text) - len(body)
+    if pad > 2:
+        return False
+    return all(c.isalnum() or c in "+/" for c in body)
+
+
+def validate_rpc_request(method: str, data: dict, path: Path, report: Report) -> None:
+    """Validate [request] table per CA-01-K, mirroring canary-rpc's request.rs."""
+    if method not in _RPC_METHOD_PARAMS:
+        return
+    params = _RPC_METHOD_PARAMS[method]
+    request = data.get("request")
+
+    if request is None:
+        required = [name for name, req in params.items() if req]
+        if required:
+            report.error(
+                path,
+                f"method {method!r} requires a [request] table with {required[0]!r}",
+                line=_field_line(path, "method"),
+            )
+        return
+
+    if not params:
+        report.error(
+            path,
+            f"method {method!r} takes no parameters, so it cannot have a [request] table",
+            line=_field_line(path, "request"),
+        )
+        return
+
+    if not isinstance(request, dict):
+        report.error(
+            path,
+            "[request] must be a table",
+            line=_field_line(path, "request"),
+        )
+        return
+
+    unknown = sorted(set(request) - set(params))
+    if unknown:
+        report.error(
+            path,
+            f"unknown [request] key(s) {unknown} for method {method!r}; its parameters are {sorted(params)}",
+            line=_field_line(path, "request"),
+        )
+
+    for name, req in params.items():
+        if req and name not in request:
+            report.error(
+                path,
+                f"[request] is missing required key {name!r}",
+                line=_field_line(path, "request"),
+            )
+
+    if "keys" in request:
+        keys = request["keys"]
+        if not isinstance(keys, list):
+            report.error(
+                path,
+                "[request] keys: must be an array of strings",
+                line=_field_line(path, "request"),
+            )
+        elif len(keys) == 0:
+            report.error(
+                path,
+                "[request] keys: must not be empty",
+                line=_field_line(path, "request"),
+            )
+        elif len(keys) > _RPC_MAX_KEYS:
+            report.error(
+                path,
+                f"[request] keys: has {len(keys)} entries; the engine allows at most {_RPC_MAX_KEYS}",
+                line=_field_line(path, "request"),
+            )
+        else:
+            for idx, key in enumerate(keys):
+                if not isinstance(key, str):
+                    report.error(
+                        path,
+                        f"[request] keys: entry {idx} must be a string",
+                        line=_field_line(path, "request"),
+                    )
+                elif not _is_canonical_base64_string(key):
+                    report.error(
+                        path,
+                        f"[request] keys: entry {idx} is not a base64 string",
+                        line=_field_line(path, "request"),
+                    )
+
+    if "hash" in request:
+        val = request["hash"]
+        if not isinstance(val, str):
+            report.error(
+                path,
+                "[request] hash: must be a string",
+                line=_field_line(path, "request"),
+            )
+        elif len(val) != 64 or not all(c in "0123456789abcdef" for c in val):
+            report.error(
+                path,
+                "[request] hash: must be 64 lowercase hex characters",
+                line=_field_line(path, "request"),
+            )
+
+    for ledger_key in ("startLedger", "endLedger"):
+        if ledger_key in request:
+            val = request[ledger_key]
+            if isinstance(val, bool) or not isinstance(val, int):
+                report.error(
+                    path,
+                    f"[request] {ledger_key}: must be an integer",
+                    line=_field_line(path, "request"),
+                )
+            elif not (0 <= val <= _RPC_MAX_LEDGER):
+                report.error(
+                    path,
+                    f"[request] {ledger_key}: {val} is not a ledger sequence (0..={_RPC_MAX_LEDGER})",
+                    line=_field_line(path, "request"),
+                )
+
+    if "pagination" in request:
+        pag = request["pagination"]
+        if not isinstance(pag, dict):
+            report.error(
+                path,
+                "[request] pagination: must be a table",
+                line=_field_line(path, "request"),
+            )
+        else:
+            unknown_pag = sorted(set(pag) - {"cursor", "limit"})
+            for k in unknown_pag:
+                report.error(
+                    path,
+                    f"[request] pagination: unknown key {k!r}; expected 'cursor' or 'limit'",
+                    line=_field_line(path, "request"),
+                )
+            if "cursor" in pag:
+                cur = pag["cursor"]
+                if not isinstance(cur, str) or len(cur) == 0:
+                    report.error(
+                        path,
+                        "[request] pagination: cursor must be a non-empty string",
+                        line=_field_line(path, "request"),
+                    )
+            if "limit" in pag:
+                lim = pag["limit"]
+                if isinstance(lim, bool) or not isinstance(lim, int):
+                    report.error(
+                        path,
+                        "[request] pagination: limit must be an integer",
+                        line=_field_line(path, "request"),
+                    )
+                elif not (1 <= lim <= _RPC_MAX_LIMIT):
+                    report.error(
+                        path,
+                        f"[request] pagination: limit {lim} is outside 1..={_RPC_MAX_LIMIT}",
+                        line=_field_line(path, "request"),
+                    )
+
+    if "filters" in request:
+        filters = request["filters"]
+        if not isinstance(filters, list):
+            report.error(
+                path,
+                "[request] filters: must be an array of tables",
+                line=_field_line(path, "request"),
+            )
+        elif len(filters) > _RPC_MAX_FILTERS:
+            report.error(
+                path,
+                f"[request] filters: has {len(filters)} filters; the engine allows at most {_RPC_MAX_FILTERS}",
+                line=_field_line(path, "request"),
+            )
+        else:
+            for idx, flt in enumerate(filters):
+                if not isinstance(flt, dict):
+                    report.error(
+                        path,
+                        f"[request] filters: filter {idx} must be a table",
+                        line=_field_line(path, "request"),
+                    )
+                    continue
+                unknown_flt = sorted(set(flt) - {"type", "contractIds", "topics"})
+                for k in unknown_flt:
+                    report.error(
+                        path,
+                        f"[request] filters: filter {idx}: unknown key {k!r}",
+                        line=_field_line(path, "request"),
+                    )
+                if "type" in flt:
+                    t = flt["type"]
+                    if t not in _RPC_EVENT_FILTER_TYPES:
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: type must be 'contract', 'system' or 'diagnostic'",
+                            line=_field_line(path, "request"),
+                        )
+                if "contractIds" in flt:
+                    cids = flt["contractIds"]
+                    if not isinstance(cids, list):
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: contractIds must be an array of strings",
+                            line=_field_line(path, "request"),
+                        )
+                    elif len(cids) > 5:
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: contractIds has more than 5 entries",
+                            line=_field_line(path, "request"),
+                        )
+                    elif not all(isinstance(c, str) for c in cids):
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: contractIds must contain only strings",
+                            line=_field_line(path, "request"),
+                        )
+                if "topics" in flt:
+                    topics = flt["topics"]
+                    if not isinstance(topics, list):
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: topics must be an array of arrays",
+                            line=_field_line(path, "request"),
+                        )
+                    elif len(topics) > 5:
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: topics has more than 5 entries",
+                            line=_field_line(path, "request"),
+                        )
+                    else:
+                        for row_idx, row in enumerate(topics):
+                            if not isinstance(row, list):
+                                report.error(
+                                    path,
+                                    f"[request] filters: filter {idx}: a topics entry must be an array of strings",
+                                    line=_field_line(path, "request"),
+                                )
+                            elif len(row) > 5:
+                                report.error(
+                                    path,
+                                    f"[request] filters: filter {idx}: a topics entry has more than 5 entries",
+                                    line=_field_line(path, "request"),
+                                )
+                            elif not all(isinstance(elem, str) for elem in row):
+                                report.error(
+                                    path,
+                                    f"[request] filters: filter {idx}: a topics entry must contain only strings",
+                                    line=_field_line(path, "request"),
+                                )
+
+    if "xdrFormat" in request:
+        xf = request["xdrFormat"]
+        if xf != "base64":
+            report.error(
+                path,
+                "[request] xdrFormat: only 'base64' is supported",
+                line=_field_line(path, "request"),
+            )
 
 
 def validate_rpc_body(fx: Fixture, report: Report) -> None:
@@ -830,6 +1390,8 @@ def validate_rpc_body(fx: Fixture, report: Report) -> None:
             f"field 'method' must be one of {sorted(RPC_METHODS)}, got {data['method']!r}",
             line=_field_line(path, "method"),
         )
+    elif ok_method:
+        validate_rpc_request(data["method"], data, path, report)
 
     if "assert" not in data:
         report.error(path, "rpc fixture must define at least one [[assert]] table")
@@ -843,29 +1405,89 @@ def validate_rpc_body(fx: Fixture, report: Report) -> None:
             report.error(path, f"assert[{i}] must be a table")
             continue
         kind = a.get("kind")
-        if kind not in RPC_ASSERT_KINDS:
+        if not isinstance(kind, str) or kind not in RPC_ASSERT_KINDS:
+            actual = type(kind).__name__ if not isinstance(kind, str) else repr(kind)
             report.error(
                 path,
-                f"assert[{i}].kind must be one of {sorted(RPC_ASSERT_KINDS)}, got {kind!r}",
+                f"assert[{i}].kind must be one of {sorted(RPC_ASSERT_KINDS)}, got {actual}",
             )
-        unknown_assert_keys = sorted(set(a) - set(RPC_ASSERT_FIELDS))
+        if kind == "field-number-range":
+            allowed_keys = {"kind", "field", "min", "max"}
+        else:
+            allowed_keys = set(RPC_ASSERT_FIELDS)
+        unknown_assert_keys = sorted(set(a) - allowed_keys)
         if unknown_assert_keys:
             report.error(
                 path,
                 f"unexpected key(s) {', '.join(repr(k) for k in unknown_assert_keys)} in "
-                f"assert[{i}]; accepted keys are {sorted(RPC_ASSERT_FIELDS)}",
+                f"assert[{i}]; accepted keys are {sorted(allowed_keys)}",
             )
-        if not a.get("field"):
+        field_value = a.get("field")
+        if field_value is None or field_value == "":
             report.error(path, f"assert[{i}] missing required non-empty 'field'")
+        elif not isinstance(field_value, str):
+            report.error(
+                path,
+                f"assert[{i}].field must be a non-empty string, "
+                f"got {type(field_value).__name__}",
+            )
         if kind == "field-equals" and "value" not in a:
             report.error(path, f"assert[{i}] with kind=field-equals requires 'value'")
         if kind == "field-type":
             expected_type = a.get("expected_type")
-            if expected_type not in RPC_ASSERT_TYPES:
+            if not isinstance(expected_type, str) or expected_type not in RPC_ASSERT_TYPES:
+                actual = (
+                    type(expected_type).__name__
+                    if not isinstance(expected_type, str)
+                    else repr(expected_type)
+                )
                 report.error(
                     path,
                     f"assert[{i}].expected_type must be one of {sorted(RPC_ASSERT_TYPES)}, "
-                    f"got {expected_type!r}",
+                    f"got {actual}",
+                )
+        if kind == "field-number-range":
+            has_min = "min" in a
+            has_max = "max" in a
+            if not has_min and not has_max:
+                report.error(
+                    path,
+                    f"assert[{i}] with kind=field-number-range requires 'min' or 'max'",
+                )
+            min_val = None
+            max_val = None
+            if has_min:
+                val = a["min"]
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
+                    report.error(
+                        path,
+                        f"assert[{i}].min must be a number, got {type(val).__name__}",
+                    )
+                elif math.isnan(val) or math.isinf(val):
+                    report.error(
+                        path,
+                        f"assert[{i}].min must be a finite number, got {val}",
+                    )
+                else:
+                    min_val = val
+            if has_max:
+                val = a["max"]
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
+                    report.error(
+                        path,
+                        f"assert[{i}].max must be a number, got {type(val).__name__}",
+                    )
+                elif math.isnan(val) or math.isinf(val):
+                    report.error(
+                        path,
+                        f"assert[{i}].max must be a finite number, got {val}",
+                    )
+                else:
+                    max_val = val
+            if min_val is not None and max_val is not None and min_val > max_val:
+                report.error(
+                    path,
+                    f"assert[{i}] min {min_val} greater than max {max_val}",
                 )
 
 
@@ -1196,21 +1818,113 @@ def _validate_soroban_arg_value(
                 )
 
 
+_BASE32_ALPHABET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+
+
+def crc16_xmodem(data: bytes) -> int:
+    """CRC16-XModem (polynomial 0x1021, initial value 0)."""
+    crc = 0
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
+
+def decode_strkey(
+    encoded: str, expected_version: int | None = None
+) -> tuple[bytes | None, str | None]:
+    """Decode a Stellar strkey into its 32-byte payload or return a failure reason.
+
+    Uses only the standard library: base32 (RFC 4648, no padding), 35 decoded bytes,
+    version byte (6 << 3 for G... accounts, 2 << 3 for C... contracts), 32-byte payload,
+    and CRC16-XModem checksum (polynomial 0x1021, init 0, little-endian) of the first
+    33 bytes. Returns (payload, None) on success or (None, reason) on failure.
+    """
+    if len(encoded) != 56:
+        return None, f"wrong length: expected 56 characters, got {len(encoded)}"
+    if any(c.islower() for c in encoded):
+        return None, "strkey must not contain lower-case characters"
+    if not all(c in _BASE32_ALPHABET for c in encoded):
+        return None, "strkey contains non-base32 character(s)"
+    if encoded.startswith("S"):
+        return None, "must not be a secret seed (value not shown)"
+    if encoded.startswith("M"):
+        return None, "wrong prefix: muxed account (M...) not supported"
+    if expected_version == (6 << 3) and encoded.startswith("C"):
+        return None, "wrong prefix: expected G... account strkey, got C... contract"
+    if expected_version == (2 << 3) and encoded.startswith("G"):
+        return None, "wrong prefix: expected C... contract strkey, got G... account"
+    if expected_version == (6 << 3) and not encoded.startswith("G"):
+        return None, f"wrong prefix: expected G... account strkey, got prefix {encoded[0]!r}"
+    if expected_version == (2 << 3) and not encoded.startswith("C"):
+        return None, f"wrong prefix: expected C... contract strkey, got prefix {encoded[0]!r}"
+
+    try:
+        raw = base64.b32decode(encoded)
+    except Exception as e:
+        return None, f"invalid base32 encoding: {e}"
+
+    if len(raw) != 35:
+        return None, f"wrong decoded length: expected 35 bytes, got {len(raw)}"
+
+    if expected_version is not None and raw[0] != expected_version:
+        return None, f"wrong prefix / version byte: expected {expected_version}, got {raw[0]}"
+
+    crc = crc16_xmodem(raw[:33])
+    expected_crc = int.from_bytes(raw[33:35], "little")
+    if crc != expected_crc:
+        return None, f"bad checksum (expected {expected_crc:04x}, got {crc:04x})"
+
+    return raw[1:33], None
+
+
 def validate_soroban_body(fx: Fixture, report: Report) -> None:
     data, path = fx.data, fx.path
 
-    if _require(data, "source_account", str, path, report) and not data["source_account"]:
-        report.error(
-            path, "field 'source_account' must not be empty", line=_field_line(path, "source_account")
-        )
-    if _require(data, "contract_id", str, path, report) and not data["contract_id"]:
-        report.error(
-            path, "field 'contract_id' must not be empty", line=_field_line(path, "contract_id")
-        )
-    if _require(data, "function", str, path, report) and not data["function"]:
-        report.error(
-            path, "field 'function' must not be empty", line=_field_line(path, "function")
-        )
+    if _require(data, "source_account", str, path, report):
+        if not data["source_account"]:
+            report.error(
+                path, "field 'source_account' must not be empty", line=_field_line(path, "source_account")
+            )
+        else:
+            payload, reason = decode_strkey(data["source_account"], expected_version=6 << 3)
+            if reason is not None:
+                report.error(
+                    path,
+                    f"field 'source_account' is not a valid G... strkey: {reason}",
+                    line=_field_line(path, "source_account"),
+                )
+
+    if _require(data, "contract_id", str, path, report):
+        if not data["contract_id"]:
+            report.error(
+                path, "field 'contract_id' must not be empty", line=_field_line(path, "contract_id")
+            )
+        else:
+            payload, reason = decode_strkey(data["contract_id"], expected_version=2 << 3)
+            if reason is not None:
+                report.error(
+                    path,
+                    f"field 'contract_id' is not a valid C... strkey: {reason}",
+                    line=_field_line(path, "contract_id"),
+                )
+
+    if _require(data, "function", str, path, report):
+        if not data["function"]:
+            report.error(
+                path, "field 'function' must not be empty", line=_field_line(path, "function")
+            )
+        elif len(data["function"].encode("utf-8")) > 32:
+            report.error(
+                path,
+                f"field 'function' exceeds 32 bytes ({len(data['function'].encode('utf-8'))} bytes in UTF-8)",
+                line=_field_line(path, "function"),
+            )
+
     _require(data, "sequence_number", int, path, report)
 
     # 'args' is optional but, when present, must match the schema's
@@ -1252,10 +1966,11 @@ def validate_soroban_body(fx: Fixture, report: Report) -> None:
         )
 
     kind = expect.get("kind")
-    if kind not in SOROBAN_EXPECT_KINDS:
+    if not isinstance(kind, str) or kind not in SOROBAN_EXPECT_KINDS:
+        actual = type(kind).__name__ if not isinstance(kind, str) else repr(kind)
         report.error(
             path,
-            f"expect.kind must be one of {sorted(SOROBAN_EXPECT_KINDS)}, got {kind!r}",
+            f"expect.kind must be one of {sorted(SOROBAN_EXPECT_KINDS)}, got {actual}",
             line=_field_line(path, "kind"),
         )
 
@@ -1297,8 +2012,13 @@ def validate_body(fx: Fixture, report: Report) -> None:
     # An invalid/missing surface was already reported by validate_common_fields.
 
 
-def validate_unique_ids(fixtures: list[Fixture], report: Report) -> None:
-    seen: dict[str, Path] = {}
+def validate_unique_ids(
+    fixtures: list[Fixture],
+    report: Report,
+    seen: dict[str, Path] | None = None,
+) -> dict[str, Path]:
+    if seen is None:
+        seen = {}
     for fx in fixtures:
         fid = fx.data.get("id")
         if not isinstance(fid, str):
@@ -1311,6 +2031,7 @@ def validate_unique_ids(fixtures: list[Fixture], report: Report) -> None:
             )
         else:
             seen[fid] = fx.path
+    return seen
 
 
 def check_portable_paths(root: Path, report: Report) -> None:
@@ -1332,14 +2053,81 @@ def check_portable_paths(root: Path, report: Report) -> None:
             report.error(path, f"non-portable file name: {error}")
 
 
-def validate_directory(root: Path) -> Report:
+def validate_directory(root: Path, seen_ids: dict[str, Path] | None = None) -> Report:
     report = Report()
     fixtures: list[Fixture] = []
     check_portable_paths(root, report)
+
+    # Collect pack members per CF-02 section 2 and enforce limits.
+    pack_members: set[Path] = set()
+    limit_plus_one = pack_limits.MAX_FILES + 1
+
+    toml_files: list[Path] = []
     for path in find_fixture_files(root):
-        fx = load_fixture(path, report)
+        toml_files.append(path)
+        pack_members.add(path)
+        if len(toml_files) >= limit_plus_one:
+            break
+
+    for path in toml_files:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            rel = path.name
+        if len(rel.split("/")) > pack_limits.MAX_DEPTH:
+            report.error(path, f"{rel} is deeper than {pack_limits.MAX_DEPTH} path segments")
+
+        fx = load_fixture(path, report, root=root)
         if fx is not None:
             fixtures.append(fx)
+
+    # Check payload files referenced by input_file or expected_file
+    for fx in fixtures:
+        for file_field in ("input_file", "expected_file"):
+            if file_field in fx.data:
+                val = fx.data[file_field]
+                if isinstance(val, str) and val:
+                    referenced = (fx.path.parent / val).resolve()
+                    if referenced.is_file():
+                        pack_members.add(referenced)
+                        try:
+                            rel_payload = referenced.relative_to(root.resolve()).as_posix()
+                        except ValueError:
+                            rel_payload = referenced.name
+                        if len(rel_payload.split("/")) > pack_limits.MAX_DEPTH:
+                            report.error(
+                                referenced,
+                                f"{rel_payload} is deeper than {pack_limits.MAX_DEPTH} path segments",
+                            )
+                        try:
+                            st = referenced.stat()
+                            if st.st_size > pack_limits.MAX_FILE_BYTES:
+                                report.error(
+                                    referenced,
+                                    f"{rel_payload} is {st.st_size} bytes, over the {pack_limits.MAX_FILE_BYTES} byte limit for one pack file",
+                                )
+                        except OSError as exc:
+                            report.error(referenced, f"failed to read file: {exc}")
+
+    # Enforce count and total size limits per root
+    if len(pack_members) > pack_limits.MAX_FILES:
+        report.error(
+            root,
+            f"{root} has {len(pack_members)} pack files, over the {pack_limits.MAX_FILES} file limit",
+        )
+
+    total_bytes = 0
+    for p in pack_members:
+        try:
+            total_bytes += p.stat().st_size
+        except OSError:
+            pass
+
+    if total_bytes > pack_limits.MAX_TOTAL_BYTES:
+        report.error(
+            root,
+            f"{root} is {total_bytes} bytes, over the {pack_limits.MAX_TOTAL_BYTES} byte limit for one pack",
+        )
 
     for fx in fixtures:
         report.register_fixture_id(fx.path, known_fixture_id(fx))
@@ -1349,7 +2137,7 @@ def validate_directory(root: Path) -> Report:
         validate_body(fx, report)
         validate_top_level_keys(fx, report)
 
-    validate_unique_ids(fixtures, report)
+    validate_unique_ids(fixtures, report, seen=seen_ids)
     return report
 
 
@@ -1400,6 +2188,63 @@ def _check_instant(value: object) -> str | None:
     return None
 
 
+# How far ahead of the validator's clock a ``checkedAt`` may be and still be
+# accepted. The verifier that wrote the record and the validator that reads
+# it are two machines, so their clocks can disagree by a little; five
+# minutes is generous enough for that and short enough that a mistyped year
+# or a deliberately forward-dated record is still rejected.
+CLOCK_SKEW_TOLERANCE_MINUTES = 5
+CLOCK_SKEW_TOLERANCE = timedelta(minutes=CLOCK_SKEW_TOLERANCE_MINUTES)
+
+
+def _parse_instant(value: str) -> datetime:
+    """An RFC 3339 UTC instant as a timezone-aware datetime.
+
+    The value must already have passed :func:`_check_instant`. Fractional
+    seconds beyond microsecond resolution are truncated downwards, so a
+    comparison against ``now`` errs on the side of accepting.
+    """
+    text = value[:-1] if value.endswith("Z") else value
+    head, _, fraction = text.partition(".")
+    if fraction:
+        micros = int(fraction[:6].ljust(6, "0"))
+        parsed = datetime.strptime(head, "%Y-%m-%dT%H:%M:%S").replace(
+            microsecond=micros
+        )
+    else:
+        parsed = datetime.strptime(head, "%Y-%m-%dT%H:%M:%S")
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _format_instant(value: datetime) -> str:
+    """A datetime as an RFC 3339 UTC instant, the form ``checkedAt`` uses."""
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _check_not_future(value: str, now: datetime) -> str | None:
+    """Problem with a ``checkedAt`` later than ``now``, or None.
+
+    ``value`` must already have passed :func:`_check_instant`; this check
+    only compares instants. A record may be up to
+    ``CLOCK_SKEW_TOLERANCE`` ahead of ``now`` so that a verifier whose
+    clock runs a little fast does not produce a rejected record.
+
+    ``now`` must be timezone-aware: a naive datetime is refused rather than
+    assumed to be in some time zone.
+    """
+    if not isinstance(now, datetime):
+        raise ValueError("now must be a timezone-aware datetime")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be a timezone-aware datetime")
+    if _parse_instant(value) > now.astimezone(timezone.utc) + CLOCK_SKEW_TOLERANCE:
+        return (
+            f"checkedAt {value!r} is later than the current time "
+            f"{_format_instant(now)} (allowed clock skew "
+            f"{CLOCK_SKEW_TOLERANCE_MINUTES} minutes)"
+        )
+    return None
+
+
 def _check_evidence_ref(value: str) -> str | None:
     if value.startswith("/") or "\\" in value or "\0" in value:
         return "evidenceRef must be a relative path inside the repository"
@@ -1408,7 +2253,7 @@ def _check_evidence_ref(value: str) -> str | None:
     return None
 
 
-def validate_evidence(record: object) -> list[str]:
+def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
     """Return every problem found in one verification record (CF-04 section 3).
 
     An empty list means the record is structurally valid. This checks the
@@ -1416,9 +2261,20 @@ def validate_evidence(record: object) -> list[str]:
     fixture it names exists with the hash that was verified. Nothing here
     decides whether a record is *fresh* (CF-04 section 4); freshness is derived
     elsewhere and never stored.
+
+    ``now`` is the instant the record's ``checkedAt`` is judged against and
+    must be a timezone-aware datetime. A verification is made by a person or
+    a scheduled job that actually ran the step, so it cannot have happened in
+    the future; a ``checkedAt`` beyond the allowed clock skew is rejected.
+    When ``now`` is ``None`` the current time is read here. A caller that
+    judges several records passes the same ``now`` to all of them, so one run
+    cannot compare two records against two clocks.
     """
     if not isinstance(record, dict):
         return ["a verification record must be a JSON object"]
+
+    if now is None:
+        now = datetime.now(timezone.utc)
 
     problems: list[str] = []
     allowed = set(EVIDENCE_REQUIRED_FIELDS) | set(EVIDENCE_OPTIONAL_FIELDS)
@@ -1452,6 +2308,13 @@ def validate_evidence(record: object) -> list[str]:
         instant_problem = _check_instant(record["checkedAt"])
         if instant_problem:
             problems.append(instant_problem)
+        else:
+            # Only an instant the format check accepted is compared with the
+            # clock, so a malformed value is reported once, with the format
+            # message alone.
+            future_problem = _check_not_future(record["checkedAt"], now)
+            if future_problem:
+                problems.append(future_problem)
 
     if "outcome" in record and record["outcome"] not in EVIDENCE_OUTCOMES:
         problems.append(f"outcome must be one of {list(EVIDENCE_OUTCOMES)}")
@@ -1511,8 +2374,14 @@ def validate_evidence(record: object) -> list[str]:
     return problems
 
 
-def validate_evidence_file(path: Path, report: Report) -> dict | None:
-    """Parse one evidence file and report its problems. Returns the record."""
+def validate_evidence_file(
+    path: Path, report: Report, now: datetime | None = None
+) -> dict | None:
+    """Parse one evidence file and report its problems. Returns the record.
+
+    ``now`` is the instant the record's ``checkedAt`` is judged against; see
+    :func:`validate_evidence`.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -1520,11 +2389,14 @@ def validate_evidence_file(path: Path, report: Report) -> dict | None:
         return None
     report_unsafe_characters(path, text, report)
     try:
-        record = json.loads(text)
-    except json.JSONDecodeError as error:
-        report.error(path, f"not valid JSON: {error}")
+        record = load_json(text, "evidence JSON")
+    except JSONInputError as error:
+        if error.json_error is not None:
+            report.error(path, f"not valid JSON: {error.json_error}")
+        else:
+            report.error(path, f"not valid JSON: {error}")
         return None
-    problems = validate_evidence(record)
+    problems = validate_evidence(record, now=now)
     for problem in problems:
         report.error(path, problem)
     return record if not problems else None
@@ -1663,21 +2535,25 @@ def main(argv: list[str]) -> int:
         roots = sorted(p for p in repo_root.glob("protocol-*") if p.is_dir())
         if not roots:
             roots = [repo_root]
+    else:
+        seen_roots: set[Path] = set()
+        deduped_roots: list[Path] = []
+        for r in roots:
+            resolved = r.resolve()
+            if resolved not in seen_roots:
+                seen_roots.add(resolved)
+                deduped_roots.append(r)
+        roots = deduped_roots
 
     combined = Report()
     total_files = 0
+    seen_ids: dict[str, Path] = {}
     for root in roots:
         if not root.is_dir():
             combined.error(root, "not a directory")
             continue
         total_files += len(find_fixture_files(root))
-        combined.merge(validate_directory(root))
-
-    if args.format == "json":
-        # One complete document on stdout and nothing else, so `| jq` and
-        # `json.load` both see valid JSON regardless of whether the run passed.
-        sys.stdout.write(render_json(build_json_report(combined, roots, total_files)))
-        return 0 if combined.ok else 1
+        combined.merge(validate_directory(root, seen_ids=seen_ids))
 
     evidence_files: list[Path] = []
     for target in args.evidence:
@@ -1687,10 +2563,20 @@ def main(argv: list[str]) -> int:
         evidence_files.extend(find_evidence_files(target))
     if evidence_files:
         hashes = fixture_hashes([r for r in roots if r.is_dir()])
+        # One clock for the whole run: every record is judged against the
+        # same instant, so two records cannot disagree because the run
+        # straddled a second boundary.
+        now = datetime.now(timezone.utc)
         for path in evidence_files:
-            record = validate_evidence_file(path, combined)
+            record = validate_evidence_file(path, combined, now=now)
             if record is not None:
                 check_evidence_against_fixtures(path, record, hashes, combined)
+
+    if args.format == "json":
+        # One complete document on stdout and nothing else, so `| jq` and
+        # `json.load` both see valid JSON regardless of whether the run passed.
+        sys.stdout.write(render_json(build_json_report(combined, roots, total_files)))
+        return 0 if combined.ok else 1
 
     if not args.quiet:
         for warning in combined.warnings:

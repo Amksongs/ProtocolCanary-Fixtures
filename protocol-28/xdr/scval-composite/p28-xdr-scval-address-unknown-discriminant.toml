@@ -1,0 +1,48 @@
+# Protocol 28 / ScVal: an address with an undefined SCAddressType is rejected.
+#
+# Complements p28-xdr-scval-address-contract.toml: a decoder that accepts
+# malformed input is as much of a compatibility break as one that rejects
+# valid input, because two different byte strings would then decode to the
+# same value and "roundtrip byte identity" would stop meaning anything.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `enum SCAddressType` — Stellar-contract.x lines 179-190; `union SCAddress`
+#     — lines 206-222.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced `ScVal::Address(contract)` encoding with exactly one
+# field changed: the 4-byte SCAddress type discriminant at offset 4 is set
+# from SC_ADDRESS_TYPE_CONTRACT (1) to 7. `enum SCAddressType` defines 0-4
+# (with a fifth arm only under `CAP_0084_MUXED_CONTRACT`), so 7 is undefined.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): ScVal::from_xdr_base64 returns Err ("xdr value invalid") for
+# this input, while the unmodified crate-produced encoding it was derived from
+# decodes and round-trips successfully with the same crate. The source value
+# was built by a program using the pinned crate, with the expression recorded
+# in p28-xdr-scval-address-contract.toml's header; the mutation above is the
+# only change. The rejection is the unrecognised discriminant, not a
+# truncation: the rest of the value is a well-formed 32-byte contract id. A
+# decoder that mapped an unknown arm onto a default would read a value the
+# protocol cannot produce.
+#
+# Every byte is a synthetic structural value, not a capture of a real network
+# object, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-address-unknown-discriminant"
+protocol = 28
+surface = "xdr"
+category = "scval-composite"
+description = "A `ScVal::Address` with an undefined SCAddressType discriminant is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "decode-failure"
+value_base64 = "AAAAEgAAAAciIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg=="

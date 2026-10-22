@@ -1,0 +1,45 @@
+# Protocol 28 / ScVal: a truncated `SCV_STRING` payload is rejected.
+#
+# Complements p28-xdr-scval-string-small.toml: a decoder that accepts
+# malformed input is as much of a compatibility break as one that rejects
+# valid input, because two different byte strings would then decode to the
+# same value and "roundtrip byte identity" would stop meaning anything.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `typedef string SCString<>;` — Stellar-contract.x line 10; `case
+#     SCV_STRING: SCString str;` — lines 298-299.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced 16-byte `ScVal::String` (`canary`, six bytes plus two pad
+# bytes) cut to its first 13 bytes: the length prefix says 6 but only 5
+# payload bytes remain, and the two-byte padding is gone as well.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): ScVal::from_xdr_base64 returns Err ("failed to fill whole
+# buffer") for this input, while the unmodified crate-produced encoding it was
+# derived from decodes and round-trips successfully with the same crate. The
+# source value was built by a program using the pinned crate, with the
+# expression recorded in p28-xdr-scval-string-small.toml's header; the
+# mutation above is the only change. Both the payload and the padding are
+# short, so a decoder must fail on the length before it can check padding.
+#
+# Every byte is a synthetic structural value, not a capture of a real network
+# object, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-string-truncated"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "A truncated `ScVal::String` payload is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "decode-failure"
+value_base64 = "AAAADgAAAAZjYW5hcg=="

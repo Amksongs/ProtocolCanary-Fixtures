@@ -44,6 +44,38 @@ with a printed warning. This makes the shared validator — not a
 pack-specific test — the common enforcement point for the claim that every
 assertion is traceable to an authoritative upstream source.
 
+## Build provenance and attestation
+
+Pack release archives (`protocolcanary-fixtures-<version>.tar.gz`) and release
+manifests (`protocolcanary-fixtures-<version>.manifest.json`) published by this
+repository carry cryptographically signed build provenance attestations generated
+by GitHub Actions using `actions/attest-build-provenance`.
+
+These attestations establish that published artifacts were built by this
+repository's release workflow from an exact commit, without tampering.
+
+### Verifying release artifact provenance
+
+To verify the provenance of a downloaded release archive using the GitHub CLI (`gh`):
+
+```bash
+gh attestation verify protocolcanary-fixtures-<version>.tar.gz \
+  --repo StellarCanary/ProtocolCanary-Fixtures \
+  --signer-workflow StellarCanary/ProtocolCanary-Fixtures/.github/workflows/release-pack.yml
+```
+
+To verify the provenance of a release manifest:
+
+```bash
+gh attestation verify protocolcanary-fixtures-<version>.manifest.json \
+  --repo StellarCanary/ProtocolCanary-Fixtures \
+  --signer-workflow StellarCanary/ProtocolCanary-Fixtures/.github/workflows/release-pack.yml
+```
+
+The expected workflow identity is:
+- **Repository:** `StellarCanary/ProtocolCanary-Fixtures`
+- **Signer workflow:** `StellarCanary/ProtocolCanary-Fixtures/.github/workflows/release-pack.yml`
+
 ## Audit status
 
 No formal third-party security audit has been performed on this

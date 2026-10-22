@@ -228,6 +228,100 @@ correctly.
 229-237) at `stellar/stellar-xdr` tag `v28.0`, commit
 `9c9c145953e80990d6ff1ae3a6a973a0ce6d0694`.
 
+## TransactionEnvelope: every arm of the union
+
+Added 2026-10-22. The `TransactionEnvelope` union in `Stellar-transaction.x`
+at [`stellar/stellar-xdr` v28.0](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x)
+is the envelope every transaction reaches a network in, and it is the most
+complex union the engine decodes — three arms, two of which nest a whole
+envelope inside another. `enum EnvelopeType`
+([`Stellar-ledger-entries.x` lines 656-669](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x))
+gives the union's discriminant: `ENVELOPE_TYPE_TX_V0 = 0`, `ENVELOPE_TYPE_TX = 2`
+and `ENVELOPE_TYPE_TX_FEE_BUMP = 5`; `union TransactionEnvelope`
+(`Stellar-transaction.x` lines 1002-1010) carries a `TransactionV0Envelope`
+(lines 924-930) for the first, a `TransactionV1Envelope` (lines 967-973) for
+the second and a `FeeBumpTransactionEnvelope` (lines 993-999) for the third.
+Until these fixtures existed the pack had no evidence for any arm, so a
+decoder that mis-handled the bare `uint256` source account of the v0 arm, the
+`MuxedAccount`/`Preconditions` pair of the v1 arm, or the nesting of the
+fee-bump arm would pass this pack unnoticed.
+
+**What this pack tests.** Eight fixtures under
+[`protocol-28/xdr/transaction-envelope/`](../protocol-28/xdr/transaction-envelope/):
+one roundtrip per arm (decode + re-encode must reproduce the bytes) and one
+decode-failure per arm, whose payload is a documented mutation of the
+crate-produced value:
+
+| Fixture | Arm | Decode-failure mutation |
+| --- | --- | --- |
+| `p28-xdr-transaction-envelope-v0-roundtrip` | `ENVELOPE_TYPE_TX_V0` | — |
+| `p28-xdr-transaction-envelope-v0-decode-failure` | `ENVELOPE_TYPE_TX_V0` | first 150 of 212 bytes — cut inside the 64-byte signature |
+| `p28-xdr-transaction-envelope-v1-roundtrip` | `ENVELOPE_TYPE_TX` | — |
+| `p28-xdr-transaction-envelope-v1-decode-failure` | `ENVELOPE_TYPE_TX` | the 4-byte discriminant changed from `ENVELOPE_TYPE_TX` (2) to 63, an undefined envelope type |
+| `p28-xdr-transaction-envelope-soroban-invoke-roundtrip` | `ENVELOPE_TYPE_TX` with one `INVOKE_HOST_FUNCTION` operation | — |
+| `p28-xdr-transaction-envelope-soroban-invoke-decode-failure` | `ENVELOPE_TYPE_TX` with one `INVOKE_HOST_FUNCTION` operation | first 100 of 244 bytes — cut inside the 32-byte contract id |
+| `p28-xdr-transaction-envelope-fee-bump-roundtrip` | `ENVELOPE_TYPE_TX_FEE_BUMP` | — |
+| `p28-xdr-transaction-envelope-fee-bump-decode-failure` | `ENVELOPE_TYPE_TX_FEE_BUMP` | first 130 of 328 bytes — cut inside the inner transaction's destination account |
+
+**How the payloads were made.** Every `value_base64` is the output of a
+program that builds the typed value with the official `stellar-xdr` 28.0.1
+crate (features `base64` and `alloc` — the version pinned for Protocol 28) and
+calls `to_xdr_base64(Limits::none())`; each fixture's header records the
+construction expression, the crate version, the Rust version
+(`rustc 1.99.1 (58cf8f9c3 2026-10-13)`) and the generation date
+(2026-10-22 UTC). The same crate round-trips all four well-formed values
+byte-for-byte, and its `from_xdr_base64` returns `Err("failed to fill whole
+buffer")` for the three truncations and `Err("xdr value invalid")` for the
+mutated discriminant — the headers record which of the two each fixture
+provokes.
+
+**Every byte is a synthetic structural value.** The source accounts, payment
+destinations, contract id, signature hints and signatures are fixed bytes
+repeated to fill a field (0x11, 0x22, 0x33 for the v0 envelope; 0x44, 0x55,
+0x66 for the v1 one; 0x77, 0xab, 0x88 for the Soroban one; 0xcc, 0x99, 0xaa,
+0xbb, 0xdd for the fee-bump one). None of them is a real account, contract or
+network object, the signatures sign nothing, no secret key is used anywhere,
+and nothing here was observed on a network or submitted to one. The fees,
+sequence numbers, time bounds, amounts, resource limits and resource fee are
+arbitrary fixed numbers; the Soroban footprint and authorization list are
+empty, so the value invokes nothing.
+
+**Surface.** XDR only, like the fixtures above — a transaction envelope is
+wire representation, and what a fixture can check is that the bytes decode
+and re-encode exactly, and that a malformed encoding is rejected.
+
+**What Canary does not test here.** Anything about whether a real network
+would accept the envelope: the signatures do not sign anything, no sequence
+number is meaningful against a real account, and the Soroban value names a
+contract that does not exist. Only that the wire representation of each arm
+decodes, encodes and — when malformed — is refused.
+
+**Source.** [`Stellar-transaction.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x)
+(`TransactionEnvelope` union lines 1002-1010, `TransactionV0` lines 902-922,
+`TransactionV0Envelope` lines 924-930, `Transaction` lines 932-965,
+`TransactionV1Envelope` lines 967-973, `FeeBumpTransaction` lines 975-991,
+`FeeBumpTransactionEnvelope` lines 993-999, `Operation` lines 653-719,
+`InvokeHostFunctionOp` lines 618-629, `HostFunction` union lines 521-531,
+`InvokeContractArgs` lines 515-519, `SorobanTransactionData` lines 879-900,
+`SorobanResources` lines 856-869, `LedgerFootprint` lines 849-854,
+`Preconditions` union lines 839-847, `MuxedAccount` union lines 20-31,
+`DecoratedSignature` lines 33-37, `PaymentOp` lines 92-97),
+[`Stellar-ledger-entries.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x)
+(`EnvelopeType` lines 656-669, `Asset` union lines 55-66),
+[`Stellar-types.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-types.x)
+(`CryptoKeyType` lines 29-38, `Signature` line 80, `SignatureHint` line 82)
+and [`Stellar-contract.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x)
+(`SCAddress` union lines 206-222, `SCSymbol` line 12) at `stellar/stellar-xdr`
+tag `v28.0`, commit `9c9c145953e80990d6ff1ae3a6a973a0ce6d0694`.
+
+**Verified against the engine.** `stellar-canary 0.2.0`, built from
+`Protocol-Canary` main at commit `bc1330660c36eb67a87747513c7d14ba04d39238`,
+run as `stellar-canary check --fixtures-dir <repo>/protocol-28 --protocol 28
+--offline --no-cache --json` from a project directory whose
+`.stellar-canary.toml` enables `xdr = true`: all eight fixtures pass, the
+four roundtrips as "TransactionEnvelope round-tripped byte-for-byte" and the
+four decode-failures as "TransactionEnvelope was correctly rejected".
+
 ## CAP-0086: sparse-map host functions
 
 **What changed.** [CAP-0086](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0086.md)
@@ -582,17 +676,266 @@ but the Soroban simulation fixture still calls the configured endpoint.
 Protocol 29 coverage is developed separately and only from real evidence; see
 [`protocol-29-rpc-observations.md`](protocol-29-rpc-observations.md).
 
+## Ledger entries
+
+Added 2026-10-22. Ledger entries are the data the network stores, and their
+encodings change whenever a protocol adds a field — which is exactly why each
+entry arm needs its own fixture: a decoder that drifts on one arm can keep
+every other arm passing.
+
+**What this pack tests.** Eleven fixtures under
+[`protocol-28/xdr/ledger-entry/`](../protocol-28/xdr/ledger-entry/), one
+roundtrip and at least one decode-failure per arm:
+
+| Arm | Roundtrip | Decode failure |
+|---|---|---|
+| `ACCOUNT` (0) | `p28-xdr-ledger-entry-account` | `-account-truncated` |
+| `TRUSTLINE` (1) | `p28-xdr-ledger-entry-trustline` | `-trustline-truncated`, `-trustline-unknown-asset-type` |
+| `CONTRACT_DATA` (6) | `p28-xdr-ledger-entry-contract-data` | `-contract-data-key-truncated` |
+| `CONTRACT_CODE` (7) | `p28-xdr-ledger-entry-contract-code` | `-contract-code-truncated` |
+| `TTL` (9) | `p28-xdr-ledger-entry-ttl` | `-ttl-missing-live-until` |
+
+The truncations remove bytes from the end of a crate-produced entry: the
+entry-level ext discriminant for the account and trustline arms, the final
+`liveUntilLedgerSeq` for TTL, two bytes of the code blob for contract code,
+and everything after the key for contract data. `-trustline-unknown-asset-type`
+changes one field instead: the `TrustLineAsset` discriminant is set from
+`ASSET_TYPE_CREDIT_ALPHANUM4` (1) to 9, which `enum AssetType` does not define.
+
+**Where the definitions come from.** Every header cites
+`Stellar-ledger-entries.x` in `stellar/stellar-xdr` at tag `v28.0`, commit
+`9c9c145953e80990d6ff1ae3a6a973a0ce6d0694`:
+
+- `enum LedgerEntryType` lines 92-104 and `struct LedgerEntry` lines 548-586,
+  including the data union (552-573) and the ext union (575-585);
+- `struct AccountEntry` lines 190-217 with its inline ext union (206-216),
+  `struct Signer` lines 106-110, `typedef string string32<32>` line 13 and
+  `typedef opaque Thresholds[4]` line 12;
+- `struct TrustLineEntry` lines 276-307, `union TrustLineAsset` lines 247-262,
+  `enum AssetType` lines 24-30 and `struct AlphaNum4` lines 43-47;
+- `struct ContractDataEntry` lines 490-497 and `enum ContractDataDurability`
+  lines 485-488, with `union SCAddress` (Stellar-contract.x 206-222) and
+  `union SCVal` (Stellar-contract.x 254-316) nested inside;
+- `struct ContractCodeEntry` lines 513-528, including its inline ext union and
+  the `opaque code<>` field;
+- `struct TTLEntry` lines 530-534;
+- `typedef PublicKey AccountID` (`Stellar-types.x` line 85) and
+  `typedef opaque Hash[32]` (line 8).
+
+The extension unions are cited explicitly because they are where a protocol
+adds fields. Every fixture here uses the V0 arm; a decoder that mishandled the
+ext discriminant would fail on the truncation fixtures, which remove exactly
+those four bytes.
+
+**How the payloads were produced.** Every `value_base64` is the output of a
+Rust program that builds the typed value with the official `stellar-xdr`
+28.0.1 crate (features `base64` and `alloc`) and calls
+`to_xdr_base64(Limits::none())`; nothing is hand-assembled. Each header records
+the construction expression, the crate version, `rustc 1.99.1 (58cf8f9c3
+2026-10-13)` and the generation date (2026-10-22 UTC). The same program
+asserted that `from_xdr_base64` round-trips every valid entry and rejects every
+decode-failure value with the error the header quotes (`failed to fill whole
+buffer` for the five truncations, `xdr value invalid` for the undefined asset
+type).
+
+Every id, hash, key and balance is a synthetic structural value. The
+0x11/0x33-filled account ids are not accounts, the 0x44-filled issuer is not
+an issuer, the 0x22-filled contract id is not a deployed contract, the
+0x55-filled code hash is not the hash of any upload, and the four contract-code
+bytes (`00 61 73 6d`) are the WebAssembly magic prefix used only to exercise
+the opaque path — they are not a WASM module. `example.test` is a
+documentation domain. No secret key is used anywhere, and no fixture claims a
+network observation.
+
+**Verification.** `tools/validate/validate.py` accepts all 11 fixtures. The
+independent standard-library LedgerEntry codec in `tests/xdr_codec.py` (added
+with these fixtures) decodes and re-encodes all five roundtrips byte-for-byte
+and rejects all six decode-failures. With the engine: `stellar-canary` 0.2.0,
+`Protocol-Canary` main at commit
+`bc1330660c36eb67a87747513c7d14ba04d39238`, run offline with `--offline
+--no-cache --json` from a project whose `.stellar-canary.toml` enables
+`xdr = true`, reports all 11 as passing — 5 "LedgerEntry round-tripped
+byte-for-byte" and 6 "LedgerEntry was correctly rejected".
+
+## ScVal scalar values
+
+Added 2026-10-22. `ScVal` is the argument and result type of every Soroban
+call: the engine decodes it (`XdrTypeName::ScVal`) and a contract's inputs,
+outputs and data keys are all `ScVal`s. Until this section's fixtures existed
+the pack had no `ScVal` evidence at all, so an encoding mistake in a scalar
+variant — sign extension, a swapped 64-bit limb, a wrong length prefix — would
+have passed unnoticed.
+
+**What this pack tests.** Thirty-four fixtures under
+[`protocol-28/xdr/scval/`](../protocol-28/xdr/scval/):
+
+| Group | Fixtures | What they cover |
+|---|---|---|
+| Primitives | `void`, `bool-true`, `bool-false`, `u32-max`, `i32-min`, `u64-max`, `i64-min`, `timepoint`, `duration` | one roundtrip per primitive, at the value that makes a width or sign mistake visible |
+| Wide integers | `u128-zero`, `u128-max`, `u128-high-bit`, `i128-min`, `i128-zero`, `i128-max`, `u256-zero`, `u256-max`, `i256-min`, `i256-zero`, `i256-max` | minimum, maximum and zero for each of `u128`, `i128`, `u256` and `i256`, plus a `u128` with the high bit set |
+| Bytes and string | `bytes-empty`, `bytes-small`, `string-empty`, `string-small` | empty and a small value that forces non-zero padding, for both variable-length opaque and string |
+| Symbol | `symbol-empty`, `symbol-small`, `symbol-32-boundary` | empty, an ordinary eight-byte name, and exactly `SCSYMBOL_LIMIT` = 32 bytes |
+| Decode failures | `u32-truncated`, `u64-truncated`, `u256-truncated`, `i128-truncated`, `bytes-truncated`, `string-truncated`, `symbol-33-invalid` | six truncations and one 33-byte symbol, each rejected by the reference crate |
+
+Every fixture id in the table is `p28-xdr-scval-` followed by the name shown
+(for example `p28-xdr-scval-u128-high-bit`).
+
+For an unsigned wide integer the minimum is zero, so the `-zero-` fixture
+covers both; the maximum has its own fixture. The `u128` high-bit fixture
+(`UInt128Parts { hi: 1u64 << 63, lo: 0 }`, value 2^127) is valid input while
+its payload limbs are bit-identical to the `i128` minimum's. The ScValType
+discriminant — 9 for `SCV_U128`, 10 for `SCV_I128` — is what distinguishes
+them, and the fixture header says so explicitly. `u8` and `i8` are not ScVal
+variants: `enum SCValType` defines 32-bit as the smallest integer width, and
+no fixture invents a narrower one.
+
+**Where the definitions come from.** Every header cites the pinned file
+`Stellar-contract.x` in `stellar/stellar-xdr` at tag `v28.0`, commit
+`9c9c145953e80990d6ff1ae3a6a973a0ce6d0694` (the same pin `tests/scval_xdr.py`
+uses), with line ranges:
+
+- `enum SCValType` lines 26-81 and `union SCVal` lines 254-316;
+- `typedef opaque SCBytes<>` line 9 and `typedef string SCString<>` line 10;
+- `const SCSYMBOL_LIMIT = 32` line 11 and
+  `typedef string SCSymbol<SCSYMBOL_LIMIT>` line 12;
+- `struct UInt128Parts` lines 140-143, `struct Int128Parts` lines 149-152,
+  `struct UInt256Parts` lines 154-159 and `struct Int256Parts` lines 165-170;
+- `typedef uint64 TimePoint` and `typedef uint64 Duration` in
+  `Stellar-types.x` lines 17-18.
+
+The 32-byte symbol limit is read from that definition, not assumed: 32 bytes
+is valid and 33 is invalid, and the pack has one fixture on each side of the
+boundary.
+
+**How the payloads were produced.** Every `value_base64` is the output of a
+Rust program that builds the typed value with the official `stellar-xdr`
+28.0.1 crate (features `base64` and `alloc` — the version Protocol-Canary's
+`canary-xdr` pins for Protocol 28) and calls
+`to_xdr_base64(Limits::none())`. Nothing is hand-assembled. Each fixture's
+header records the one-line construction expression, the crate version,
+`rustc 1.99.1 (58cf8f9c3 2026-10-13)` and the generation date (2026-10-22
+UTC). The same program asserted, for every fixture, that
+`from_xdr_base64` returns `Ok` and that re-encoding the decoded value
+reproduces the same base64 exactly. A decode-failure payload is that
+crate-produced value truncated, or changed in exactly one documented field,
+and the program asserted that `from_xdr_base64` rejects it with the error the
+header quotes (`failed to fill whole buffer` for the six truncations,
+`xdr value max length exceeded` for the 33-byte symbol).
+
+**Size.** The repository limits a pack file to 1 MiB
+(`tools/common/pack_limits.py`); no fixture here is near it. The largest is
+3,210 bytes of TOML and the largest encoded payload is 44 bytes, because a
+scalar `ScVal` has a bounded payload and the only variable-length variants
+here use deliberately small values. No fixture targets a maximum length that
+could not fit in a pack file.
+
+**Verification.** `tools/validate/validate.py` accepts all 34 fixtures. A
+cross-check with `tests/scval_xdr.py` (the repository's standard-library ScVal
+codec) decodes and re-encodes every roundtrip fixture byte-for-byte and
+rejects every decode-failure fixture, 34 of 34 agreeing. The engine check
+recorded for this pack is a separate, re-runnable step: `stellar-canary`
+0.2.0, `Protocol-Canary` commit `bc13306`, run offline with
+`--offline --no-cache --json` against a project that enables `xdr = true`.
+
+**What this does not test.** No fixture claims a network observation, a
+contract call or a real account: every number, symbol, string and byte
+sequence is a synthetic structural value labelled as such in its header. Depth
+and recursion limits for `SCV_VEC`/`SCV_MAP` are out of scope here (issue
+#303) and are not targeted by any fixture in this directory.
+
+## ScVal vectors, maps and addresses
+
+Added 2026-10-22. Composite and address values are what real Soroban calls
+pass: argument lists, storage keys, contract addresses. Their encodings —
+the optional-pointer flag in front of `SCVec`/`SCMap`, the key/value entry
+stride, the address arm — are where an XDR implementation most often differs
+from the reference.
+
+**What this pack tests.** Fourteen fixtures under
+[`protocol-28/xdr/scval-composite/`](../protocol-28/xdr/scval-composite/):
+
+| Group | Fixtures | What they cover |
+|---|---|---|
+| Vec | `p28-xdr-scval-vec-null`, `-vec-empty`, `-vec-one`, `-vec-multi` | absent versus present-but-empty, one element, and three heterogeneous elements |
+| Map | `p28-xdr-scval-map-empty`, `-map-one`, `-map-multi`, `-map-nested`, `-map-unsorted-keys` | empty, one entry, three entries, one level of map-in-vec nesting, and an encoding whose keys are not in ascending order |
+| Address | `p28-xdr-scval-address-account`, `-address-contract` | the account arm (a `PublicKey` union inside an `SCAddress` union) and the contract arm (a plain 32-byte id) |
+| Decode failures | `p28-xdr-scval-vec-count-exceeds-data`, `-map-truncated-after-key`, `-address-unknown-discriminant` | a count larger than the data, an entry cut after its key, and an undefined `SCAddressType` |
+
+**The absent-versus-empty distinction.** `SCVec *vec` and `SCMap *map` are XDR
+optional pointers, so an absent container is a 4-byte flag of 0 and no
+sequence, while a present-but-empty one is flag 1 followed by a count of 0.
+The two encodings differ and both are exercised. A decoder that treated a
+non-zero flag as "present" would also accept corrupt input; the ScVal codec in
+`tests/scval_xdr.py` rejects any flag other than 0 or 1.
+
+**Map entry order.** The XDR definition says nothing about the order of
+entries in an `SCMap`; `ScMap::sorted_from_entries` in the crate sorts when a
+program builds a map that way, but the decoder itself does not enforce an
+order. The generator observed that `from_xdr_base64` accepts the
+non-ascending `b`, `a` encoding and re-encodes it unchanged, and the same
+fixture passes the engine offline, so neither the pinned crate nor
+`stellar-canary` 0.2.0 enforces ascending order on decode. That observation
+is pinned in `p28-xdr-scval-map-unsorted-keys`: an implementation that sorted
+on decode would not round-trip those bytes.
+
+**Depth and recursion.** `p28-xdr-scval-map-nested` nests a vec inside a map
+value — one level — to prove nested containers encode. It does not target a
+depth limit: depth and recursion limits are open issue #303 and no fixture in
+this directory approaches one.
+
+**Where the definitions come from.** Every header cites the pinned file
+`Stellar-contract.x` in `stellar/stellar-xdr` at tag `v28.0`, commit
+`9c9c145953e80990d6ff1ae3a6a973a0ce6d0694`:
+
+- `union SCVal` lines 254-316 with the `SCV_VEC` (298-299), `SCV_MAP`
+  (300-301) and `SCV_ADDRESS` (303-304) cases;
+- `typedef SCVal SCVec<>;` line 242 and `typedef SCMapEntry SCMap<>;` line
+  243, with `struct SCMapEntry` lines 318-322;
+- `enum SCAddressType` lines 179-190 and `union SCAddress` lines 206-222;
+- `typedef PublicKey AccountID;` (`Stellar-types.x` line 85), the `PublicKey`
+  union (lines 53-57) and `typedef Hash ContractID;` (line 87).
+
+**How the payloads were produced.** Every `value_base64` is the output of a
+Rust program that builds the typed value with the official `stellar-xdr`
+28.0.1 crate (features `base64` and `alloc` — the version Protocol-Canary's
+`canary-xdr` pins for Protocol 28) and calls
+`to_xdr_base64(Limits::none())`; nothing is hand-assembled. Each header
+records the construction expression, the crate version, `rustc 1.99.1
+(58cf8f9c3 2026-10-13)` and the generation date (2026-10-22 UTC), and the
+program asserted that `from_xdr_base64` round-trips every valid value and
+rejects every decode-failure value with the error the header quotes
+(`failed to fill whole buffer` twice, `xdr value invalid` once).
+
+The 32-byte address payloads are synthetic structural values: the
+0x11-filled key is not a real account (and no secret key exists for it) and
+the 0x22-filled id is not the hash of any deployed Wasm. No fixture claims a
+network observation or a real contract, account or key.
+
+**Verification.** `tools/validate/validate.py` accepts all 14 fixtures; the
+`tests/scval_xdr.py` cross-check decodes and re-encodes all 11 roundtrips
+byte-for-byte and rejects all 3 decode-failures, 14 of 14 agreeing. With the
+engine: `stellar-canary 0.2.0`, `Protocol-Canary` main at commit
+`bc1330660c36eb67a87747513c7d14ba04d39238`, run offline with
+`--offline --no-cache --json` from a project whose `.stellar-canary.toml`
+enables `xdr = true`, reports all 14 as passing — 11 "ScVal round-tripped
+byte-for-byte" and 3 "ScVal was correctly rejected".
+
 ## Consuming this pack
 
 For a concise index of the fixtures in this pack, see [`protocol-28/README.md`](../protocol-28/README.md).
 
 ```bash
-stellar-canary check --fixtures-dir <checkout-of-this-repo>/protocol-28 --json
-# or, scanning every protocol pack in the repository at once:
-stellar-canary check --fixtures-dir <checkout-of-this-repo> --protocol 28 --json
+stellar-canary check --fixtures-dir <path-to-this-repo>/protocol-28 --json
 ```
 
-Both were run on 2026-09-02 against a local `Protocol-Canary` build and
+The `--fixtures-dir` argument must point at the `protocol-28/` pack directory,
+not at the repository root. The repository root contains test vectors under
+`tests/vectors/` (some deliberately invalid) that the loader would attempt to
+parse as fixtures, causing the run to fail. See the top-level README.md
+"Repository relationship" section for details.
+
+This command was run on 2026-09-02 against a local `Protocol-Canary` build
+(commit `1ff7908`, `stellar-canary 0.1.1`) with `--offline --no-cache` and
 passed for every fixture in the pack as it stood then, confirming this pack
 is consumable exactly as documented in `Protocol-Canary`'s
 `docs/fixture-contract.md`. This record is deliberately not tied to a

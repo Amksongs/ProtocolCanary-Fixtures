@@ -711,6 +711,87 @@ class CommandLineTests(PackCase):
             self.run_main(str(pack), "--stdout", "--output", str(self.base / "x.json"))
         self.assertEqual(caught.exception.code, 2)
 
+    # --- F-098 (issue #370): --allow-empty baseline registry generation ---
+
+    def test_allow_empty_requires_protocol(self) -> None:
+        empty_pack = self.make_pack({}, "empty")
+        code, out, err = self.run_main(str(empty_pack), "--allow-empty")
+        self.assertEqual(code, 1)
+        self.assertIn("--allow-empty requires --protocol N", err)
+
+    def test_allow_empty_rejects_invalid_protocol(self) -> None:
+        empty_pack = self.make_pack({}, "empty")
+        for bad in ("0", "-1", "29.5", "abc"):
+            with self.subTest(protocol=bad):
+                code, out, err = self.run_main(
+                    str(empty_pack), "--allow-empty", "--protocol", bad
+                )
+                self.assertEqual(code, 1)
+                self.assertIn("--protocol must be a positive integer", err)
+
+    def test_allow_empty_rejects_conflicting_directory_protocol(self) -> None:
+        empty_p29 = self.make_pack({}, "protocol-29")
+        code, out, err = self.run_main(
+            str(empty_p29), "--allow-empty", "--protocol", "28"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("--protocol 28 conflicts with pack directory name", err)
+
+    def test_allow_empty_rejects_conflicting_fixture_protocol(self) -> None:
+        pack = self.make_pack(GOLDEN_FILES, "custom_pack")
+        code, out, err = self.run_main(
+            str(pack), "--allow-empty", "--protocol", "29"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("--protocol 29 conflicts with fixture protocol 28", err)
+
+    def test_unauthorized_empty_pack_refused(self) -> None:
+        empty_pack = self.make_pack({}, "empty")
+        code, out, err = self.run_main(str(empty_pack))
+        self.assertEqual(code, 1)
+        self.assertIn("the pack contains no *.toml fixture files", err)
+
+    def test_allow_empty_generates_canonical_empty_registry(self) -> None:
+        empty_pack = self.make_pack({}, "protocol-29")
+        code, out, err = self.run_main(
+            str(empty_pack), "--allow-empty", "--protocol", "29", "--stdout"
+        )
+        self.assertEqual(code, 0, err)
+        expected = json.dumps(
+            {
+                "registryVersion": 1,
+                "protocol": 29,
+                "fixtures": [],
+                "packDigest": "sha256:"
+                + hashlib.sha256(b"canary-pack-v1\n").hexdigest(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        ) + "\n"
+        self.assertEqual(out, expected)
+
+    def test_protocol_without_allow_empty(self) -> None:
+        pack = self.make_pack(GOLDEN_FILES)
+        # Invalid protocol without allow_empty
+        for bad in ("0", "-1", "abc", "28.5"):
+            code, out, err = self.run_main(str(pack), "--protocol", bad)
+            self.assertEqual(code, 1)
+            self.assertIn("--protocol must be a positive integer", err)
+        # Valid protocol without allow_empty
+        code, out, err = self.run_main(str(pack), "--protocol", "28", "--stdout")
+        self.assertEqual(code, 0)
+
+    def test_direct_api_validation(self) -> None:
+        empty_pack = self.make_pack({}, "empty")
+        with self.assertRaisesRegex(generate.PackError, "--allow-empty requires --protocol N"):
+            generate.generate(empty_pack, allow_empty=True, protocol=None)
+        with self.assertRaisesRegex(generate.PackError, "--protocol must be a positive integer"):
+            generate.generate(empty_pack, allow_empty=True, protocol=-1)
+        with self.assertRaisesRegex(generate.PackError, "--allow-empty requires --protocol N"):
+            generate.build_registry({}, allow_empty=True, protocol=None)
+        with self.assertRaisesRegex(generate.PackError, "--protocol must be a positive integer"):
+            generate.build_registry({}, allow_empty=True, protocol=-1)
+
 
 if __name__ == "__main__":
     unittest.main()
