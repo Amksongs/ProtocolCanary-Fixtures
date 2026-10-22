@@ -534,6 +534,17 @@ class TestCliInterface(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("Error determining changed files via git", stderr.getvalue())
 
+    def test_cli_with_base_flag_called_process_error(self) -> None:
+        stderr = io.StringIO()
+        with patch(
+            "tools.validate.check_changelog.get_git_diff_files",
+            side_effect=subprocess.CalledProcessError(2, ["git", "diff"], stderr="bad revision"),
+        ):
+            with patch("sys.stderr", stderr):
+                code = main(["--base", "invalid_ref"])
+        self.assertEqual(code, 2)
+        self.assertIn("Error determining changed files via git", stderr.getvalue())
+
     def test_cli_no_args_fallback_git_diff(self) -> None:
         stdout = io.StringIO()
         with patch("tools.validate.check_changelog.get_git_diff_files", return_value=[]):

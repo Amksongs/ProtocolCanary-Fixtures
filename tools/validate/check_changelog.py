@@ -384,6 +384,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.files:
         changed_files.extend(args.files)
 
+    if args.base:
+        try:
+            diff_files = get_git_diff_files(args.base, repo_root=args.repo_root)
+            changed_files.extend(diff_files)
+        except (RuntimeError, subprocess.SubprocessError, subprocess.CalledProcessError) as e:
+            print(f"Error determining changed files via git: {e}", file=sys.stderr)
+            return 2
+
     if args.stdin or ("-" in changed_files):
         if "-" in changed_files:
             changed_files.remove("-")
@@ -397,13 +405,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             line_str = line.strip()
             if line_str:
                 changed_files.append(line_str)
-    elif not changed_files and args.base:
-        try:
-            diff_files = get_git_diff_files(args.base, repo_root=args.repo_root)
-            changed_files.extend(diff_files)
-        except RuntimeError as e:
-            print(f"Error determining changed files via git: {e}", file=sys.stderr)
-            return 2
 
     # If still no files provided and not piped, attempt git diff against origin/main if in repo
     if not changed_files and not args.stdin:
