@@ -549,14 +549,31 @@ def check_source_reference(value: str) -> str | None:
         return None
 
     parts = urlsplit(value)
-    host = (parts.hostname or "").lower()
+    raw_host = parts.hostname or ""
     segments = [s for s in parts.path.split("/") if s]
-    if not host or "." not in host:
+    if not raw_host or "." not in raw_host:
         return f"has no valid host name in {value!r}"
     if parts.username is not None or parts.password is not None:
         return "must not embed credentials (user@host) in the URL"
 
-    if host in _GITHUB_HOSTS:
+    lower_host = raw_host.lower()
+    if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for ch in lower_host):
+        return (
+            "source_reference host must contain only ASCII letters, digits, '.' and '-' "
+            "without empty labels or percent-encoding (non-ASCII hosts must use punycode)"
+        )
+
+    stripped_host = lower_host[:-1] if lower_host.endswith(".") else lower_host
+    labels = stripped_host.split(".")
+    if not stripped_host or any(not label for label in labels):
+        return (
+            "source_reference host must contain only ASCII letters, digits, '.' and '-' "
+            "without empty labels or percent-encoding (non-ASCII hosts must use punycode)"
+        )
+
+    canonical_host = stripped_host
+
+    if canonical_host in _GITHUB_HOSTS:
         if len(segments) < 3:
             return (
                 "points at a GitHub repository root, which follows the default "
@@ -576,7 +593,7 @@ def check_source_reference(value: str) -> str | None:
                     "moves; pin the link to a full commit SHA or a release tag "
                     f"(for example .../{kind}/<40-hex commit>/...)"
                 )
-    elif host == _GITHUB_RAW_HOST:
+    elif canonical_host == _GITHUB_RAW_HOST:
         # /<owner>/<repo>/<ref>/<path...>, or /<owner>/<repo>/refs/(heads|tags)/<name>/...
         if len(segments) < 4:
             return "has no ref and file path; link to a file at a commit or tag"
