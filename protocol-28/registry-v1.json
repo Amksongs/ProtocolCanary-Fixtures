@@ -1,0 +1,907 @@
+{
+  "registryVersion": 1,
+  "protocol": 28,
+  "fixtures": [
+    {
+      "id": "p28-rpc-latest-ledger",
+      "path": "rpc/p28-rpc-latest-ledger.toml",
+      "sha256": "23d8147b6d0a5150213ed1e5bd75648d1aa6e25837d1228c6bfb07b2053e0d6b",
+      "surface": "rpc",
+      "category": "ledger",
+      "description": "getLatestLedger reports protocol 28 with a ledger hash and a numeric sequence",
+      "sourceReference": "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger",
+      "payloads": []
+    },
+    {
+      "id": "p28-rpc-network",
+      "path": "rpc/p28-rpc-network.toml",
+      "sha256": "cd53626db9d7a130e678f90d7d32545c23c95895cc0eb3de71e44cd82fc9596d",
+      "surface": "rpc",
+      "category": "network",
+      "description": "getNetwork reports protocol 28 and a passphrase",
+      "sourceReference": "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork",
+      "payloads": []
+    },
+    {
+      "id": "p28-soroban-native-asset-name",
+      "path": "soroban/p28-soroban-native-asset-name.toml",
+      "sha256": "61bf15552667522054ce929341d9b5af8825f7933aed5bd2d8f4cdd2d02600c6",
+      "surface": "soroban",
+      "category": "smoke",
+      "description": "simulateTransaction succeeds for a real Protocol 28 Soroban invocation (native asset contract name())",
+      "sourceReference": "https://developers.stellar.org/docs/tokens/stellar-asset-contract",
+      "payloads": []
+    },
+    {
+      "id": "p28-soroban-sim-error-arg-count",
+      "path": "soroban/p28-soroban-sim-error-arg-count.toml",
+      "sha256": "a61b900ca8247b9c418f65e96a8ee12a13cf1ef6f1554e09f151268991c66066",
+      "surface": "soroban",
+      "category": "simulation-error",
+      "description": "simulateTransaction fails with host error Error(Context, UnexpectedSize) when SEP-41 transfer() is invoked with zero arguments instead of three",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/4db3e802b2929c865a27bd43f2544c979150137d/ecosystem/sep-0041.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-soroban-sim-error-arg-type",
+      "path": "soroban/p28-soroban-sim-error-arg-type.toml",
+      "sha256": "bc98ca27305df3684a08f79727f4d36c133bc40e45066a039c9038afb65d0404",
+      "surface": "soroban",
+      "category": "simulation-error",
+      "description": "simulateTransaction fails with host error Error(Value, UnexpectedType) when SEP-41 transfer() receives symbols in its two address parameter positions",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/4db3e802b2929c865a27bd43f2544c979150137d/ecosystem/sep-0041.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-soroban-sim-error-missing-contract",
+      "path": "soroban/p28-soroban-sim-error-missing-contract.toml",
+      "sha256": "23cd6b73b447ae9d620fb87b6c31d3ccd523771de6304bc40d82b7f07b48cf7c",
+      "surface": "soroban",
+      "category": "simulation-error",
+      "description": "simulateTransaction fails with host error Error(Storage, MissingValue) for a well-formed contract id that has no stored contract instance",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-soroban-sim-error-unknown-function",
+      "path": "soroban/p28-soroban-sim-error-unknown-function.toml",
+      "sha256": "c0b5c754df8406ef7aa149b1fa6030a49ff643b28e90c6b79c01eec12647e4b4",
+      "surface": "soroban",
+      "category": "simulation-error",
+      "description": "simulateTransaction fails with host error Error(Value, InvalidInput) when invoking a function the Stellar Asset Contract does not export",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/4db3e802b2929c865a27bd43f2544c979150137d/ecosystem/sep-0041.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-cap83-empty-tx-set",
+      "path": "xdr/cap-0083/p28-xdr-cap83-empty-tx-set.toml",
+      "sha256": "e5dd15015bdb2bd956d6d75960b69ec7c861eaa4e4ec424396a1e651ab36548b",
+      "surface": "xdr",
+      "category": "cap-0083",
+      "description": "StellarValue using the CAP-0083 STELLAR_VALUE_EMPTY_TX_SET ext round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0083.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-cap83-empty-tx-set-malformed",
+      "path": "xdr/cap-0083/p28-xdr-cap83-empty-tx-set-malformed.toml",
+      "sha256": "53905367f2506925c1233cab397bcda6bcb46df48704221ed12b5c461b4bb17e",
+      "surface": "xdr",
+      "category": "cap-0083",
+      "description": "A truncated CAP-0083 StellarValue using the STELLAR_VALUE_EMPTY_TX_SET ext is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0083.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-cap85-external-ref-malformed",
+      "path": "xdr/cap-0085/p28-xdr-cap85-external-ref-malformed.toml",
+      "sha256": "d756a58596726ff6291aeea5f57d768ed18cd7383ac0ff7b13a34d3a5c410ca7",
+      "surface": "xdr",
+      "category": "cap-0085",
+      "description": "A truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-cap85-external-ref-roundtrip",
+      "path": "xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml",
+      "sha256": "68206b9f01591fa2fae87bae7b2a5c1365b50f7b9c784093beca8cb0ac788dc0",
+      "surface": "xdr",
+      "category": "cap-0085",
+      "description": "ContractExecutable using the CAP-0085 CONTRACT_EXECUTABLE_EXTERNAL_REF case round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-contract-executable-stellar-asset-decode-failure",
+      "path": "xdr/contract-executable/p28-xdr-contract-executable-stellar-asset-decode-failure.toml",
+      "sha256": "fbe8b879952c571168647e5f21991617cae3503d553acc62e05702b2c71877e2",
+      "surface": "xdr",
+      "category": "contract-executable",
+      "description": "A truncated ContractExecutable::StellarAsset encoding is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-contract-executable-stellar-asset-decode-success",
+      "path": "xdr/contract-executable/p28-xdr-contract-executable-stellar-asset-decode-success.toml",
+      "sha256": "687bcb3a38fcdc8e211a167de1db8e326515569c45aa7f6346288ceac3fb1472",
+      "surface": "xdr",
+      "category": "contract-executable",
+      "description": "A well-formed ContractExecutable using the CONTRACT_EXECUTABLE_STELLAR_ASSET case decodes successfully",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-contract-executable-stellar-asset-roundtrip",
+      "path": "xdr/contract-executable/p28-xdr-contract-executable-stellar-asset-roundtrip.toml",
+      "sha256": "a4a64d2fba1c589e8d2fa1500b93770e3f975cd8329be44ba90aa449be51feef",
+      "surface": "xdr",
+      "category": "contract-executable",
+      "description": "ContractExecutable using the CONTRACT_EXECUTABLE_STELLAR_ASSET case round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-contract-executable-wasm-decode-failure",
+      "path": "xdr/contract-executable/p28-xdr-contract-executable-wasm-decode-failure.toml",
+      "sha256": "9c229629419455bf610b71f03b8b08020fd6e9e5b806b4ce19ef0936dcda4f33",
+      "surface": "xdr",
+      "category": "contract-executable",
+      "description": "A truncated ContractExecutable::Wasm encoding is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-contract-executable-wasm-decode-success",
+      "path": "xdr/contract-executable/p28-xdr-contract-executable-wasm-decode-success.toml",
+      "sha256": "cc9ec76d7ee06af1bfe94ab3b476416121fbde8888841959cfba9b280e136438",
+      "surface": "xdr",
+      "category": "contract-executable",
+      "description": "A well-formed ContractExecutable using the CONTRACT_EXECUTABLE_WASM case decodes successfully",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-contract-executable-wasm-roundtrip",
+      "path": "xdr/contract-executable/p28-xdr-contract-executable-wasm-roundtrip.toml",
+      "sha256": "0b430092a7edc69fe272be58f1ce816e5c75c1d27cd6963942fff28f8c6a16d6",
+      "surface": "xdr",
+      "category": "contract-executable",
+      "description": "ContractExecutable using the CONTRACT_EXECUTABLE_WASM case round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-account",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-account.toml",
+      "sha256": "baec45b913a611b04e8d2c38d206636e91b28b1ff3c9193fd2dde093e3484d0f",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "An `ACCOUNT` `LedgerEntry` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-account-truncated",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-account-truncated.toml",
+      "sha256": "e4330e6324d2abfce7340631671719a8b95ed1739e69bab5136cda37adfb951f",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A truncated `ACCOUNT` `LedgerEntry` is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-contract-code",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-contract-code.toml",
+      "sha256": "ddbe0faaae5e5d51be472b653d515974f8b75557ec4d5193c93455a6c3cccc31",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `CONTRACT_CODE` `LedgerEntry` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-contract-code-truncated",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-contract-code-truncated.toml",
+      "sha256": "102df366963b9fecf14cf65efd17ded3996ffef2c1195c79685e1a16da334a35",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A truncated `CONTRACT_CODE` code blob is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-contract-data",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-contract-data.toml",
+      "sha256": "f9c9c7dbd15b2f1c242130d7f288ea430727f2def84ecdcbc9dee816c7176879",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `CONTRACT_DATA` `LedgerEntry` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-contract-data-key-truncated",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-contract-data-key-truncated.toml",
+      "sha256": "9adcef8235e56fbe9b96a2c2e13216c7b3bd44ee0820deb1fc4203210f8fe044",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `CONTRACT_DATA` entry cut after its key is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-trustline",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-trustline.toml",
+      "sha256": "86b63521e092e69864be1fcbae644cda4f117d7f9a8f84abd37d8bc334b3e3f3",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `TRUSTLINE` `LedgerEntry` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-trustline-truncated",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-trustline-truncated.toml",
+      "sha256": "d1ad66e913cbfd06a0b19895de4332616863c05e94f24bc2d60f69d82b30ce20",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A truncated `TRUSTLINE` `LedgerEntry` is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-trustline-unknown-asset-type",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-trustline-unknown-asset-type.toml",
+      "sha256": "0f07286d6ee38bdb8b71bf2faecd3fe09273d0c552fd794d0793c55c8f75f751",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `TRUSTLINE` with an undefined `TrustLineAsset` type is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-ttl",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-ttl.toml",
+      "sha256": "191b48c7adf9dda9f049ec58d4ba870398ffeaca9cbfe7a23915f5d09f51117f",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `TTL` `LedgerEntry` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-ledger-entry-ttl-missing-live-until",
+      "path": "xdr/ledger-entry/p28-xdr-ledger-entry-ttl-missing-live-until.toml",
+      "sha256": "70001945e18b2a138e58a253a0d394dffb7d20ac67017ed2c7d471a484554c7c",
+      "surface": "xdr",
+      "category": "ledger-entry",
+      "description": "A `TTL` entry missing `liveUntilLedgerSeq` is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-address-account",
+      "path": "xdr/scval-composite/p28-xdr-scval-address-account.toml",
+      "sha256": "307129cd7e9a540e3152db67d0793bfb9277e5391a92a71c8fefd7d0e5943c8e",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "An account `ScVal::Address` with a synthetic key round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-address-contract",
+      "path": "xdr/scval-composite/p28-xdr-scval-address-contract.toml",
+      "sha256": "0c4156510d718450bb23542792a456d3bac5bdb6c907394d0588ced184531f1c",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A contract `ScVal::Address` with a synthetic id round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-address-unknown-discriminant",
+      "path": "xdr/scval-composite/p28-xdr-scval-address-unknown-discriminant.toml",
+      "sha256": "9c382b79fb9fa07b79e266cffc10158b8d22f1f6ebaa45b871063764b6a4477a",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A `ScVal::Address` with an undefined SCAddressType discriminant is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-bool-false",
+      "path": "xdr/scval/p28-xdr-scval-bool-false.toml",
+      "sha256": "c0055071ccb2b393e62b1d0aee3ca8f0c769e7f036c8002c0fe9753cc389012e",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::Bool(false)` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-bool-true",
+      "path": "xdr/scval/p28-xdr-scval-bool-true.toml",
+      "sha256": "eefacefd0f74b53553a8561865973b524698b29f7b307e6d30b0e2cee37cd775",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::Bool(true)` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-bytes-empty",
+      "path": "xdr/scval/p28-xdr-scval-bytes-empty.toml",
+      "sha256": "52d790551c3c58e0c72b3b79244e47b6e8b2e507d695b4b2a1faadacabc04238",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "An empty `ScVal::Bytes` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-bytes-small",
+      "path": "xdr/scval/p28-xdr-scval-bytes-small.toml",
+      "sha256": "e08b33be2aa77c9fface4713dc1bfe7d974c152a1f69e8c30231060afac83c04",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A five-byte `ScVal::Bytes` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-bytes-truncated",
+      "path": "xdr/scval/p28-xdr-scval-bytes-truncated.toml",
+      "sha256": "6cfc2e2dc2ad3485fbc61ea76835a8a536a8bc85d475c0dde16020dfcaf27ae2",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A truncated `ScVal::Bytes` payload is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-duration",
+      "path": "xdr/scval/p28-xdr-scval-duration.toml",
+      "sha256": "dae7ef059eb8d0f5f52a81f3238fda600224305e091dabb8a790b93a224e788d",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::Duration(Duration(86_400))` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i128-max",
+      "path": "xdr/scval/p28-xdr-scval-i128-max.toml",
+      "sha256": "f1cef65a79baa794be1673200feff082d7a94aa63fa23c396ff776481dbb286f",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I128` maximum round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i128-min",
+      "path": "xdr/scval/p28-xdr-scval-i128-min.toml",
+      "sha256": "5208e43b641c2b87d0c49c050d248068ead420319db432921801ee8bfb7abd2c",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I128` minimum round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i128-truncated",
+      "path": "xdr/scval/p28-xdr-scval-i128-truncated.toml",
+      "sha256": "3d6857f7dc55b68916d6369190ca1e7aaf402aea5ac2cfa17311d9ed5e5bb670",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A truncated `ScVal::I128` payload is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i128-zero",
+      "path": "xdr/scval/p28-xdr-scval-i128-zero.toml",
+      "sha256": "210a5075d32371a082076bdd4e8bfc8909e5a8e30db9d0fc6438c120b73dbfb4",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I128` zero round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i256-max",
+      "path": "xdr/scval/p28-xdr-scval-i256-max.toml",
+      "sha256": "69444c8a73ea8702c027f9676a5485e8b714fd7381a00ceceb097118ed83a811",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I256` maximum round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i256-min",
+      "path": "xdr/scval/p28-xdr-scval-i256-min.toml",
+      "sha256": "d1252cf6e835efdd0f5524ca2d6f0e0a873cbac9c54d3e650a451a592befde11",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I256` minimum round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i256-zero",
+      "path": "xdr/scval/p28-xdr-scval-i256-zero.toml",
+      "sha256": "a86bbe67bfba4f25c5e52754bd751f603dceb500507bd82e4e4e0faa9ba4c09d",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I256` zero round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i32-min",
+      "path": "xdr/scval/p28-xdr-scval-i32-min.toml",
+      "sha256": "461425e61ef6330f1fdc19ffc51b19e8053144462a627e4b456d5701fbd46cf3",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I32(i32::MIN)` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-i64-min",
+      "path": "xdr/scval/p28-xdr-scval-i64-min.toml",
+      "sha256": "73a0b748f3ad0120c05ac4b0475c7b8ed46e9b35855421bc31f7972443abebcf",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::I64(i64::MIN)` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-map-empty",
+      "path": "xdr/scval-composite/p28-xdr-scval-map-empty.toml",
+      "sha256": "5d986488871e7059ae7298d795eb266cde473fa4b00c1bba497d398a41d64658",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A present-but-empty `ScVal::Map` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-map-multi",
+      "path": "xdr/scval-composite/p28-xdr-scval-map-multi.toml",
+      "sha256": "07a05fc18ca3fe4b9b9f60803991c9a9e10f90bf288eb9c93929bd7ed0da1822",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A three-entry `ScVal::Map` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-map-nested",
+      "path": "xdr/scval-composite/p28-xdr-scval-map-nested.toml",
+      "sha256": "bebe79ff405bd872eabd9dbcd064d7de99ed6f642a9261315cf889b0252d070a",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A `ScVal::Map` with a `ScVal::Vec` value round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-map-one",
+      "path": "xdr/scval-composite/p28-xdr-scval-map-one.toml",
+      "sha256": "8f7f2cd3185d5a86afb51f5adf71f373e4cd12e483327d09fc587bf5526c18a0",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A one-entry `ScVal::Map` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-map-truncated-after-key",
+      "path": "xdr/scval-composite/p28-xdr-scval-map-truncated-after-key.toml",
+      "sha256": "fc3153cc5c5c80b2fbb9e5f569e8798cb8c7c8eeef0560ea19bd5a6853f0dcde",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A `ScVal::Map` truncated after its key is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-map-unsorted-keys",
+      "path": "xdr/scval-composite/p28-xdr-scval-map-unsorted-keys.toml",
+      "sha256": "65037141dad20d395dc59ef6a0d3042f0ad3303b719218057153bfe4b247578a",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A `ScVal::Map` with non-ascending keys round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-string-empty",
+      "path": "xdr/scval/p28-xdr-scval-string-empty.toml",
+      "sha256": "9e95ab834f34db149a8ef00b12148153fed22d1b78167d45f52d2f3eb42fb56e",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "An empty `ScVal::String` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-string-small",
+      "path": "xdr/scval/p28-xdr-scval-string-small.toml",
+      "sha256": "46b43353ad226e663d7df948d831497dedf3b72431adef5ec04660feae20fe2e",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A six-byte `ScVal::String` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-string-truncated",
+      "path": "xdr/scval/p28-xdr-scval-string-truncated.toml",
+      "sha256": "fe12d570b7efeba88b24b8291d70eb89d002e8aa5c22ed855e2ca824cde738d5",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A truncated `ScVal::String` payload is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-symbol-32-boundary",
+      "path": "xdr/scval/p28-xdr-scval-symbol-32-boundary.toml",
+      "sha256": "068b0634a28236fc304cf6ea8c8bf56856972f017cb83e8ccabb49c784c55f87",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A 32-byte `ScVal::Symbol`, the SCSYMBOL_LIMIT, round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-symbol-33-invalid",
+      "path": "xdr/scval/p28-xdr-scval-symbol-33-invalid.toml",
+      "sha256": "c4e2413390bd3f13c22a2147b79e6123363326ac9b8034e4b20de3ea394e812e",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A 33-byte symbol, one past SCSYMBOL_LIMIT, is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-symbol-empty",
+      "path": "xdr/scval/p28-xdr-scval-symbol-empty.toml",
+      "sha256": "4c0ababa2a5d5819ffb8b65bc0bbc7dd1b6760a20e4963bc3f2304a48aee8d2f",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "An empty `ScVal::Symbol` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-symbol-small",
+      "path": "xdr/scval/p28-xdr-scval-symbol-small.toml",
+      "sha256": "dc5910889a0210703cde4e906b1473eae796abc7334e638859ce65f5d9ae54d5",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "An eight-byte `ScVal::Symbol` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-timepoint",
+      "path": "xdr/scval/p28-xdr-scval-timepoint.toml",
+      "sha256": "57969e3de0569f32328d0b39ce1001e9b0cb3165b457dcc1a17af762eb80eaeb",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::Timepoint(TimePoint(1_700_000_000))` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u128-high-bit",
+      "path": "xdr/scval/p28-xdr-scval-u128-high-bit.toml",
+      "sha256": "c3c54828f0d146582c81b9489295ed5dffb5fa34498a06551dc6caafe9c07269",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U128` with the high bit set round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u128-max",
+      "path": "xdr/scval/p28-xdr-scval-u128-max.toml",
+      "sha256": "0a47010c01c51c1fdbe68c35a60c1fb84d1aac2c49ce3c07da356f5eccf74d94",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U128` maximum round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u128-zero",
+      "path": "xdr/scval/p28-xdr-scval-u128-zero.toml",
+      "sha256": "aa719b5cf52ec1a01e401dac65cc1e0f7e5d76ac30a7c88729ec3958718bcdb3",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U128` zero round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u256-max",
+      "path": "xdr/scval/p28-xdr-scval-u256-max.toml",
+      "sha256": "ce07eca84de00dbcba14cc8e80e23bc7a5324730df5dc34ff77cb3c18f60513e",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U256` maximum round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u256-truncated",
+      "path": "xdr/scval/p28-xdr-scval-u256-truncated.toml",
+      "sha256": "6ff24a90c75f13e2568c77bc3d18db3c1a17476439929aa8cb6a484c73274dca",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A truncated `ScVal::U256` payload is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u256-zero",
+      "path": "xdr/scval/p28-xdr-scval-u256-zero.toml",
+      "sha256": "05dde7ed22e0f5351fc573e23ddc8c87deb114b047a9ad3dd588f3a0336187d8",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U256` zero round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u32-max",
+      "path": "xdr/scval/p28-xdr-scval-u32-max.toml",
+      "sha256": "352f9a3e4b2d735bf473ec02d46b7eef39504d952a64c3e9ce71e6da335d54fa",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U32(u32::MAX)` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u32-truncated",
+      "path": "xdr/scval/p28-xdr-scval-u32-truncated.toml",
+      "sha256": "a3a47947bfab08542f62c0075dc78dc2cca6b047fe8e616b5c9bad87f6498cda",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A truncated `ScVal::U32` payload is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u64-max",
+      "path": "xdr/scval/p28-xdr-scval-u64-max.toml",
+      "sha256": "e1d38efe0671ad7d309a3277b36f4ff955e24bd5cddc7d91a3acefe49fc8b9ae",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::U64(u64::MAX)` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-u64-truncated",
+      "path": "xdr/scval/p28-xdr-scval-u64-truncated.toml",
+      "sha256": "f94fb8984deacbe1ee8777f35eba5a0618c1a1b710d894cda0affe5bca2db2a5",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "A truncated `ScVal::U64` payload is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-vec-count-exceeds-data",
+      "path": "xdr/scval-composite/p28-xdr-scval-vec-count-exceeds-data.toml",
+      "sha256": "ed44ed44cfc11e3e711b64304ad8cb2b1fdec8c87128e5dfa97da83f111816bb",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A `ScVal::Vec` whose element count exceeds its data is correctly rejected, not silently accepted",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-vec-empty",
+      "path": "xdr/scval-composite/p28-xdr-scval-vec-empty.toml",
+      "sha256": "067636d94889ac49bbbba00b333d1a041315e4d9094ccf1db14183111e05015a",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A present-but-empty `ScVal::Vec` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-vec-multi",
+      "path": "xdr/scval-composite/p28-xdr-scval-vec-multi.toml",
+      "sha256": "e6ded12f93122270d0f5fc405c09154c7d19734098dd5395f1c6d1bf07bf32b1",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A three-element `ScVal::Vec` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-vec-null",
+      "path": "xdr/scval-composite/p28-xdr-scval-vec-null.toml",
+      "sha256": "406458b814f3bc732e5c709b4667aaba98ffad98a74f749a08dd4abaac8325f8",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "An absent (null) `ScVal::Vec` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-vec-one",
+      "path": "xdr/scval-composite/p28-xdr-scval-vec-one.toml",
+      "sha256": "257d277d39ffd374feb59eaaa06fab41a6313a9678749e50751f45dcc981629e",
+      "surface": "xdr",
+      "category": "scval-composite",
+      "description": "A one-element `ScVal::Vec` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-scval-void",
+      "path": "xdr/scval/p28-xdr-scval-void.toml",
+      "sha256": "791bb8fd0f8765e119b6e9afec742d6dfb2d2d42e4f52f55c139042ccd4eef97",
+      "surface": "xdr",
+      "category": "scval",
+      "description": "`ScVal::Void` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-basic-decode-failure",
+      "path": "xdr/stellar-value/p28-xdr-stellar-value-basic-decode-failure.toml",
+      "sha256": "5f291b73ec21b2d614f00246efd86fa0ad8f7ce53c0cd2b1a31b94eb76266c18",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A truncated StellarValue using the STELLAR_VALUE_BASIC ext arm is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-basic-decode-success",
+      "path": "xdr/stellar-value/p28-xdr-stellar-value-basic-decode-success.toml",
+      "sha256": "72422d5e6315f9a057008af7390081d10c717318d4e894fb874363362ac39ec9",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A well-formed StellarValue using the STELLAR_VALUE_BASIC ext arm decodes successfully",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-basic-roundtrip",
+      "path": "xdr/stellar-value/p28-xdr-stellar-value-basic-roundtrip.toml",
+      "sha256": "45d76de82acfbfe12956aef7fe6c0122fa0749952463121d95abf448c0bec301",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "StellarValue using the STELLAR_VALUE_BASIC ext arm round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-signed-decode-failure",
+      "path": "xdr/stellar-value/p28-xdr-stellar-value-signed-decode-failure.toml",
+      "sha256": "32100a4841b9300656b312f5f5b27e38067f6f0018fe1a2811d77a0d1d752ea2",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A truncated StellarValue using the STELLAR_VALUE_SIGNED ext arm is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-signed-decode-success",
+      "path": "xdr/stellar-value/p28-xdr-stellar-value-signed-decode-success.toml",
+      "sha256": "b56f087bf5aa787dd5aad54b13a2ba67425dec10b7a27e5785cd2b81a68bd19d",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A well-formed StellarValue using the STELLAR_VALUE_SIGNED ext arm decodes successfully",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-signed-roundtrip",
+      "path": "xdr/stellar-value/p28-xdr-stellar-value-signed-roundtrip.toml",
+      "sha256": "c4ef767eb66c2cd34203e9614fa184768e05db50af35bff85c88ea08ffa47f2b",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "StellarValue using the STELLAR_VALUE_SIGNED ext arm round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-fee-bump-decode-failure",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-fee-bump-decode-failure.toml",
+      "sha256": "cb135689a51db32956dadc4747a7d55a4f5ea972723b2cc61a6fbf579373a90a",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A fee-bump `TransactionEnvelope` whose inner transaction is truncated is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-fee-bump-roundtrip",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-fee-bump-roundtrip.toml",
+      "sha256": "77669320812d226dd03977640c6bde41e7d7327335fabade2dc3832394a3b9da",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX_FEE_BUMP` arm round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-soroban-invoke-decode-failure",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-soroban-invoke-decode-failure.toml",
+      "sha256": "bab09f61e941d87a7f822e0e537b338b89301ed0e11570dc418326a825a849c7",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A Soroban `TransactionEnvelope` truncated inside its contract id is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-soroban-invoke-roundtrip",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml",
+      "sha256": "bd5de06a3b89ec934bfacce8da5759a65e977f49ec9bd7584b6f6115aef141fc",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A `TransactionEnvelope` whose single operation is `INVOKE_HOST_FUNCTION` round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-v0-decode-failure",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-decode-failure.toml",
+      "sha256": "94c07db3f91f03b9a038ac5bbf0bc603a4fc0e4e61af58bf36f316bf65bbee34",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A `TransactionEnvelope` whose signature is truncated mid-signature is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-v0-roundtrip",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-roundtrip.toml",
+      "sha256": "59b8935082da525ad14a8f63d8a3fb6108351046fd9e90bdf567f649b26db826",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX_V0` arm round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-v1-decode-failure",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-decode-failure.toml",
+      "sha256": "5f1a404a0ba222ac5918cc7db2584400ea4a1df8ada084b15f4094c7c3d2ce52",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A `TransactionEnvelope` with an unknown envelope-type discriminant is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-transaction-envelope-v1-roundtrip",
+      "path": "xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-roundtrip.toml",
+      "sha256": "fdc591267e226ec421fd4519f9b2ecf75830b3fd79eca6ba4b555166c013e6f3",
+      "surface": "xdr",
+      "category": "transaction-envelope",
+      "description": "A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX` arm round-trips byte-for-byte",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x",
+      "payloads": []
+    }
+  ],
+  "packDigest": "sha256:0509a183c43bd46e3ce59306bf00efabad9f7d8c7769f34a54d1809077bf842a"
+}
