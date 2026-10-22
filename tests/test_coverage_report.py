@@ -267,12 +267,15 @@ EXPECTED_EXAMPLE_REPORT = {
         },
         "RPC_METHODS": {
             "get-events": 0,
+            "get-fee-stats": 0,
+            "get-health": 0,
             "get-latest-ledger": 1,
             "get-ledger-entries": 0,
             "get-ledgers": 0,
             "get-network": 1,
             "get-transaction": 0,
             "get-transactions": 0,
+            "get-version-info": 0,
         },
         "SOROBAN_ARG_KINDS": {
             "address": 0,
@@ -350,12 +353,15 @@ RPC_ASSERT_TYPES
 
 RPC_METHODS
   get-events            0  no fixture
+  get-fee-stats         0  no fixture
+  get-health            0  no fixture
   get-latest-ledger     1
   get-ledger-entries    0  no fixture
   get-ledgers           0  no fixture
   get-network           1
   get-transaction       0  no fixture
   get-transactions      0  no fixture
+  get-version-info      0  no fixture
 
 SOROBAN_ARG_KINDS
   address      0  no fixture
@@ -768,18 +774,21 @@ class ValidatorConstantTests(unittest.TestCase):
         original = (
             'RPC_METHODS = {\n'
             '    "get-events",\n'
+            '    "get-fee-stats",\n'
+            '    "get-health",\n'
             '    "get-latest-ledger",\n'
             '    "get-ledger-entries",\n'
             '    "get-ledgers",\n'
             '    "get-network",\n'
             '    "get-transaction",\n'
             '    "get-transactions",\n'
+            '    "get-version-info",\n'
             '}'
         )
         assert original in source, "validator's RPC_METHODS line moved"
         patched = source.replace(
             original,
-            original[:-1] + '    "get-fee-stats",\n}',
+            original[:-1] + '    "get-epoch",\n}',
         )
         patched += (
             "\n# A new capability constant added by a scratch copy of the validator.\n"
@@ -806,14 +815,14 @@ class ValidatorConstantTests(unittest.TestCase):
             module = self.load(scratch, "validate_scratch_for_test")
             report = coverage_report.build_report([pack], validator=module)
 
-        self.assertEqual(report["capabilities"]["RPC_METHODS"]["get-fee-stats"], 0)
-        self.assertIn("get-fee-stats", report["capabilities"]["RPC_METHODS"])
+        self.assertEqual(report["capabilities"]["RPC_METHODS"]["get-epoch"], 0)
+        self.assertIn("get-epoch", report["capabilities"]["RPC_METHODS"])
         # A brand-new set has no counting rule, so its zeros are structural
         # and it says so rather than pretending to have been measured.
         self.assertEqual(report["capabilities"]["BRAND_NEW_CAPABILITY"], {"newer": 0, "shiny": 0})
         self.assertEqual(report["unmapped_capabilities"], ["BRAND_NEW_CAPABILITY"])
         # The unmodified report does not mention either.
-        self.assertNotIn("get-fee-stats", EXPECTED_EXAMPLE_REPORT["capabilities"]["RPC_METHODS"])
+        self.assertNotIn("get-epoch", EXPECTED_EXAMPLE_REPORT["capabilities"]["RPC_METHODS"])
         self.assertNotIn("BRAND_NEW_CAPABILITY", EXPECTED_EXAMPLE_REPORT["capabilities"])
 
     def test_cli_loads_a_scratch_validator_via_the_flag(self) -> None:
@@ -826,7 +835,7 @@ class ValidatorConstantTests(unittest.TestCase):
             )
         self.assertEqual(code, 0, err)
         document = json.loads(out)
-        self.assertEqual(document["capabilities"]["RPC_METHODS"]["get-fee-stats"], 0)
+        self.assertEqual(document["capabilities"]["RPC_METHODS"]["get-epoch"], 0)
         self.assertIn("BRAND_NEW_CAPABILITY", document["capabilities"])
 
     def test_every_capability_constant_of_the_validator_is_in_the_report(self) -> None:

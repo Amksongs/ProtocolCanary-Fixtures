@@ -1209,6 +1209,64 @@ field = "id"
                     report.errors,
                 )
 
+    # --- F-017 (issue #280): the health and diagnostic RPC methods
+    def test_rpc_health_and_diagnostic_methods_are_accepted(self) -> None:
+        # canary-rpc parses get-health, get-version-info and get-fee-stats
+        # (crates/canary-rpc/src/request.rs, read at Protocol-Canary commit
+        # 94d7c794780a7c87944c5177ff1f8eb3edec300e), so a fixture naming one
+        # of them is a request the engine can run, not a misspelling.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                good = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{method}"'
+                )
+                report = self.run_validation({"a.toml": good})
+                self.assertEqual(report.errors, [], report.errors)
+
+    def test_rpc_health_and_diagnostic_methods_reject_a_request_table(self) -> None:
+        # The engine's parameter table lists these three as taking no
+        # parameters, so a [request] table must be rejected the same way it
+        # is for get-network and get-latest-ledger.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    def test_rpc_fixture_rejects_misspelled_health_method_names(self) -> None:
+        # The accepted names are the engine's own kebab-case spellings;
+        # an underscore or camelCase spelling of the same method is not
+        # accepted, and the diagnostic must name the allowed methods.
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                bad = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{invalid_method}"'
+                )
+                report = self.run_validation({"a.toml": bad})
+                errors = [e for e in report.errors if "'method'" in e]
+                self.assertEqual(len(errors), 1, report.errors)
+                self.assertIn(invalid_method, errors[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, errors[0])
+
     def test_rpc_get_ledger_entries_valid_and_invalid(self) -> None:
         base = """
 id = "p28-rpc-entries"

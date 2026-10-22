@@ -124,12 +124,15 @@
             "type": "string",
             "enum": [
               "get-events",
+              "get-fee-stats",
+              "get-health",
               "get-latest-ledger",
               "get-ledger-entries",
               "get-ledgers",
               "get-network",
               "get-transaction",
-              "get-transactions"
+              "get-transactions",
+              "get-version-info"
             ]
           },
           "request": {

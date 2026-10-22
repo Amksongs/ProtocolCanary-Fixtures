@@ -256,7 +256,7 @@ Per-surface body (everything else in the file):
 | Surface | Fields |
 |---|---|
 | `xdr` | `type` (currently `"StellarValue"`, `"ContractExecutable"` or `"ScVal"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, `expected_base64` (only for `encode-equals`) |
-| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"` \| `"get-ledger-entries"` \| `"get-transaction"` \| `"get-ledgers"` \| `"get-transactions"` \| `"get-events"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`), optional `[request]` table |
+| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"` \| `"get-health"` \| `"get-version-info"` \| `"get-fee-stats"` \| `"get-ledger-entries"` \| `"get-transaction"` \| `"get-ledgers"` \| `"get-transactions"` \| `"get-events"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`), optional `[request]` table |
 | `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]` tables (`{kind, value?}`; kinds `"bool"`, `"u32"`, `"i32"`, `"u64"`, `"i64"`, `"i128"`, `"u128"`, `"i256"`, `"u256"`, `"void"`, `"duration"`, `"timepoint"`, `"symbol"`, `"string"`, `"bytes"`, `"address"`, `"vec"`, `"map"`; `void` omits `value`, `vec`/`map` nest at most 8 levels), `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
 
 ### Unknown top-level fields
@@ -291,6 +291,46 @@ and is released.
 The same applies to an RPC `method` outside the methods the table above lists:
 open an issue/PR against `Protocol-Canary`'s `canary-rpc` crate first, and only
 add the fixture here once that support exists and is released.
+
+### The engine-vocabulary vector
+
+The names this repository's validator accepts — XDR types and kinds, RPC
+methods, RPC assertion kinds, Soroban expectation kinds and the surfaces —
+must be exactly the names `Protocol-Canary`'s parsers accept. The shared
+list is `tests/fixtures/engine-vocabulary.json`: one array per vocabulary,
+the engine source file each array was read from, and the `engineCommit` (a
+full 40-character commit SHA) they were read at.
+`tests/test_engine_vocabulary_parity.py` compares every array with
+`tools/validate/validate.py`'s constant and with the matching enum in
+`schemas/fixture-v1.schema.json`, so a name the engine accepts but the
+validator rejects — or the other way round — fails the test suite by name
+instead of surfacing later as a fixture one side accepts and the other
+rejects.
+
+To update the vector when the engine changes:
+
+1. Read the engine sources named next to each array in the vector
+   (`crates/canary-xdr/src/decoder.rs`, `crates/canary-xdr/src/runner.rs`,
+   `crates/canary-rpc/src/request.rs`, `crates/canary-rpc/src/runner.rs`,
+   `crates/canary-soroban/src/runner.rs`, `crates/canary-core/src/model.rs`)
+   at the `Protocol-Canary` commit you are moving to.
+2. Rewrite the affected arrays and set `engineCommit` to that commit's full
+   SHA. Only names the parser accepts belong in an array: a name a contract
+   document describes but the parser rejects goes into
+   `contractOnlyNotImplemented` instead.
+3. Change `tools/validate/validate.py`'s constant and the matching enum in
+   `schemas/fixture-v1.schema.json` in the same pull request, and update the
+   documents that list the vocabulary (`README.md`, the per-surface table
+   above, `docs/contracts.md`).
+4. Run `python3 -m unittest discover tests`; the parity test must pass
+   before the pull request is opened.
+
+A name the engine's parser accepts but this repository's validator does not
+yet accept is recorded in `engineOnlyNotYetAccepted`, together with the
+engine commit that added it. That list is documentation only — the parity
+test does not compare it — and moving the pin to that commit is a
+deliberate change that has to update the arrays, the validator and the
+schema together.
 
 ## What never belongs in a fixture
 

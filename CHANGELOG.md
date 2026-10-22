@@ -559,6 +559,15 @@ discussion and diff. New entries must include that link; see
 
 ### Changed
 
+- Hardened contributor and release tooling across four paths: fixture scaffolds
+  now use exclusive creation with failure cleanup; live RPC capture enforces a
+  total response deadline; unsupported schema regexes produce location-aware
+  `SchemaError`s; and registry, evidence, archive and release readers reject
+  duplicate keys, excessive JSON nesting and oversized integers through their
+  existing error paths. Added focused regression coverage without changing
+  fixture data or adding dependencies. Closes issues #457, #456, #455 and #454.
+  ([PR #459](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/459))
+
 - `tools/validate/validate.py` now rejects `expected_base64` on an XDR fixture whose
   `kind` is not `encode-equals`. The field states the expected encoding, and only an
   `encode-equals` fixture has one: `canary-xdr`'s loader accepts "kind", "type" and

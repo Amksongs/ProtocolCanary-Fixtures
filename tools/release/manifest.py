@@ -40,6 +40,12 @@ import sys
 import tarfile
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common.json_strict import JSONInputError, load_json
+
 NAME = "protocolcanary-fixtures"
 MANIFEST_VERSION = 1
 REGISTRY_NAME = "registry.json"
@@ -148,8 +154,12 @@ def build_manifest(
     if registry_bytes is None:
         raise ManifestError(f"the archive has no {REGISTRY_NAME} at its root")
     try:
-        registry = json.loads(registry_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        registry = load_json(registry_bytes.decode("utf-8"), REGISTRY_NAME)
+    except (UnicodeDecodeError, JSONInputError) as error:
+        if isinstance(error, JSONInputError) and error.json_error is not None:
+            raise ManifestError(
+                f"{REGISTRY_NAME} is not valid JSON: {error.json_error}"
+            ) from None
         raise ManifestError(f"{REGISTRY_NAME} is not valid JSON: {error}") from None
     if not isinstance(registry, dict):
         raise ManifestError(f"{REGISTRY_NAME} must be a JSON object")

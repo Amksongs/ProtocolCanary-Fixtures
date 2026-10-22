@@ -94,12 +94,14 @@ them are closed vocabularies that contributors hit first:
   `4418690`) and contract `ca-01-rpc-requests-and-assertions.md`.
   `field-number-range` accepts `field`, and at least one of `min` and `max`
   (integers or finite floats, with `min <= max`).
-- **RPC `method` and `[request]` validation (F-052).** `tools/validate/validate.py`
+- **RPC `method` and `[request]` validation (F-052, F-017).** `tools/validate/validate.py`
   and `schemas/fixture-v1.schema.json` accept `get-network`, `get-latest-ledger`,
-  `get-ledger-entries`, `get-transaction`, `get-ledgers`, `get-transactions` and
-  `get-events`, mirroring `crates/canary-rpc/src/request.rs` (read at Protocol-Canary
-  commit `1f549145751b1e6f044a7d6797fee12a1977da09`) and contract CA-01-K:
-  - `get-network` and `get-latest-ledger` take no parameters and reject a `[request]` table;
+  `get-health`, `get-version-info`, `get-fee-stats`, `get-ledger-entries`,
+  `get-transaction`, `get-ledgers`, `get-transactions` and `get-events`, mirroring
+  `crates/canary-rpc/src/request.rs` (read at Protocol-Canary commit
+  `94d7c794780a7c87944c5177ff1f8eb3edec300e`) and contract CA-01-K:
+  - `get-network`, `get-latest-ledger`, `get-health`, `get-version-info` and
+    `get-fee-stats` take no parameters and reject a `[request]` table;
   - `get-ledger-entries` requires `keys` (an array of non-empty base64 strings, at most 50 entries) and optionally accepts `xdrFormat = "base64"`;
   - `get-transaction` requires `hash` (64 lowercase hex characters) and optionally accepts `xdrFormat = "base64"`;
   - `get-ledgers` and `get-transactions` optionally accept `startLedger` (a 32-bit unsigned integer, `0 <= startLedger <= 4294967295`), `[pagination]` (with `cursor` as a non-empty string and/or `limit` as an integer `1 <= limit <= 50`), and `xdrFormat = "base64"`;

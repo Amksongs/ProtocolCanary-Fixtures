@@ -47,6 +47,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common.json_strict import JSONInputError, load_json
+
 REGISTRY_NAME = "registry.json"
 
 MAX_ENTRIES = 2000
@@ -215,9 +220,13 @@ def verify_extracted(root: Path, expected_digest: str | None) -> Result:
         return result
     registry_bytes = registry_path.read_bytes()
     try:
-        registry = json.loads(registry_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        result.problems.append(f"{REGISTRY_NAME} is not valid JSON: {error}")
+        registry = load_json(registry_bytes.decode("utf-8"), REGISTRY_NAME)
+    except (UnicodeDecodeError, JSONInputError) as error:
+        if isinstance(error, JSONInputError) and error.json_error is not None:
+            message = f"{REGISTRY_NAME} is not valid JSON: {error.json_error}"
+        else:
+            message = f"{REGISTRY_NAME} is not valid JSON: {error}"
+        result.problems.append(message)
         return result
 
     try:
@@ -310,11 +319,15 @@ def _manifest_expectations(path: Path) -> tuple[str, str, dict]:
         raise UnreadableArchive(f"cannot use manifest {path}: the file is empty")
 
     try:
-        document = json.loads(text)
-    except json.JSONDecodeError as error:
+        document = load_json(text, f"manifest {path}")
+    except JSONInputError as error:
+        if error.json_error is not None:
+            raise UnreadableArchive(
+                f"cannot use manifest {path}: the file is not valid JSON "
+                f"(line {error.json_error.lineno}, column {error.json_error.colno})"
+            ) from None
         raise UnreadableArchive(
-            f"cannot use manifest {path}: the file is not valid JSON "
-            f"(line {error.lineno}, column {error.colno})"
+            f"cannot use manifest {path}: {error}"
         ) from None
 
     if not isinstance(document, dict):
@@ -390,8 +403,8 @@ def _manifest_differences(archive: Path, document: dict) -> list[str]:
     registry_bytes = content["files"].get(release_manifest.REGISTRY_NAME)
     if registry_bytes is not None:
         try:
-            decoded = json.loads(registry_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            decoded = load_json(registry_bytes.decode("utf-8"), REGISTRY_NAME)
+        except (UnicodeDecodeError, JSONInputError):
             decoded = None
         if isinstance(decoded, dict):
             registry = decoded

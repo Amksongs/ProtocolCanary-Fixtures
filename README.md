@@ -171,9 +171,14 @@ but the format supports them. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the fuller field
 table.
 
-**Currently supported RPC methods.** The `rpc` surface accepts only two
-methods today — `get-network` and `get-latest-ledger`, the same pair listed
-in [`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table.
+**Currently supported RPC methods.** The `rpc` surface accepts the ten
+methods the engine's `canary-rpc` crate parses — `get-network`,
+`get-latest-ledger`, `get-health`, `get-version-info`, `get-fee-stats`,
+`get-ledger-entries`, `get-transaction`, `get-ledgers`, `get-transactions`
+and `get-events` — the same set listed in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table, and
+pinned together with the engine commit it was read from in
+[`tests/fixtures/engine-vocabulary.json`](tests/fixtures/engine-vocabulary.json).
 Stellar RPC exposes many more (for example `getTransaction`); a fixture
 naming any other method is rejected by the validator. Adding support for
 another method is a `Protocol-Canary` change first (its `canary-rpc` crate),
