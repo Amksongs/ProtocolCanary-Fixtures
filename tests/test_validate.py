@@ -2899,6 +2899,52 @@ class SourceReferenceFormatTests(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertIn("characters", message)
 
+    def test_source_reference_boundaries_table_driven(self) -> None:
+        """Test source_reference length limits and URL shape rules at exact boundaries (F-123, issue #419)."""
+        self.assertEqual(validate.MAX_SOURCE_REFERENCE_LENGTH, 2048)
+        base = "https://example.com/"
+        h40 = "a" * 40
+        h64 = "b" * 64
+
+        p2047 = base + "x" * (2047 - len(base))
+        p2048 = base + "x" * (2048 - len(base))
+        p2049 = base + "x" * (2049 - len(base))
+
+        rows = [
+            (p2047, None, "2047 characters"),
+            (p2048, None, "2048 characters (exact limit)"),
+            (p2049, "characters", "2049 characters (limit plus one)"),
+            ("https://github.com/o/r", "repository root", "github repository root"),
+            ("https://github.com/o/r/", "repository root", "github repository root trailing slash"),
+            ("https://github.com/o/r/blob", "has no ref after", "github blob without ref"),
+            (f"https://github.com/o/r/blob/{h40}/f.md", None, "github blob 40-hex commit"),
+            (f"https://github.com/o/r/blob/{h64}/f.md", None, "github blob 64-hex commit"),
+            ("https://github.com/o/r/blob/v1.2.3/f.md", None, "github blob version tag"),
+            ("https://github.com/o/r/blob/protocol-28/f.md", None, "github blob tag with prefix"),
+            (f"https://github.com/o/r/tree/{h40}/core", None, "github tree with pinned ref"),
+            ("https://github.com/o/r/blob/master/f.md", "branch name", "github blob branch ref"),
+            ("https://raw.githubusercontent.com/o/r", "has no ref and file path", "raw github without ref and path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}", "has no ref and file path", "raw github without file path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}/f.md", None, "raw github with 40-hex commit and file path"),
+            ("https://raw.githubusercontent.com/o/r/master/f.md", "branch name", "raw github branch ref"),
+            ("https://raw.githubusercontent.com/o/r/refs/heads/master/f.md", "links to a branch (refs/heads/...)", "raw github refs/heads branch"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/v1.0.0/f.md", None, "raw github refs/tags release tag"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/master/f.md", "branch name", "raw github refs/tags branch name"),
+            ("https://user@example.com/x", "credentials", "credentials in url"),
+            ("https://example.com/a b", "whitespace", "whitespace inside url"),
+            (" https://example.com/x", "whitespace", "leading whitespace"),
+            ("https://example.com/x ", "whitespace", "trailing whitespace"),
+        ]
+
+        for value, expected_fragment, label in rows:
+            with self.subTest(label=label, value=value[:60] if len(value) > 60 else value):
+                result = self.problem(value)
+                if expected_fragment is None:
+                    self.assertIsNone(result, f"expected {value!r} to be accepted, got: {result}")
+                else:
+                    self.assertIsNotNone(result, f"expected {value!r} to be rejected")
+                    self.assertIn(expected_fragment, result)
+
     def test_the_error_names_the_field_the_value_and_the_fix(self) -> None:
         bad = VALID_XDR.replace(
             'source_reference = "CAP-0083"',
