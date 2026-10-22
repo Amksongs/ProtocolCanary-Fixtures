@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-ledger-entry-contract-data-key-truncated",
+  "fixtureSha256": "9adcef8235e56fbe9b96a2c2e13216c7b3bd44ee0820deb1fc4203210f8fe044",
+  "method": "structural",
+  "checkedAt": "2026-10-22T07:46:50Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

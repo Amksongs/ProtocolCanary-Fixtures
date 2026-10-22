@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-scval-vec-empty",
+  "fixtureSha256": "067636d94889ac49bbbba00b333d1a041315e4d9094ccf1db14183111e05015a",
+  "method": "structural",
+  "checkedAt": "2026-10-22T07:46:50Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

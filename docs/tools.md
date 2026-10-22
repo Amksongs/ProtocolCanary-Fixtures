@@ -11,20 +11,15 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 1. [`tools/pack/pack.py`](#toolspackpackpy)
 2. [`tools/pack/verify_archive.py`](#toolspackverify_archivepy)
 3. [`tools/pack/archive_digests.py`](#toolspackarchive_digestspy)
-3. [`tools/evidence/record_structural.py`](#toolsevidenerecord_structuralpy)
-4. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
-3. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
-4. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
-5. [`tools/badge/badge.py`](#toolsbadgebadgepy)
-6. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
-7. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
-8. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
-4. [`tools/registry/diff.py`](#toolsregistrydiffpy)
-5. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
-6. [`tools/badge/badge.py`](#toolsbadgebadgepy)
-7. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
-8. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
-9. [Observed Inconsistencies](#observed-inconsistencies)
+4. [`tools/evidence/record_structural.py`](#toolsevidencerecord_structuralpy)
+5. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
+6. [`tools/registry/diff.py`](#toolsregistrydiffpy)
+7. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
+8. [`tools/badge/badge.py`](#toolsbadgebadgepy)
+9. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
+10. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
+11. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
+12. [Observed Inconsistencies](#observed-inconsistencies)
 
 ---
 
@@ -162,12 +157,15 @@ Generates the fixture registry (`registry-v1.json`) for one protocol pack per CF
 ### Synopsis
 
 ```bash
-python3 tools/registry/generate.py [--output PATH | --stdout] pack
+python3 tools/registry/generate.py [--allow-empty] [--protocol N]
+    [--output PATH | --stdout] pack
 ```
 
 ### Options
 
 - `-h`, `--help`: show this help message and exit
+- `--allow-empty`: allow generating an empty baseline registry (requires `--protocol N`)
+- `--protocol N`: protocol number for the pack (required with `--allow-empty`)
 - `--output PATH`: write the registry here (default: PACK/registry-v1.json)
 - `--stdout`: print the registry instead of writing a file
 
@@ -176,7 +174,7 @@ python3 tools/registry/generate.py [--output PATH | --stdout] pack
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: registry generated and successfully validated against `schemas/registry-v1.schema.json`. |
-| `1` | Pack error: pack path is not a directory, contains invalid fixtures, or violates extraction limits. |
+| `1` | Pack error: pack path is not a directory, contains invalid fixtures, violates extraction limits, empty pack without `--allow-empty`, or `--allow-empty` without a valid `--protocol`. |
 | `2` | Command-line syntax error: missing `pack` argument, unknown options, or mutually exclusive options (`--output` and `--stdout` together). |
 
 ### Output Streams

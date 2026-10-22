@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-scval-vec-count-exceeds-data",
+  "fixtureSha256": "ed44ed44cfc11e3e711b64304ad8cb2b1fdec8c87128e5dfa97da83f111816bb",
+  "method": "structural",
+  "checkedAt": "2026-10-22T07:46:50Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "68026ed135bb234f7404d3ee27da0a3caab691da"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

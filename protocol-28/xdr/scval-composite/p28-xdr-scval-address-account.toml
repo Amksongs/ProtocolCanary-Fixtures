@@ -1,0 +1,63 @@
+# Protocol 28 / ScVal: an account `SCV_ADDRESS` round-trips.
+#
+# What this tests:
+# the `SCV_ADDRESS` arm carrying
+# `ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0x11;
+# 32]))))`: the SC_ADDRESS_TYPE_ACCOUNT discriminant, the KEY_TYPE_ED25519
+# public-key discriminant and 32 key bytes. The 0x11-filled key is a synthetic
+# structural value: it is not a real account, is not derived from any secret
+# key, and no secret key exists for it in this repository or anywhere else.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `enum SCAddressType` — Stellar-contract.x lines 179-190; `union SCAddress`
+#     — lines 206-222; `case SCV_ADDRESS: SCAddress address;` — lines 303-304;
+#     `typedef PublicKey AccountID;` — Stellar-types.x line 85; `union
+#     PublicKey` — Stellar-types.x lines 53-57.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Why it matters:
+# Addresses are how Soroban identifies accounts and contracts. The account arm
+# is a union inside a union (an SCAddress arm carrying a PublicKey union),
+# which is exactly the shape an implementation flattens by mistake.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this value and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   ScVal::Address(ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0x11; 32])))))
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: Yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes, which are quoted
+# in full in the fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# network object: the 0x11-filled 32-byte key is not a real account key, no
+# secret key is used or represented anywhere, and nothing here was observed on
+# a network.
+#
+# The XDR definition cited below is the pinned file, not a moving branch.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-address-account"
+protocol = 28
+surface = "xdr"
+category = "scval-composite"
+description = "An account `ScVal::Address` with a synthetic key round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "roundtrip"
+value_base64 = "AAAAEgAAAAAAAAAAERERERERERERERERERERERERERERERERERERERERERE="

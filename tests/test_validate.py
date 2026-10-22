@@ -770,6 +770,8 @@ class ValidatorTests(unittest.TestCase):
     def test_load_fixture_handles_unreadable_file_oserror(self) -> None:
         report = validate.Report()
         path = Path("unreadable.toml")
+        # load_fixture reads bytes (F-112), so the read error must come from
+        # read_bytes and still be reported as "failed to read file".
         with mock.patch.object(Path, "read_bytes", side_effect=OSError("Permission denied")):
             result = validate.load_fixture(path, report)
         self.assertIsNone(result)
@@ -3539,6 +3541,92 @@ class PortableFixtureNameTests(unittest.TestCase):
             with self.subTest(name=name):
                 report = self.run_validation(name)
                 self.assertEqual(report.errors, [])
+
+
+class FixtureFileReadingTests(unittest.TestCase):
+    """F-112: fixtures are read from bytes, like the engine reads them.
+
+    No newline translation (a lone carriage return must reach the TOML parser
+    and fail there with a line number) and exactly one leading UTF-8 BOM is
+    accepted, matching the engine. Every test writes raw bytes to a
+    temporary directory.
+    """
+
+    @staticmethod
+    def run_validation(contents: bytes) -> validate.Report:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.toml").write_bytes(contents)
+            return validate.validate_directory(root)
+
+    def test_ordinary_lf_fixture_is_unchanged(self) -> None:
+        # Control: the same file without a BOM still validates, so the BOM
+        # test below proves only the BOM handling changed.
+        report = self.run_validation(VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_one_leading_utf8_bom_is_accepted(self) -> None:
+        report = self.run_validation(b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_a_second_bom_is_rejected_as_invalid_toml(self) -> None:
+        report = self.run_validation(
+            b"\xef\xbb\xbf\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        )
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(any("line 1" in error for error in matching), matching)
+
+    def test_lone_carriage_return_fails_with_a_toml_error_and_line_number(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r").encode("utf-8"))
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        # Negative: the failure is the TOML parser's complaint about the
+        # newline, not a decoding error.
+        self.assertFalse(
+            any("not valid UTF-8" in error for error in report.errors), report.errors
+        )
+        self.assertTrue(any("line " in error for error in matching), matching)
+        # The structured diagnostic carries the same line number.
+        entries = [
+            entry for entry in report.error_entries if "invalid TOML" in entry.message
+        ]
+        self.assertTrue(all(isinstance(entry.line, int) for entry in entries), entries)
+
+    def test_crlf_line_endings_are_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_missing_final_newline_is_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.rstrip("\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_field_line_reports_the_same_line_the_parser_saw(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.toml"
+            path.write_bytes(contents)
+            # VALID_XDR opens with an empty line, so `id` is line 2 whether or
+            # not the BOM is present -- the BOM must not shift it to line 3.
+            self.assertEqual(validate._field_line(path, "id"), 2)
+
+    def test_type_error_on_a_bom_file_still_points_at_the_right_line(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.replace(
+            "protocol = 28", 'protocol = "28"'
+        ).encode("utf-8")
+        report = self.run_validation(contents)
+        matching = [
+            entry
+            for entry in report.error_entries
+            if "'protocol' must be of type int" in entry.message
+        ]
+        self.assertTrue(matching, report.errors)
+        # `protocol` is the third line of VALID_XDR; the BOM occupies part of
+        # line 1 and must not change the line _field_line attributes to the
+        # diagnostic (the machine-readable view; text format omits it).
+        self.assertEqual(matching[0].line, 3)
 
 
 _MISSING = object()

@@ -619,6 +619,19 @@ def _toml_error_line(exc: tomllib.TOMLDecodeError) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _strip_one_leading_bom(text: str) -> str:
+    """Remove exactly one leading UTF-8 BOM from ``text``, if present.
+
+    Windows editors commonly save UTF-8 files with a byte order mark, and the
+    engine accepts such a file, so the validator must accept it too. Exactly
+    one is removed: a second BOM is left in the text, where the TOML parser
+    rejects it at line 1 instead of the file silently validating twice over.
+    """
+    if text.startswith(BYTE_ORDER_MARK):
+        return text[1:]
+    return text
+
+
 def _field_line(path: Path, key: str) -> int | None:
     """The 1-based line defining top-level ``key`` in ``path``, else ``None``.
 
@@ -628,14 +641,19 @@ def _field_line(path: Path, key: str) -> int | None:
     or the key is not defined exactly once -- for example it also appears in a
     comment -- because pointing at the wrong line would mislead more than
     omitting the line does.
+
+    The file is read exactly the way ``load_fixture`` reads it (bytes, decoded
+    as UTF-8, one leading BOM removed, no newline translation) so the line
+    numbers reported here match the text the TOML parser saw.
     """
     try:
         if path.stat().st_size > pack_limits.MAX_FILE_BYTES:
             return None
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read(pack_limits.MAX_FILE_BYTES + 1)
-        if len(text.encode("utf-8", errors="replace")) > pack_limits.MAX_FILE_BYTES:
+        with open(path, "rb") as f:
+            data = f.read(pack_limits.MAX_FILE_BYTES + 1)
+        if len(data) > pack_limits.MAX_FILE_BYTES:
             return None
+        text = _strip_one_leading_bom(data.decode("utf-8", errors="replace"))
     except OSError:
         return None
     pattern = re.compile(rf"^[ \t]*{re.escape(key)}[ \t]*=")
@@ -780,7 +798,7 @@ def load_fixture(path: Path, report: Report, root: Path | None = None) -> Fixtur
         return None
     report_unsafe_characters(path, raw, report)
     try:
-        data = tomllib.loads(raw)
+        data = tomllib.loads(_strip_one_leading_bom(raw))
     except tomllib.TOMLDecodeError as exc:
         report.error(path, f"invalid TOML: {exc}", line=_toml_error_line(exc))
         return None

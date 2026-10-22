@@ -224,6 +224,16 @@ class CliContractTests(unittest.TestCase):
         p_empty = self.run_tool(tool, "--stdout", str(empty_pack))
         self.assertEqual(p_empty.returncode, 1)
 
+        # Empty pack with --allow-empty without --protocol (exit 1)
+        p_empty_no_proto = self.run_tool(tool, "--allow-empty", "--stdout", str(empty_pack))
+        self.assertEqual(p_empty_no_proto.returncode, 1)
+
+        # Empty pack with --allow-empty and --protocol (exit 0)
+        p_empty_allow = self.run_tool(tool, "--allow-empty", "--protocol", "29", "--stdout", str(empty_pack))
+        self.assertEqual(p_empty_allow.returncode, 0)
+        self.assertIn('"protocol": 29', p_empty_allow.stdout)
+        self.assertIn('"fixtures": []', p_empty_allow.stdout)
+
     # 4. tools/release/manifest.py
     def test_manifest_cli(self) -> None:
         tool = "tools/release/manifest.py"

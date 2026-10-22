@@ -337,7 +337,9 @@ rules therefore apply to every change:
 
 Both rules are repository contracts, not style advice: a fixture that breaks
 one fails `make validate` (and therefore CI), and the archive and registry
-tools reject the pack before it can be released.
+tools reject the pack before it can be released. The full procedure for
+packaging, verifying, attesting, and publishing a pack release is documented in
+[`docs/releasing.md`](docs/releasing.md).
 
 ## Pack limits
 
