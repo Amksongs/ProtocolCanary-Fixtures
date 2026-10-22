@@ -1,0 +1,13 @@
+# Protocol 28 / CAP-0083: empty transaction set fixture.
+# This fixture tests the STELLAR_VALUE_EMPTY_TX_SET case in CAP-0083.
+
+id = "p28-xdr-cap83-empty-tx-set-v2"
+protocol = 28
+surface = "xdr"
+category = "cap-0083"
+description = "STELLAR_VALUE_EMPTY_TX_SET case with different hash values"
+source_reference = "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0083.md"
+
+type = "StellarValue"
+kind = "roundtrip"
+value_base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

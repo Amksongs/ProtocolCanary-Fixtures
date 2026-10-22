@@ -1,0 +1,23 @@
+# Protocol 28 / CAP-0085: malformed CONTRACT_EXECUTABLE_EXTERNAL_REF is rejected.
+# Complements p28-xdr-cap85-external-ref-roundtrip.toml: a decoder that
+# accepts truncated/malformed input is as much of a compatibility break as
+# one that rejects valid input. This fixture's value_base64 is the first
+# 20 bytes of that fixture's well-formed ContractExecutable::ExternalRef
+# encoding (discriminant 2 = ExternalRef, discriminant 1 = SC_ADDRESS_TYPE_CONTRACT,
+# then only the first 12 of the required 32 hash bytes) — the SCAddress
+# hash is cut short and the trailing SCString (`tag`) is entirely missing,
+# so a correct XDR decoder must reject it as truncated input. Verified
+# against the official `stellar-xdr` 28.0.0 crate directly
+# (ContractExecutable::from_xdr_base64 returns Err for this input).
+# Reference: https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md
+
+id = "p28-xdr-cap85-external-ref-malformed-v2"
+protocol = 28
+surface = "xdr"
+category = "cap-0085"
+description = "A truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected (v2)"
+source_reference = "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md"
+
+type = "ContractExecutable"
+kind = "decode-failure"
+value_base64 = "AAAAAgAAAAFVVVVVVVVVVVVVVVU="
