@@ -12,6 +12,21 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- CI's new `check-registry` step in `.github/workflows/validate.yml`: every push
+  and pull request regenerates each committed `registry-v1.json` with
+  `tools/registry/generate.py` and asserts `git diff --exit-code` is clean, so a
+  fixture or payload edited without rerunning the generator fails the build
+  with the stale entries printed in the log (CF-02-E); a
+  `git add --intent-to-add` guard makes a registry missing from the commit show
+  up as an added file instead of passing unnoticed as untracked. The generated
+  `protocol-28/registry-v1.json` (90 fixtures) is committed so the check guards
+  real fixtures from day one, and `protocol-29/registry-v1.json` keeps its
+  `--allow-empty --protocol 29` invocation. `CONTRIBUTING.md` lists the
+  regeneration commands for the new failure, and `docs/contracts.md` records
+  CF-02-E as implemented. Closes
+  [issue #269](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/269).
+  ([PR #469])
+
 - Thirty-four `protocol-28/xdr/scval/` fixtures covering the scalar `ScVal`
   variants, which the pack previously had no evidence for: the primitives
   (`void`, `bool` true and false, `u32`, `i32`, `u64`, `i64`, `timepoint`,
@@ -835,3 +850,4 @@ discussion and diff. New entries must include that link; see
 [PR #444]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/444
 [PR #440]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/440
 [PR #439]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/439
+[PR #469]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/469
