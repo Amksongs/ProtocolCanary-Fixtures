@@ -67,6 +67,18 @@ def _utf8_key(text: str) -> bytes:
     return text.encode("utf-8")
 
 
+def archive_version(name: str) -> str | None:
+    """The version embedded in a pack archive's file name, if it has one.
+
+    ``protocolcanary-fixtures-1.2.3.tar.gz`` gives ``1.2.3``; any other name
+    gives ``None``. The consumer side reads the version of an archive from
+    the same helper, so the two tools cannot disagree about what the name
+    says.
+    """
+    match = _ARCHIVE_RE.fullmatch(name)
+    return match.group(1) if match else None
+
+
 def _pack_digest(files: dict[str, bytes]) -> str:
     """CF-02 section 5 over the archived pack files (all but registry.json)."""
     lines = ["canary-pack-v1\n"]
@@ -123,14 +135,13 @@ def build_manifest(
     """
     if not archive.is_file():
         raise ManifestError(f"archive not found: {archive}")
-    match = _ARCHIVE_RE.fullmatch(archive.name)
     if version is None:
-        if not match:
+        version = archive_version(archive.name)
+        if version is None:
             raise ManifestError(
                 f"cannot read the version from {archive.name!r}; expected "
                 f"{NAME}-MAJOR.MINOR.PATCH.tar.gz"
             )
-        version = match.group(1)
     elif not re.fullmatch(_ENGINE_RE.pattern, version):
         raise ManifestError(f"version {version!r} is not MAJOR.MINOR.PATCH")
     if not _REVISION_RE.fullmatch(revision):

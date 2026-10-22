@@ -11,7 +11,11 @@ current behavior is the one described in the README and `CONTRIBUTING.md`.
 Implemented so far: the shared conformance vectors (`tests/vectors/cf-02/`,
 checked by `tests/test_cf02_vectors.py`), which is CF-02-A; the registry JSON
 Schema; and the registry generator (`tools/registry/generate.py`,
-`make registry`), which is CF-02-B and CF-02-C. The generated
+`make registry`), which is CF-02-B and CF-02-C. The registry comparison tool
+(`tools/registry/diff.py`, `make registry-diff`) reports which fixtures were
+added, removed or changed between two registries, so a pack release can be
+described from the registry data instead of by hand; it reads only the two
+registry files and changes no contract. The generated
 `registry-v1.json` is not committed yet: that, and the CI freshness check that
 goes with it, is CF-02-E. Also still open: CF-02-D (the registry validator
 rules), CF-02-F (the Rust pack walker and digest that must match CF-02-A) and

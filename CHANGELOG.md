@@ -25,6 +25,20 @@ discussion and diff. New entries must include that link; see
   `docs/run-records.md` states the format and the rule. Closes
   [issue #367](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/367).
   ([PR #425])
+- `tools/registry/diff.py`: Compares two fixture registries and reports which fixtures were
+  added, removed or changed — the same id with a different file hash — so a pack release can
+  be described from the registry data instead of by hand from `git log`. The output is three
+  sorted lists keyed by fixture id — added, removed and changed — with the old and new file hash
+  for a changed fixture, plus a separate list of fixtures that only moved, and the pack digest of
+  each registry, in `text`, `json` or `markdown` (a CHANGELOG block) format.
+  Both inputs are validated against `schemas/registry-v1.schema.json` before they are compared,
+  and the rules a schema cannot express — a duplicate fixture id, an empty fixtures list — are
+  checked too. Comparing registries of different protocols is refused unless
+  `--allow-protocol-mismatch` is given. The exit code is 0 even when the registries differ, and
+  2 for unusable input. `make registry-diff OLD=... NEW=...` runs it; `tests/test_registry_diff.py`
+  covers the comparison, the validation rules, the command line and two registries generated from
+  this repository's own pack at two different states. Closes
+  [issue #338](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/338).
 
 - `tools/common/pack_limits.py`: Shared pack extraction limits approved under decision
   D-06 (CF-02 section 7, CF-06 section 6: 2,000 files, 16 MiB total uncompressed, 1 MiB per file,
@@ -382,6 +396,57 @@ discussion and diff. New entries must include that link; see
 
 ### Changed
 
+- `tools/validate/validate.py` now rejects `expected_base64` on an XDR fixture whose
+  `kind` is not `encode-equals`. The field states the expected encoding, and only an
+  `encode-equals` fixture has one: `canary-xdr`'s loader accepts "kind", "type" and
+  "value_base64" for every other kind and rejects the whole fixture when it finds
+  another key, so a fixture that carried the field with, say, `kind = "roundtrip"` passed
+  this validator and was refused by the engine. The validator now reports `field
+  'expected_base64' is only allowed for kind 'encode-equals', not 'roundtrip'` at the
+  line of the key, once per file, and a fixture whose `kind` is missing, not a string or
+  not a supported kind reports only the kind error. The `encode-equals` behaviour is
+  unchanged: the field is required there, must not be empty and must be valid base64.
+  `schemas/fixture-v1.schema.json` is unchanged, because this is a loader-side rule the
+  schema cannot express — like the other rules the validator enforces — and
+  `tools/validate/schema_sync.py` reports no drift. Closes
+  [issue #398](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/398).
+  ([PR #433])
+- `tools/validate/validate.py` now rejects a verification record whose `checkedAt` is in
+  the future. The instant was checked for being a real RFC 3339 UTC value, but never
+  compared with the clock, so a record dated 2099 was accepted and — because the
+  freshness states of CF-04 section 4 are derived from `checkedAt` — would look
+  "verified" for 73 years, and a record dated tomorrow could never go stale on
+  schedule. `validate_evidence()` and `validate_evidence_file()` take an optional
+  timezone-aware `now`; when it is not given, the current time is read once per run and
+  the same instant is used for every record, so one run cannot judge two records
+  against two clocks. A record may be up to five minutes ahead of the validator's
+  clock, the documented tolerance for skew between the verifier's machine and the
+  validator's. A malformed `checkedAt` still produces only the existing format
+  message, and `capturedAt` in the Protocol 29 captures is unchanged. Closes
+  [issue #397](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/397).
+  ([PR #432])
+- `tools/coverage/report.py --validator PATH` now reports a validator copy it cannot
+  use as one error line naming the path and the reason, and exits 1, instead of
+  dying with an internal `AssertionError` traceback. A file that is not Python, a
+  file with a syntax error, a module that raises while it is executed, and a module
+  that lacks the attributes and capability constants the report reads are all
+  rejected this way; a valid copy and the default behaviour are unchanged, and the
+  text and `--format json` reports of a normal run are byte-identical to before.
+  Closes
+  [issue #393](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/393).
+  ([PR #431])
+
+- `tools/pack/verify_archive.py --manifest` now checks the facts the manifest states about
+  the archive, and not only its archive hash and pack digest. The file name, the size, the
+  entry count, the uncompressed bytes, the version in the file name, the pack name, the
+  manifest version, and the protocols and the registry version of the archived
+  `registry.json` are compared with the archive itself; every difference is reported, with
+  the field, the value the manifest states and the value the archive gives, and the tool
+  exits 1. The entries and the uncompressed bytes are counted by the code that writes the
+  manifest, so the two tools cannot disagree about them. `revision` and
+  `compatibleEngines` are not compared: they cannot be derived from the archive. Closes
+  [issue #416](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/416).
+
 - `tools/validate/validate.py` and `schemas/fixture-v1.schema.json` now
   reject a soroban `[expect]` table containing a key other than `kind` or
   `message_contains`, a non-string `message_contains`, and an empty one.
@@ -591,3 +656,6 @@ discussion and diff. New entries must include that link; see
 [PR #380]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/380
 [PR #381]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/381
 [PR #425]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/425
+[PR #433]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/433
+[PR #432]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/432
+[PR #431]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/431

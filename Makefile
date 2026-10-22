@@ -11,6 +11,9 @@
 #                       needs the dev dependency `pip install coverage==7.16.2`
 #   make registry     - write PACK/registry-v1.json (tools/registry/generate.py);
 #                       PACK defaults to protocol-28. Not part of `make check`.
+#   make registry-diff- compare two registries and report what changed
+#                       (tools/registry/diff.py); OLD and NEW are the registry
+#                       files, FORMAT is text (default), json or markdown.
 #   make pack         - build dist/protocolcanary-fixtures-VERSION.tar.gz for PACK
 #                       (tools/pack/pack.py); VERSION is required, e.g. VERSION=1.0.0
 #   make check        - all of the above, in CI's order; stops at the first failure
@@ -19,8 +22,11 @@
 # Requires Python 3.11+ (the validator uses the stdlib `tomllib` module).
 
 PACK ?= protocol-28
+OLD ?=
+NEW ?=
+FORMAT ?= text
 
-.PHONY: validate badge badge-check test check-links coverage registry pack check
+.PHONY: validate badge badge-check test check-links coverage registry registry-diff pack check
 
 validate:
 	python3 tools/validate/validate.py
@@ -43,6 +49,10 @@ coverage:
 
 registry:
 	python3 tools/registry/generate.py $(PACK)
+
+registry-diff:
+	@test -n "$(OLD)" && test -n "$(NEW)" || { echo "usage: make registry-diff OLD=REGISTRY NEW=REGISTRY [FORMAT=text|json|markdown]" >&2; exit 2; }
+	python3 tools/registry/diff.py "$(OLD)" "$(NEW)" --format "$(FORMAT)"
 
 pack:
 	@test -n "$(VERSION)" || { echo "usage: make pack VERSION=1.0.0 [PACK=protocol-28]" >&2; exit 2; }

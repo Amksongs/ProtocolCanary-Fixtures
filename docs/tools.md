@@ -11,11 +11,12 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 1. [`tools/pack/pack.py`](#toolspackpackpy)
 2. [`tools/pack/verify_archive.py`](#toolspackverify_archivepy)
 3. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
-4. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
-5. [`tools/badge/badge.py`](#toolsbadgebadgepy)
-6. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
-7. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
-8. [Observed Inconsistencies](#observed-inconsistencies)
+4. [`tools/registry/diff.py`](#toolsregistrydiffpy)
+5. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
+6. [`tools/badge/badge.py`](#toolsbadgebadgepy)
+7. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
+8. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
+9. [Observed Inconsistencies](#observed-inconsistencies)
 
 ---
 
@@ -63,16 +64,16 @@ python3 tools/pack/verify_archive.py [--sha256 HEX] [--manifest PATH] archive
 ### Options
 
 - `-h`, `--help`: show this help message and exit
-- `--sha256 HEX`: expected SHA-256 of the archive
-- `--manifest PATH`: a release manifest whose archive hash and packDigest the archive must match
+- `--sha256 HEX`: expected SHA-256 of the archive (64 hexadecimal characters)
+- `--manifest PATH`: a release manifest the archive must match. The archive hash and the pack digest are compared, and every fact the manifest states about the archive is checked against the archive: the file name, the size, the entry count, the uncompressed bytes, the version in the file name, the pack name, the manifest version, and the protocols and the registry version of the archived `registry.json`. Every difference is reported, with the field, the value the manifest states and the value the archive gives.
 
 ### Exit Codes
 
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: archive passes all extraction safety and validation checks, and matches expected SHA-256 / manifest if supplied. |
-| `1` | Archive verification error: archive hash mismatch, manifest mismatch, or archive contents violate pack limits/rules. |
-| `2` | Missing archive argument, unknown command-line option, archive file does not exist, or path is not a regular file. |
+| `1` | Archive verification error: archive hash mismatch, `--sha256` disagreeing with the manifest, a fact of the manifest that the archive does not bear out, or archive contents violate pack limits/rules. |
+| `2` | Unusable input: missing archive argument, unknown command-line option, a `--sha256` that is not 64 hexadecimal characters, a manifest that cannot be read or does not carry `archive.sha256` and `packDigest`, an archive file that does not exist, or a path that is not a regular file. |
 
 ### Output Streams
 
@@ -109,6 +110,36 @@ python3 tools/registry/generate.py [--output PATH | --stdout] pack
 
 - **stdout**: Serialized registry JSON document when `--stdout` is specified; help text when `--help` is invoked.
 - **stderr**: Error messages and validation diagnostics.
+
+---
+
+## `tools/registry/diff.py`
+
+Compares two fixture registries (`registry-v1.json`) and reports which fixtures were added, removed or changed, so that the release notes of a new pack release can be written from the registry data instead of by hand. Reads the two registry files only; never executes anything and never reads a fixture.
+
+### Synopsis
+
+```bash
+python3 tools/registry/diff.py [--format text|json|markdown] [--allow-protocol-mismatch] OLD NEW
+```
+
+### Options
+
+- `-h`, `--help`: show this help message and exit
+- `--format text|json|markdown`: output format (default: `text`)
+- `--allow-protocol-mismatch`: compare registries of different protocols instead of refusing
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Success: the registries were compared. There may or may not be differences; a difference is not an error. |
+| `2` | Unusable input: a missing, unreadable or non-JSON file, a registry that does not conform to `schemas/registry-v1.schema.json`, a duplicate fixture id, an empty fixtures list, a protocol mismatch without `--allow-protocol-mismatch`, or a command-line syntax error. |
+
+### Output Streams
+
+- **stdout**: The report in the requested format; help text when `--help` is invoked.
+- **stderr**: Error messages.
 
 ---
 
@@ -189,7 +220,7 @@ python3 tools/validate/validate.py [--evidence PATH] [-q] [--format {text,json}]
 ### Options
 
 - `-h`, `--help`: show this help message and exit
-- `--evidence PATH`: a verification record file, or a directory of *.json records (CF-04); may be given more than once
+- `--evidence PATH`: a verification record file, or a directory of *.json records (CF-04); may be given more than once. A record whose `checkedAt` is later than the current time is rejected, with a five-minute tolerance for clock skew between the verifier's machine and the validator's
 - `-q`, `--quiet`: suppress warning output in the text format; errors and the final OK/FAILED summary are still printed (JSON output is unaffected)
 - `--format {text,json}`: output format: 'text' (default) is the human-readable report; 'json' prints one structured JSON document on stdout and nothing on stderr
 

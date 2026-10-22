@@ -641,6 +641,110 @@ class MissingDirectoryTests(unittest.TestCase):
         self.assertIn("no such validator file", err)
 
 
+class ValidatorLoadErrorTests(unittest.TestCase):
+    """``--validator PATH`` that cannot be used is one error line, not a crash.
+
+    The option exists so other tools and tests can point the report at
+    another copy of the validator. A file that is not Python, a file with
+    a syntax error, a module that raises while it is executed and a module
+    that lacks the capability constants the report reads must all be
+    reported as one clear line naming the path -- never as an internal
+    assertion or a traceback.
+    """
+
+    def run_with_validator(self, path: Path, *packs: str) -> tuple[int, str, str]:
+        return run_main(["--validator", str(path), *packs])
+
+    def assert_one_error_line(self, err: str, path: Path, *fragments: str) -> None:
+        self.assertNotIn("Traceback", err)
+        self.assertNotIn("AssertionError", err)
+        lines = [line for line in err.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith("error: "), err)
+        self.assertIn(str(path), lines[0])
+        for fragment in fragments:
+            self.assertIn(fragment, lines[0])
+
+    def test_a_file_that_is_not_python_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "not-python.json"
+            path.write_text("{}\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "not loadable")
+
+    def test_a_python_file_with_a_syntax_error_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.py"
+            path.write_text("def broken(:\n    pass\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "not loadable as Python")
+
+    def test_a_module_that_raises_while_executing_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raises.py"
+            path.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "raised while executing the module")
+
+    def test_a_module_without_the_expected_constants_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.py"
+            path.write_text("SOMETHING_ELSE = 1\n", encoding="utf-8")
+            code, out, err = self.run_with_validator(path, tmp)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assert_one_error_line(err, path, "not a usable validator copy")
+        for name in coverage_report.REQUIRED_CAPABILITY_CONSTANTS:
+            self.assertIn(name, err)
+
+    def test_a_failed_load_leaves_no_broken_module_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raises.py"
+            path.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+            self.run_with_validator(path, tmp)
+            self.assertNotIn("validate_scratch", sys.modules)
+
+    def test_a_valid_validator_copy_is_accepted_and_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = build_example_pack(Path(tmp))
+            code, out, err = self.run_with_validator(VALIDATE_PATH, str(pack))
+            self.assertEqual(code, 0, err)
+            self.assertEqual(err, "")
+            expected = coverage_report.render_text(
+                coverage_report.build_report([pack], validator=validate)
+            )
+            self.assertEqual(out, expected)
+            code, out, err = run_main(
+                ["--format", "json", "--validator", str(VALIDATE_PATH), str(pack)]
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(
+                json.loads(out),
+                coverage_report.build_report([pack], validator=validate),
+            )
+
+    def test_load_validator_raises_a_named_error_for_each_bad_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            not_python = root / "not-python.json"
+            not_python.write_text("{}\n", encoding="utf-8")
+            broken = root / "broken.py"
+            broken.write_text("def broken(:\n    pass\n", encoding="utf-8")
+            empty = root / "empty.py"
+            empty.write_text("SOMETHING_ELSE = 1\n", encoding="utf-8")
+            for path in (not_python, broken, empty):
+                with self.subTest(path=path.name):
+                    with self.assertRaises(coverage_report.ValidatorLoadError) as ctx:
+                        coverage_report.load_validator(path)
+                    self.assertIn(str(path), str(ctx.exception))
+
+
 class ValidatorConstantTests(unittest.TestCase):
     """A constant added to the validator shows up here without a change here."""
 
