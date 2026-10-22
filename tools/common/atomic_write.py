@@ -55,7 +55,10 @@ def write_bytes_atomic(path: object, data: bytes) -> None:
         # Mode 0o666 lets the process umask decide the permissions, the same
         # way open(path, "wb") does for the tools that wrote these files
         # before this helper existed.
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666)
+        # O_BINARY (Windows only) keeps os.write from translating "\n" into
+        # "\r\n", which would corrupt the archive bytes.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+        fd = os.open(tmp_path, flags, 0o666)
         try:
             view = memoryview(data)
             while view:
