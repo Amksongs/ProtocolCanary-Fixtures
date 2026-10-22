@@ -12,6 +12,48 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/inventory/compare.py`: a standard-library tool that compares the
+  inventory `stellar-canary fixtures --format json` prints (CA-02,
+  `inventoryVersion` 1) with a pack's `registry-v1.json`, asserting that the
+  engine's loader discovered exactly the fixtures the registry lists, each
+  with the same `surface` and `category`. It reports fixtures the engine did
+  not discover, fixtures the registry does not list, and one entry per
+  mismatched attribute; it exits `0` only when the inventories match, `1` when
+  they differ, and `2` for an input it cannot compare (a missing or unreadable
+  file, a document that is not UTF-8 or JSON, an unknown `inventoryVersion`,
+  `fixtureFormat` or `registryVersion`, `directoryFound: false`, a
+  `counts.total` that contradicts the fixture list, a duplicate fixture id, a
+  registry that does not conform to `schemas/registry-v1.schema.json`, or an
+  inventory and a registry for different protocols). The documented empty
+  baseline (`protocol-29/registry-v1.json`, `fixtures: []`) is compared as a
+  real empty inventory rather than refused, so a fixture the engine discovers
+  but the registry does not list is reported as the difference it is.
+  `--format json` prints one deterministic document for CI. Documented in
+  `docs/tools.md`; the tests cover a match, every difference kind, both output
+  formats, standard input, and each unusable-input path. Closes
+  [issue #279](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/279).
+  ([PR #467](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/467))
+
+- `tests/fixtures/rpc/`: one fixture per RPC method F-017 added
+  (`get-health`, `get-version-info`, `get-fee-stats`), so the accepted
+  vocabulary is exercised by a fixture and not only by a constant. The
+  validator and schema already accepted the three names; what was missing was
+  a fixture for each method and a test for the schema leg (the schema's
+  `allOf`/`if`/`then` blocks are outside `jsonschema_lite`'s supported subset,
+  so the RPC method enum is checked directly). `tests/test_validate.py` now
+  validates the three files structurally, asserts each `method` is in the
+  schema enum, and asserts the misspellings `get_health`, `getHealthy` and
+  `get_fee_stats` are rejected with a diagnostic that lists the allowed
+  names. Each fixture documents the answer shape captured live from
+  `https://soroban-testnet.stellar.org` on 2026-10-22 and asserts only what
+  `canary-rpc`'s typed models expose, by type where a value moves with the
+  network. They live under `tests/fixtures/` rather than in a pack because
+  every RPC fixture of a pack must be capturable by
+  `tools/evidence/capture_live.py`, whose allowlist is exactly the three
+  read-only methods CF-04 section 8 names. Closes
+  [issue #280](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/280).
+  ([PR #467](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/467))
+
 - Thirty-four `protocol-28/xdr/scval/` fixtures covering the scalar `ScVal`
   variants, which the pack previously had no evidence for: the primitives
   (`void`, `bool` true and false, `u32`, `i32`, `u64`, `i64`, `timepoint`,

@@ -1267,6 +1267,51 @@ field = "id"
                 for supported in ("get-health", "get-version-info", "get-fee-stats"):
                     self.assertIn(supported, errors[0])
 
+    def test_the_test_fixtures_cover_each_health_and_diagnostic_method(self) -> None:
+        # Accepting a method and never using it leaves the vocabulary
+        # unproven, so F-017 also ships one fixture per method, under
+        # tests/fixtures/rpc/. They stay out of a protocol pack on purpose:
+        # a pack's RPC fixtures must all be capturable by
+        # tools/evidence/capture_live.py, whose allowlist is the three
+        # read-only methods CF-04 section 8 names.
+        rpc_fixtures = REPO_ROOT / "tests" / "fixtures" / "rpc"
+        report = validate.validate_directory(rpc_fixtures)
+        self.assertEqual(report.errors, [], report.errors)
+        methods: list[str] = []
+        for path in sorted(rpc_fixtures.glob("*.toml")):
+            with open(path, "rb") as handle:
+                methods.append(tomllib.load(handle)["method"])
+        self.assertEqual(
+            sorted(methods),
+            ["get-fee-stats", "get-health", "get-version-info"],
+        )
+
+    def test_the_schema_accepts_the_health_and_diagnostic_methods(self) -> None:
+        # The validator leg is covered above; this is the schema leg (F-017).
+        # jsonschema_lite cannot run the schema's allOf/if/then blocks, so the
+        # rpc method enum is checked directly, which is the part of the
+        # schema that decides whether these names are authorable.
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                self.assertIn(method, method_schema["enum"])
+                self.assertEqual(jsonschema_lite.validate(method, method_schema), [])
+
+    def test_the_schema_rejects_misspelled_health_method_names(self) -> None:
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                problems = jsonschema_lite.validate(invalid_method, method_schema)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(invalid_method, problems[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, problems[0])
+                    self.assertIn(supported, method_schema["enum"])
+
     def test_rpc_get_ledger_entries_valid_and_invalid(self) -> None:
         base = """
 id = "p28-rpc-entries"

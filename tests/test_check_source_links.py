@@ -310,20 +310,32 @@ source_reference = "ftp://example.com/spec.txt"
 
     def test_check_link_post_fallback_failures(self) -> None:
         url = f"{self.base_url}/rpc-endpoint"
+        # An explicit empty body, not None: HTTPError is an addinfourl, and
+        # on Python 3.14 that base class wraps the body in a
+        # tempfile._TemporaryFileWrapper, whose __del__ warns
+        # (ResourceWarning) when it is collected unclosed. check_link closes
+        # what it catches and only reads `code`, so an empty body changes
+        # nothing it observes.
         cases = (
             (
-                urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None),
+                urllib.error.HTTPError(url, 429, "Too Many Requests", {}, io.BytesIO(b"")),
                 "Inconclusive",
                 "429",
             ),
-            (urllib.error.HTTPError(url, 503, "Unavailable", {}, None), "Failed", "503"),
+            (
+                urllib.error.HTTPError(url, 503, "Unavailable", {}, io.BytesIO(b"")),
+                "Failed",
+                "503",
+            ),
             (RuntimeError("connection reset"), "Failed", "POST fallback failed"),
         )
         for post_error, expected_status, expected_detail in cases:
             with self.subTest(error=type(post_error).__name__):
                 opener = Mock()
                 opener.open.side_effect = [
-                    urllib.error.HTTPError(url, 405, "Method Not Allowed", {}, None),
+                    urllib.error.HTTPError(
+                        url, 405, "Method Not Allowed", {}, io.BytesIO(b"")
+                    ),
                     post_error,
                 ]
                 result = check_link(url, opener=opener)

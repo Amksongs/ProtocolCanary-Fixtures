@@ -14,12 +14,13 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 4. [`tools/evidence/record_structural.py`](#toolsevidencerecord_structuralpy)
 5. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
 6. [`tools/registry/diff.py`](#toolsregistrydiffpy)
-7. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
-8. [`tools/badge/badge.py`](#toolsbadgebadgepy)
-9. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
-10. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
-11. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
-12. [Observed Inconsistencies](#observed-inconsistencies)
+7. [`tools/inventory/compare.py`](#toolsinventorycomparepy)
+8. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
+9. [`tools/badge/badge.py`](#toolsbadgebadgepy)
+10. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
+11. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
+12. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
+13. [Observed Inconsistencies](#observed-inconsistencies)
 
 ---
 
@@ -206,6 +207,38 @@ python3 tools/registry/diff.py [--format text|json|markdown] [--allow-protocol-m
 |---|---|
 | `0` | Success: the registries were compared. There may or may not be differences; a difference is not an error. |
 | `2` | Unusable input: a missing, unreadable or non-JSON file, a registry that does not conform to `schemas/registry-v1.schema.json`, a duplicate fixture id, an empty fixtures list, a protocol mismatch without `--allow-protocol-mismatch`, or a command-line syntax error. |
+
+### Output Streams
+
+- **stdout**: The report in the requested format; help text when `--help` is invoked.
+- **stderr**: Error messages.
+
+---
+
+## `tools/inventory/compare.py`
+
+Compares the fixture inventory that `stellar-canary fixtures --format json` prints with a pack's `registry-v1.json`, and asserts that the engine's loader discovered exactly the fixtures the registry lists, each with the same `surface` and `category`. Reads the two JSON documents only; it never opens a fixture, scans a directory or executes anything. It is not part of `make check` because it needs an inventory captured from the engine.
+
+### Synopsis
+
+```bash
+python3 tools/inventory/compare.py INVENTORY REGISTRY [--format text|json]
+```
+
+`INVENTORY` is the JSON document the engine printed, or `-` to read it from standard input; `REGISTRY` is a `registry-v1.json`.
+
+### Options
+
+- `-h`, `--help`: show this help message and exit
+- `--format text|json`: output format (default: `text`)
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Success: the inventories match. The same fixture ids are present with the same surfaces and categories. |
+| `1` | The inventories differ: a fixture is in the registry but the engine did not discover it, a fixture was discovered but the registry does not list it, or a fixture's surface or category differs. The missing, extra and mismatched entries are printed. |
+| `2` | Unusable input: a missing or unreadable file, a document that is not valid UTF-8 or valid JSON, an unknown `inventoryVersion`/`fixtureFormat`/`registryVersion`, `directoryFound: false`, a `counts.total` that disagrees with the fixture list, a duplicate fixture id, a registry that does not conform to `schemas/registry-v1.schema.json`, an inventory and a registry for different protocols, or a command-line syntax error. |
 
 ### Output Streams
 
