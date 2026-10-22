@@ -119,14 +119,15 @@ Generates the CF-06 release manifest (`.manifest.json`) for a built fixture-pack
 ### Synopsis
 
 ```bash
-python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--output PATH] [--sha256-file PATH] archive
+python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--runs DIR] [--output PATH] [--sha256-file PATH] archive
 ```
 
 ### Options
 
 - `-h`, `--help`: show this help message and exit
 - `--revision REVISION`: full 40-character git commit hash of the pack source
-- `--engine VERSION`: an exact engine version to list as a compatible engine, recorded as unverified; may be given more than once
+- `--engine VERSION`: an exact engine version to list as a compatible engine, recorded as unverified unless a run record says that exact engine version ran against this exact pack; may be given more than once
+- `--runs DIR`: directory of pack-by-engine run records (issue #367); an engine is marked `verified` only when a record there names that exact engine version, this exact pack digest and a passed run. Without this option every engine stays unverified
 - `--output PATH`: write the manifest here (default: next to the archive, .manifest.json)
 - `--sha256-file PATH`: also write the sha256sum-format checksum line here
 
@@ -135,13 +136,15 @@ python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--outp
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: manifest generated and validated against `schemas/manifest-v1.schema.json`. |
-| `1` | Manifest error: archive does not exist, revision is not a 40-character commit hash, invalid archive content, or cannot write output file. |
+| `1` | Manifest error: archive does not exist, revision is not a 40-character commit hash, invalid archive content, cannot write output file, or a run record in `--runs` is unreadable, malformed, describes another pack, or is dated in the future. |
 | `2` | Command-line syntax error: missing required arguments (`archive` or `--revision`), or unrecognized options. |
 
 ### Output Streams
 
-- **stdout**: Help text when `--help` is invoked.
+- **stdout**: Help text when `--help` is invoked; the path of the written manifest; one line per engine marked `verified`, naming the instant of the recorded run.
 - **stderr**: Usage and error diagnostics on failure.
+
+See [`docs/run-records.md`](run-records.md) for the run-record format and the rule the `verified` flag follows.
 
 ---
 

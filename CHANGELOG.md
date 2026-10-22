@@ -12,6 +12,20 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `schemas/run-record-v1.schema.json` and `tools/release/run_records.py`: the
+  pack-by-engine run record and its reader (issue #367). A record names one
+  exact engine version, the CF-02 pack digest of the pack it ran against, the
+  RFC 3339 UTC instant of the run, the verifier and the outcome; a range, a
+  future date, a record for another pack or a malformed file is refused.
+  `tools/release/manifest.py --runs DIR` sets `compatibleEngines[].verified`
+  to `true` only for an engine version whose record names that exact engine,
+  that exact pack digest and a passed run; without `--runs`, and with an
+  empty record directory, every engine stays unverified exactly as before.
+  The tool never writes a record: a record comes from an actual run.
+  `docs/run-records.md` states the format and the rule. Closes
+  [issue #367](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/367).
+  ([PR #425])
+
 - `tools/common/pack_limits.py`: Shared pack extraction limits approved under decision
   D-06 (CF-02 section 7, CF-06 section 6: 2,000 files, 16 MiB total uncompressed, 1 MiB per file,
   path depth 8) shared between `validate.py`, `generate.py`, and `pack.py`. `tools/validate/validate.py`
@@ -576,3 +590,4 @@ discussion and diff. New entries must include that link; see
 [#354]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/354
 [PR #380]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/380
 [PR #381]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/381
+[PR #425]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/425
