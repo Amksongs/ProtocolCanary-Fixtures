@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Explicit allow-list of legitimate repository root entries.
 DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
+    ".coveragerc",
     ".git",
     ".gitattributes",
     ".github",
