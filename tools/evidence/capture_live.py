@@ -58,6 +58,7 @@ import hashlib
 import json
 import socket
 import subprocess
+import time
 import sys
 import urllib.error
 import urllib.request
@@ -242,9 +243,26 @@ def capture_method(url: str, method: str, request_id: int, timeout: float) -> di
             "User-Agent": USER_AGENT,
         },
     )
+    deadline = time.monotonic() + timeout
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(MAX_RESPONSE_BYTES + 1)
+            chunks = []
+            size = 0
+            while size <= MAX_RESPONSE_BYTES:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                # Bound each blocking socket read by the remaining overall time.
+                if hasattr(response, "fp") and response.fp is not None:
+                    response.fp.raw._sock.settimeout(remaining)
+                chunk = response.read(min(64 * 1024, MAX_RESPONSE_BYTES + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+                if time.monotonic() > deadline:
+                    raise TimeoutError
+            body = b"".join(chunks)
     except urllib.error.HTTPError as error:
         # The error carries a response body; close it, so the connection is
         # released even though the answer is discarded.

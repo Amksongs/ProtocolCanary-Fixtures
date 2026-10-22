@@ -110,6 +110,22 @@ class NewFixtureTests(unittest.TestCase):
         exit_code_2 = new_fixture.main(argv)
         self.assertNotEqual(exit_code_2, 0)
 
+    def test_dangling_symlink_is_refused_without_creating_its_target(self) -> None:
+        target = Path(self.temp_dir) / "outside.toml"
+        link = Path(self.temp_dir) / "protocol-28" / "rpc" / "p28-rpc-sym.toml"
+        link.parent.mkdir(parents=True)
+        try:
+            link.symlink_to(target)
+        except (NotImplementedError, OSError):
+            self.skipTest("symbolic links are unavailable")
+        code = new_fixture.main([
+            "--surface", "rpc", "--protocol", "28", "--id", "p28-rpc-sym",
+            "--category", "ledger", "--output-dir", self.temp_dir,
+        ])
+        self.assertEqual(code, 1)
+        self.assertTrue(link.is_symlink())
+        self.assertFalse(target.exists())
+
     def test_rejects_invalid_id(self) -> None:
         cases = [
             "P28-XDR-UPPER",

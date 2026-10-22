@@ -76,6 +76,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.common import pack_limits
+from tools.common.json_strict import JSONInputError, load_json
 
 # Extraction limits approved under D-06 (CF-02 section 7, CF-06 section 6).
 MAX_FILES = pack_limits.MAX_FILES
@@ -2371,9 +2372,12 @@ def validate_evidence_file(
         return None
     report_unsafe_characters(path, text, report)
     try:
-        record = json.loads(text)
-    except json.JSONDecodeError as error:
-        report.error(path, f"not valid JSON: {error}")
+        record = load_json(text, "evidence JSON")
+    except JSONInputError as error:
+        if error.json_error is not None:
+            report.error(path, f"not valid JSON: {error.json_error}")
+        else:
+            report.error(path, f"not valid JSON: {error}")
         return None
     problems = validate_evidence(record, now=now)
     for problem in problems:

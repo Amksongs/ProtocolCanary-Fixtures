@@ -64,6 +64,28 @@ class KeywordTests(unittest.TestCase):
         self.assertEqual(self.errors("xxabcxx", {"pattern": "abc"}), [])
         self.assertNotEqual(self.errors("xxabxx", {"pattern": "^abc$"}), [])
 
+    def test_uncompilable_patterns_are_schema_errors_with_schema_paths(self) -> None:
+        for pattern in ("(", r"^\p{L}+$", r"^(?<a>x)$"):
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(lite.SchemaError) as caught:
+                    lite.validate(
+                        {"id": "x"},
+                        {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "pattern": pattern}
+                            },
+                        },
+                    )
+                self.assertIn("$.id", str(caught.exception))
+                self.assertIn(repr(pattern), str(caught.exception))
+
+    def test_uncompilable_pattern_properties_key_is_a_schema_error(self) -> None:
+        with self.assertRaises(lite.SchemaError) as caught:
+            lite.validate({}, {"patternProperties": {"(": {"type": "string"}}})
+        self.assertIn("$", str(caught.exception))
+        self.assertIn("(", str(caught.exception))
+
     def test_numeric_bounds(self) -> None:
         schema = {"type": "integer", "minimum": 1, "maximum": 3}
         self.assertEqual(self.errors(2, schema), [])

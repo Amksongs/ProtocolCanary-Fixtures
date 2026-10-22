@@ -44,6 +44,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.common.json_strict import JSONInputError, load_json
+
 SCHEMA_PATH = REPO_ROOT / "schemas" / "registry-v1.schema.json"
 
 FORMATS = ("text", "json", "markdown")
@@ -92,12 +97,9 @@ def load_registry(path: Path) -> dict:
         raise DiffError(f"{path}: is not valid UTF-8: {error}") from None
 
     try:
-        registry = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise DiffError(
-            f"{path}: is not valid JSON (line {error.lineno}, column {error.colno}): "
-            f"{error.msg}"
-        ) from None
+        registry = load_json(text, str(path))
+    except JSONInputError as error:
+        raise DiffError(str(error)) from None
 
     problems = check_registry(registry)
     if problems:
