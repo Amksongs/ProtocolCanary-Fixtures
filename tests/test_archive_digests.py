@@ -31,7 +31,10 @@ from pack_support import write_pack  # noqa: E402
 
 def build_archive_bytes(root: Path) -> bytes:
     """The compressed archive bytes of the golden pack."""
-    members, _, _ = pack_tool.collect_members(write_pack(root))
+    pack_dir = root / "pack"
+    if not pack_dir.exists():
+        pack_dir = write_pack(root)
+    members, _, _ = pack_tool.collect_members(pack_dir)
     return pack_tool.render_archive(members)
 
 
@@ -233,6 +236,228 @@ class CompareTests(unittest.TestCase):
         (self.results / "bad" / "digests.json").write_text("{}", encoding="utf-8")
         with self.assertRaises(digests.DigestError):
             digests.run_compare(self.results, [])
+
+
+class CommandLineTests(unittest.TestCase):
+    """The two commands the workflow runs."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.pack_dir = write_pack(self.root)
+
+    def run_main(self, argv: list[str]) -> tuple[int, str, str]:
+        """Run the command line, with its output captured."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = digests.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_build_writes_the_result_document_and_the_stream(self) -> None:
+        output = self.root / "out" / "digests.json"
+        code, out, _ = self.run_main(
+            [
+                "build",
+                "--pack",
+                str(self.pack_dir),
+                "--version",
+                "0.0.0",
+                "--output",
+                str(output),
+                "--cell",
+                "ubuntu-latest-py3.11",
+            ]
+        )
+        self.assertEqual(code, 0)
+        document = json.loads(out)
+        self.assertEqual(document["cell"], "ubuntu-latest-py3.11")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), document)
+        stream = output.parent / digests.STREAM_NAME
+        self.assertTrue(stream.is_file(), "the tar stream must be written next to the result")
+
+    def test_build_writes_the_stream_where_it_is_asked(self) -> None:
+        stream = self.root / "elsewhere" / "stream.tar"
+        code, _, _ = self.run_main(
+            [
+                "build",
+                "--pack",
+                str(self.pack_dir),
+                "--stream",
+                str(stream),
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(stream.is_file())
+
+    def test_build_of_an_invalid_pack_fails(self) -> None:
+        code, _, err = self.run_main(
+            ["build", "--pack", str(self.pack_dir), "--version", "not-a-version"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED", err)
+
+    def test_compare_reports_the_cells(self) -> None:
+        results = self.root / "artifacts"
+        stream = build_tar_stream(self.root)
+        write_result(results / "cell-a", "ubuntu-latest-py3.11", stream, "a" * 64)
+        code, out, _ = self.run_main(
+            [
+                "compare",
+                "--results",
+                str(results),
+                "--expected-matrix",
+                '{"os": ["ubuntu-latest"], "python": ["3.11"]}',
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("ubuntu-latest-py3.11", out)
+
+    def test_compare_of_an_invalid_matrix_is_a_usage_error(self) -> None:
+        results = self.root / "artifacts"
+        results.mkdir()
+        code, _, err = self.run_main(
+            ["compare", "--results", str(results), "--expected-matrix", "not json"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("not valid JSON", err)
+
+    def test_compare_with_a_matrix_that_is_not_an_object_is_a_usage_error(self) -> None:
+        results = self.root / "artifacts"
+        results.mkdir()
+        code, _, err = self.run_main(
+            ["compare", "--results", str(results), "--expected-matrix", "[1, 2]"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("must be a JSON object", err)
+
+    def test_compare_of_a_broken_result_document_fails(self) -> None:
+        results = self.root / "artifacts"
+        (results / "cell-a").mkdir(parents=True)
+        (results / "cell-a" / "digests.json").write_text("{", encoding="utf-8")
+        code, _, err = self.run_main(["compare", "--results", str(results)])
+        self.assertEqual(code, 1)
+        self.assertIn("could not be compared", err)
+
+
+class EdgeCaseTests(unittest.TestCase):
+    """The corners of the measurement."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_a_missing_archive_is_reported(self) -> None:
+        with self.assertRaises(digests.DigestError):
+            digests.digests_of(self.root / "missing.tar.gz")
+        with self.assertRaises(digests.DigestError):
+            digests.uncompressed_stream(self.root / "missing.tar.gz")
+
+    def test_an_invalid_pack_is_reported(self) -> None:
+        empty = self.root / "empty-pack"
+        empty.mkdir()
+        with self.assertRaises(digests.DigestError):
+            digests.build_result(empty, "0.0.0", output_dir=self.root / "out")
+
+    def test_an_archive_that_cannot_be_written_is_reported(self) -> None:
+        blocked = self.root / "not-a-directory"
+        blocked.write_text("", encoding="utf-8")
+        with self.assertRaises(digests.DigestError):
+            digests.build_result(
+                write_pack(self.root), "0.0.0", output_dir=blocked
+            )
+
+    def test_a_directory_in_the_results_is_skipped(self) -> None:
+        results = self.root / "artifacts"
+        (results / "not-a-document.json").mkdir(parents=True)
+        stream = build_tar_stream(self.root)
+        write_result(results / "cell-a", "ubuntu-latest-py3.11", stream, "a" * 64)
+        code = digests.run_compare(results, ["ubuntu-latest-py3.11"])
+        self.assertEqual(code, 0)
+
+    def test_three_cells_with_two_digests_are_all_compared(self) -> None:
+        results = self.root / "artifacts"
+        stream = build_tar_stream(self.root)
+        changed = bytearray(stream)
+        changed[600] ^= 0xFF
+        write_result(results / "cell-a", "ubuntu-latest-py3.11", stream, "a" * 64)
+        write_result(results / "cell-b", "macos-latest-py3.12", stream, "a" * 64)
+        write_result(results / "cell-c", "windows-latest-py3.13", bytes(changed), "a" * 64)
+        code = digests.run_compare(
+            results, ["ubuntu-latest-py3.11", "macos-latest-py3.12", "windows-latest-py3.13"]
+        )
+        self.assertEqual(code, 1)
+
+    def test_the_header_of_a_member_is_named(self) -> None:
+        stream = build_tar_stream(self.root)
+        description = digests.member_at_offset(stream, 10)
+        self.assertIn("header at byte 0", description)
+
+    def test_the_padding_of_a_member_is_named(self) -> None:
+        stream = build_tar_stream(self.root)
+        name, start, size = digests.tar_members(stream)[0]
+        description = digests.member_at_offset(stream, start + size)
+        self.assertIn("padding", description)
+        self.assertIn(name, description)
+
+    def test_an_offset_outside_every_member_is_said_so(self) -> None:
+        stream = build_tar_stream(self.root)
+        self.assertIn(
+            "outside every tar member",
+            digests.member_at_offset(stream, len(stream) + 10),
+        )
+
+    def test_streams_of_different_length_report_the_length(self) -> None:
+        stream = build_tar_stream(self.root)
+        description = digests.compare_streams(stream, stream + b"tail")
+        self.assertIn("lengths differ", description)
+
+    def test_a_stream_that_is_not_a_tar_has_no_members(self) -> None:
+        self.assertEqual(digests.tar_members(b"\0" * 1024), [])
+
+    def test_a_difference_without_a_stream_is_reported_by_digest(self) -> None:
+        results = self.root / "artifacts"
+        write_result(results / "cell-a", "ubuntu-latest-py3.11", b"one", "a" * 64)
+        write_result(results / "cell-b", "macos-latest-py3.13", b"two", "a" * 64)
+        # The stream files are not written, so only the digests can be compared.
+        for cell in ("cell-a", "cell-b"):
+            (results / cell / digests.STREAM_NAME).unlink()
+        code = digests.run_compare(results, ["ubuntu-latest-py3.11", "macos-latest-py3.13"])
+        self.assertEqual(code, 1)
+
+    def test_more_cells_than_the_matrix_declares_is_an_inconsistency(self) -> None:
+        results = self.root / "artifacts"
+        stream = build_tar_stream(self.root)
+        write_result(results / "cell-a", "ubuntu-latest-py3.11", stream, "a" * 64)
+        write_result(results / "cell-b", "macos-latest-py3.13", stream, "a" * 64)
+        code = digests.run_compare(results, ["ubuntu-latest-py3.11"])
+        self.assertEqual(code, 1, "a run with more cells than the matrix declares must fail")
+
+    def test_a_run_without_any_cell_is_reported(self) -> None:
+        results = self.root / "artifacts"
+        results.mkdir()
+        code = digests.run_compare(results, ["ubuntu-latest-py3.11"])
+        self.assertEqual(code, 1)
+
+    def test_a_header_without_a_size_field_is_read_as_empty(self) -> None:
+        header = bytearray(512)
+        header[0:5] = b"name\x00"
+        header[124:136] = b"not-octal\x00  "
+        members = digests.tar_members(bytes(header))
+        self.assertEqual(members, [("name", 512, 0)])
+
+    def test_the_gzip_header_carries_no_operating_system_name(self) -> None:
+        """The gzip header names no file and no operating system."""
+        archive = self.root / "archive.tar.gz"
+        archive.write_bytes(build_archive_bytes(self.root))
+        measured = digests.digests_of(archive)
+        self.assertEqual(
+            measured["gzipOsByte"],
+            255,
+            "the gzip header must say 'unknown', so the compressed bytes do not "
+            "depend on the operating system",
+        )
 
 
 if __name__ == "__main__":

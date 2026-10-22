@@ -82,7 +82,10 @@ def uncompressed_stream(archive: Path) -> bytes:
 
 def digests_of(archive: Path) -> dict:
     """Both digests of one archive, read only from that file."""
-    compressed = archive.read_bytes()
+    try:
+        compressed = archive.read_bytes()
+    except OSError as error:
+        raise DigestError(f"could not read {archive}: {error}") from None
     stream = uncompressed_stream(archive)
     return {
         "compressedSha256": hashlib.sha256(compressed).hexdigest(),

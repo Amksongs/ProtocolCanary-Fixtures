@@ -10,3 +10,15 @@
 # (pack digests, registry entries, archive checksums), so they get no text
 # normalization from git.
 *.py text eol=lf
+
+# The files whose bytes are hashed are checked out with LF on every platform,
+# for the same reason: their bytes end up in a pack digest, a registry entry
+# or an archive checksum.
+#
+# This needs an explicit rule. Without one, git's core.autocrlf (true is the
+# default on the Windows runners) rewrites LF as CRLF in a checkout, so the
+# archive built on Windows differs from the one built on Linux or macOS even
+# though nothing in the repository changed. That was measured, not assumed:
+# see docs/archive-reproducibility.md.
+protocol-*/** text eol=lf
+tests/vectors/** text eol=lf
