@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIFF_PATH = REPO_ROOT / "tools" / "registry" / "diff.py"
@@ -407,6 +408,218 @@ class RealRegistryTests(unittest.TestCase):
         self.assertNotEqual(
             diff.load_registry(old)["packDigest"], diff.load_registry(new)["packDigest"]
         )
+
+
+def text_sections(output: str) -> dict[str, list[str]]:
+    """The entry lines under each ``name (count):`` heading of the text format."""
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in output.splitlines():
+        if line.endswith(":") and " (" in line:
+            current = line.split(" (", 1)[0]
+            sections[current] = []
+        elif current is not None and line.startswith("  "):
+            sections[current].append(line.strip())
+        elif not line.startswith("  "):
+            current = None
+    return sections
+
+
+def markdown_sections(text: str) -> dict[str, list[str]]:
+    """The entry lines under each ``### Name`` heading of the Markdown format."""
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in text.splitlines():
+        if line.startswith("### "):
+            current = line[4:].strip()
+            sections[current] = []
+        elif current is not None and line.strip():
+            sections[current].append(line.strip())
+    return sections
+
+
+class OutputFormatTests(unittest.TestCase):
+    """F-130 (issue #449): every kind of change in every output format."""
+
+    NON_ASCII_PATH = "xdr/caf\u00e9/added.toml"
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="registry-diff-formats-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.old_path = write_json(
+            self.tmp / "old.json",
+            registry(
+                [
+                    fixture("p28-removed", "xdr/removed.toml", SHA_C),
+                    fixture("p28-changed", "xdr/changed.toml", SHA_A),
+                    fixture("p28-moved", "xdr/old/moved.toml", SHA_B),
+                    fixture("p28-stable", "xdr/stable.toml", SHA_D),
+                ],
+                digest=DIGEST_A,
+            ),
+        )
+        self.new_path = write_json(
+            self.tmp / "new.json",
+            registry(
+                [
+                    fixture("p28-added", self.NON_ASCII_PATH, SHA_C),
+                    fixture("p28-changed", "xdr/changed.toml", SHA_B),
+                    fixture("p28-moved", "xdr/new/moved.toml", SHA_B),
+                    fixture("p28-stable", "xdr/stable.toml", SHA_D),
+                ],
+                digest=DIGEST_B,
+            ),
+        )
+
+    def run_tool(self, *args: str) -> tuple[int, str, str]:
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = diff.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_text_format_lists_every_change_under_its_heading(self) -> None:
+        code, out, err = self.run_tool(str(self.old_path), str(self.new_path))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err, "")
+        for heading in ("added (1):", "removed (1):", "changed (1):", "moved (1):"):
+            self.assertIn(heading, out)
+        self.assertIn("unchanged (1)", out)
+
+        sections = text_sections(out)
+        self.assertEqual(
+            {name: len(entries) for name, entries in sections.items()},
+            {"added": 1, "removed": 1, "changed": 1, "moved": 1},
+        )
+        self.assertIn("p28-added", sections["added"][0])
+        self.assertIn(self.NON_ASCII_PATH, sections["added"][0])
+        self.assertIn("p28-removed", sections["removed"][0])
+        self.assertIn("xdr/removed.toml", sections["removed"][0])
+        changed = sections["changed"][0]
+        self.assertIn("p28-changed", changed)
+        self.assertIn("xdr/changed.toml", changed)
+        self.assertIn(SHA_A, changed)
+        self.assertIn(SHA_B, changed)
+        moved = sections["moved"][0]
+        self.assertIn("p28-moved", moved)
+        self.assertIn("xdr/old/moved.toml", moved)
+        self.assertIn("xdr/new/moved.toml", moved)
+
+    def test_the_markdown_format_has_a_section_for_every_change(self) -> None:
+        code, out, err = self.run_tool(
+            str(self.old_path), str(self.new_path), "--format", "markdown"
+        )
+        self.assertEqual(code, 0, err)
+        sections = markdown_sections(out)
+        self.assertEqual(set(sections), {"Added", "Removed", "Changed", "Moved"})
+        self.assertEqual(len(sections["Added"]), 1)
+        self.assertEqual(len(sections["Removed"]), 1)
+        self.assertEqual(len(sections["Changed"]), 1)
+        self.assertEqual(len(sections["Moved"]), 1)
+
+        self.assertIn("p28-added", sections["Added"][0])
+        self.assertIn(self.NON_ASCII_PATH, sections["Added"][0])
+        self.assertIn("p28-removed", sections["Removed"][0])
+        self.assertIn("xdr/removed.toml", sections["Removed"][0])
+        changed = sections["Changed"][0]
+        self.assertIn("p28-changed", changed)
+        self.assertIn(SHA_A, changed)
+        self.assertIn(SHA_B, changed)
+        moved = sections["Moved"][0]
+        self.assertIn("p28-moved", moved)
+        self.assertIn("xdr/old/moved.toml", moved)
+        self.assertIn("xdr/new/moved.toml", moved)
+
+    def test_identical_registries_report_every_count_as_zero(self) -> None:
+        code, out, err = self.run_tool(str(self.old_path), str(self.old_path))
+        self.assertEqual(code, 0, err)
+        for heading in ("added (0):", "removed (0):", "changed (0):", "moved (0):"):
+            self.assertIn(heading, out)
+        self.assertIn("unchanged (4)", out)
+
+    def test_identical_registries_render_the_no_change_markdown(self) -> None:
+        code, out, err = self.run_tool(
+            str(self.old_path), str(self.old_path), "--format", "markdown"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("No fixture changed between the two registries.", out)
+        self.assertNotIn("###", out)
+
+    def test_the_json_format_pins_keys_layout_and_encoding(self) -> None:
+        code, out, err = self.run_tool(
+            str(self.old_path), str(self.new_path), "--format", "json"
+        )
+        self.assertEqual(code, 0, err)
+        document = json.loads(out)
+        self.assertEqual(
+            set(document),
+            {"old", "new", "added", "removed", "changed", "moved", "unchanged"},
+        )
+        self.assertEqual(document["unchanged"], 1)
+        self.assertEqual([entry["id"] for entry in document["moved"]], ["p28-moved"])
+
+        # The layout is part of the contract: release tooling may diff or
+        # store this document, so two-space indent, one trailing newline and
+        # unescaped UTF-8 must not drift.
+        self.assertTrue(out.endswith("\n"))
+        self.assertFalse(out.endswith("\n\n"))
+        self.assertIn('\n  "old": {', out)
+        self.assertIn('\n  "added": [', out)
+        self.assertIn("caf\u00e9", out)
+        self.assertNotIn("\\u", out)
+
+
+class UnusableInputTests(unittest.TestCase):
+    """F-130: every unusable input is one message and exit code 2."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="registry-diff-input-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.valid_path = write_json(
+            self.tmp / "valid.json",
+            registry([fixture("p28-a", "xdr/a.toml", SHA_A)]),
+        )
+
+    def run_tool(self, *args: str) -> tuple[int, str, str]:
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = diff.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def assert_refused(self, code: int, out: str, err: str, *fragments: str) -> None:
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertTrue(err.startswith("error: "), err)
+        for fragment in fragments:
+            self.assertIn(fragment, err)
+
+    def test_a_directory_is_refused(self) -> None:
+        directory = self.tmp / "a-directory"
+        directory.mkdir()
+        code, out, err = self.run_tool(str(directory), str(self.valid_path))
+        self.assert_refused(
+            code, out, err, str(directory), "is a directory, not a registry file"
+        )
+
+    def test_a_file_that_cannot_be_read_is_refused(self) -> None:
+        with mock.patch.object(
+            Path, "read_bytes", side_effect=PermissionError("permission denied")
+        ):
+            code, out, err = self.run_tool(str(self.valid_path), str(self.valid_path))
+        self.assert_refused(code, out, err, str(self.valid_path), "could not be read")
+
+    def test_a_file_that_is_not_utf8_is_refused(self) -> None:
+        path = self.tmp / "not-utf8.json"
+        path.write_bytes(b'\xff\xfe{"registryVersion": 1}')
+        code, out, err = self.run_tool(str(path), str(self.valid_path))
+        self.assert_refused(code, out, err, str(path), "is not valid UTF-8")
+
+    def test_a_file_with_malformed_json_is_refused(self) -> None:
+        path = self.tmp / "broken.json"
+        path.write_text("{not json\n", encoding="utf-8")
+        code, out, err = self.run_tool(str(path), str(self.valid_path))
+        self.assert_refused(code, out, err, str(path), "not valid JSON")
 
 
 if __name__ == "__main__":
