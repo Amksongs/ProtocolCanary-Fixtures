@@ -228,6 +228,10 @@ upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md). The full procedure
 for packaging, verifying, attesting, and publishing a pack release is documented
 in [`docs/releasing.md`](docs/releasing.md).
 
+Published pack release archives and manifests also carry cryptographically
+signed build provenance attestations; see [`SECURITY.md`](SECURITY.md#build-provenance-and-attestation)
+for verification instructions.
+
 ## Validation
 
 Requires **Python 3.11+** (the validator uses the stdlib `tomllib`

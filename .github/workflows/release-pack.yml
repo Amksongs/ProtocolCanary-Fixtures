@@ -1,0 +1,126 @@
+name: release-pack
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (MAJOR.MINOR.PATCH)"
+        required: false
+        default: "1.0.0"
+      pack:
+        description: "Pack directory to build"
+        required: false
+        default: "protocol-28"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11.16"
+
+      - name: Determine release version and pack
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            PACK="${{ github.event.inputs.pack }}"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            VERSION="${TAG#v}"
+            PACK="protocol-28"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+            PACK="protocol-28"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "pack=$PACK" >> "$GITHUB_OUTPUT"
+          echo "Building pack $PACK for version $VERSION"
+
+      - name: Build run-1 in clean directory
+        run: |
+          mkdir -p /tmp/build1
+          python3 tools/pack/pack.py "${{ steps.vars.outputs.pack }}" --version "${{ steps.vars.outputs.version }}" --output-dir /tmp/build1
+
+      - name: Build run-2 in separate clean directory
+        run: |
+          mkdir -p /tmp/build2
+          python3 tools/pack/pack.py "${{ steps.vars.outputs.pack }}" --version "${{ steps.vars.outputs.version }}" --output-dir /tmp/build2
+
+      - name: Assert bit-for-bit identical hashes across independent builds
+        run: |
+          ARCHIVE="protocolcanary-fixtures-${{ steps.vars.outputs.version }}.tar.gz"
+          echo "Comparing /tmp/build1/$ARCHIVE and /tmp/build2/$ARCHIVE"
+          cmp "/tmp/build1/$ARCHIVE" "/tmp/build2/$ARCHIVE"
+
+          HASH1=$(sha256sum "/tmp/build1/$ARCHIVE" | awk '{print $1}')
+          HASH2=$(sha256sum "/tmp/build2/$ARCHIVE" | awk '{print $1}')
+          echo "Build 1 SHA-256: $HASH1"
+          echo "Build 2 SHA-256: $HASH2"
+
+          if [ "$HASH1" != "$HASH2" ]; then
+            echo "ERROR: Release build is not reproducible; SHA-256 digests diverge!" >&2
+            exit 1
+          fi
+
+          echo "Verified bit-for-bit reproducible archive hash: $HASH1"
+
+      - name: Verify archive integrity against pack schema and digest
+        run: |
+          ARCHIVE="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.tar.gz"
+          python3 tools/pack/verify_archive.py "$ARCHIVE"
+
+      - name: Generate release manifest and SHA-256 checksums
+        run: |
+          ARCHIVE="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.tar.gz"
+          MANIFEST="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.manifest.json"
+          CHECKSUM="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.sha256"
+
+          python3 tools/release/manifest.py "$ARCHIVE" \
+            --revision "${{ github.sha }}" \
+            --output "$MANIFEST" \
+            --sha256-file "$CHECKSUM"
+
+      - name: Verify archive matches release manifest and checksum
+        run: |
+          ARCHIVE="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.tar.gz"
+          MANIFEST="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.manifest.json"
+          CHECKSUM="/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.sha256"
+
+          python3 tools/pack/verify_archive.py "$ARCHIVE" --manifest "$MANIFEST"
+          (cd /tmp/build1 && sha256sum -c "$CHECKSUM")
+
+      - name: Generate build provenance attestations
+        if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        uses: actions/attest-build-provenance@c074443f1b5fb4a4829eec0244487a870fa861e6 # v2.2.3
+        with:
+          subject-path: |
+            /tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.tar.gz
+            /tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.manifest.json
+
+      - name: Publish release assets
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.tar.gz" \
+            "/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.manifest.json" \
+            "/tmp/build1/protocolcanary-fixtures-${{ steps.vars.outputs.version }}.sha256" \
+            --clobber
