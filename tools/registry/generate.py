@@ -57,7 +57,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.common import pack_limits
+from tools.common import pack_limits, paths
 
 SCHEMA_PATH = REPO_ROOT / "schemas" / "registry-v1.schema.json"
 DEFAULT_REGISTRY_NAME = "registry-v1.json"
@@ -479,6 +479,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def collect_pack_protected_inputs(pack: Path, files: dict[str, bytes]) -> list[tuple[Path, str]]:
+    """Return protected input targets (fixtures, payloads, and the pack directory itself)."""
+    protected: list[tuple[Path, str]] = [(pack, "the pack directory")]
+    for path, data in files.items():
+        if path.endswith(".toml"):
+            protected.append((pack / path, "a pack fixture"))
+            try:
+                fixture = tomllib.loads(data.decode("utf-8"))
+            except Exception:
+                continue
+            directory = path.rpartition("/")[0]
+            for field in PAYLOAD_FIELDS:
+                reference = fixture.get(field)
+                if isinstance(reference, str) and reference:
+                    payload_path = f"{directory}/{reference}" if directory else reference
+                    protected.append((pack / payload_path, "a pack payload"))
+    return protected
+
+
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     protocol_num = None
@@ -541,6 +560,15 @@ def main(argv: list[str]) -> int:
             sys.stdout.write(text)
         return 0
     output = args.output or (args.pack / DEFAULT_REGISTRY_NAME)
+    try:
+        scanned = scan_pack(args.pack)
+        protected = collect_pack_protected_inputs(args.pack, scanned)
+        paths.check_target_safety(output, protected)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no registry written", file=sys.stderr)
+        return 1
+
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(text.encode("utf-8"))

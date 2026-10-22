@@ -1,0 +1,59 @@
+# Test fixture: the `get-health` RPC method (F-017, issue #280).
+#
+# F-017 adds `getHealth`, `getVersionInfo` and `getFeeStats` to the RPC
+# methods a fixture may name. This file is the fixture for `get-health`, kept
+# under `tests/fixtures/` rather than in a protocol pack: the pack contract
+# is that every RPC fixture of a pack must be capturable by
+# `tools/evidence/capture_live.py`, whose allowlist is exactly the three
+# read-only methods CF-04 section 8 names (`getNetwork`, `getLatestLedger`,
+# `getVersionInfo`). `getHealth` is not one of them yet, so it is exercised
+# here, by `tests/test_validate.py`, and not shipped as live evidence.
+#
+# `tests/test_validate.py` runs this file through
+# `tools/validate/validate.py` and checks its `method` against the RPC method
+# enum in `schemas/fixture-v1.schema.json`, so the accepted vocabulary is
+# proven by a fixture that uses it rather than by the constant alone.
+#
+# The assertion shapes below follow the real answer. Captured live from
+# https://soroban-testnet.stellar.org on 2026-10-22:
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+#   => {"jsonrpc":"2.0","id":1,"result":{
+#        "status":"healthy",
+#        "latestLedger":5328765,
+#        "latestLedgerCloseTime":"1792667412",
+#        "oldestLedger":5207806,
+#        "oldestLedgerCloseTime":"1792062617",
+#        "ledgerRetentionWindow":120960}}
+#
+# The ledger bounds are asserted by type only: they advance with every
+# ledger, so pinning a value would describe one instant, not the method.
+# `latestLedgerCloseTime` is a string-encoded timestamp and is not asserted.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getHealth
+
+id = "test-rpc-health"
+protocol = 28
+surface = "rpc"
+category = "health"
+description = "getHealth reports status 'healthy' with numeric ledger bounds and retention window"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getHealth"
+
+method = "get-health"
+
+[[assert]]
+kind = "field-equals"
+field = "status"
+value = "healthy"
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "number"
+
+[[assert]]
+kind = "field-type"
+field = "ledgerRetentionWindow"
+expected_type = "number"
