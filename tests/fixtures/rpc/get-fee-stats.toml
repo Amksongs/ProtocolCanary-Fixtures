@@ -1,0 +1,66 @@
+# Test fixture: the `get-fee-stats` RPC method (F-017, issue #280).
+#
+# F-017 adds `getHealth`, `getVersionInfo` and `getFeeStats` to the RPC
+# methods a fixture may name. This file is the fixture for `get-fee-stats`,
+# kept under `tests/fixtures/` so it documents the accepted vocabulary
+# without adding a fixture to a protocol pack; see `get-health.toml` in this
+# directory for why (the pack's live fixtures must all be capturable, and
+# capture_live.py's allowlist is the three read-only methods CF-04 section 8
+# names).
+#
+# `tests/test_validate.py` runs this file through
+# `tools/validate/validate.py` and checks its `method` against the RPC method
+# enum in `schemas/fixture-v1.schema.json`.
+#
+# The assertion shapes below follow the real answer, captured live from
+# https://soroban-testnet.stellar.org on 2026-10-22:
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getFeeStats"}'
+#   => {"jsonrpc":"2.0","id":1,"result":{
+#        "sorobanInclusionFee":{
+#          "max":"200","min":"100","mode":"100",
+#          "p10":"100","p20":"100","p30":"100","p40":"100","p50":"100",
+#          "p60":"100","p70":"100","p80":"100","p90":"100","p95":"100",
+#          "p99":"200","transactionCount":"581","ledgerCount":50},
+#        "inclusionFee":{
+#          "max":"100","min":"100","mode":"100",
+#          "p10":"100","p20":"100","p30":"100","p40":"100","p50":"100",
+#          "p60":"100","p70":"100","p80":"100","p90":"100","p95":"100",
+#          "p99":"100","transactionCount":"37","ledgerCount":10},
+#        "latestLedger":5328765}}
+#
+# The distributions are asserted as objects, not field by field: every value
+# inside one moves with network load, and `canary-rpc`'s `FeeDistribution`
+# models exactly the keys above. `latestLedger` is asserted by type only.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getFeeStats
+
+id = "test-rpc-fee-stats"
+protocol = 28
+surface = "rpc"
+category = "fees"
+description = "getFeeStats reports both inclusion-fee distributions as objects and a numeric latest ledger"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getFeeStats"
+
+method = "get-fee-stats"
+
+[[assert]]
+kind = "field-exists"
+field = "sorobanInclusionFee"
+
+[[assert]]
+kind = "field-type"
+field = "sorobanInclusionFee"
+expected_type = "object"
+
+[[assert]]
+kind = "field-type"
+field = "inclusionFee"
+expected_type = "object"
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "number"

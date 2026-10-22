@@ -19,6 +19,11 @@ Supported: ``type``, ``enum``, ``const``, ``required``, ``properties``,
 Annotation keywords (``$schema``, ``$id``, ``$comment``, ``title``,
 ``description``, ``examples``, ``default``) are ignored.
 
+``pattern`` and ``patternProperties`` keep ECMA-262 semantics: ``$`` matches
+only at the end of the input, not before a trailing newline as Python's
+``re`` would allow (see :func:`_ecma_pattern`). Patterns are searched for,
+not required to match the whole value.
+
 Usage:
     from jsonschema_lite import validate
     errors = validate(document, schema)   # [] when the document conforms
@@ -73,9 +78,52 @@ class SchemaError(ValueError):
     """The schema itself uses something this validator does not implement."""
 
 
+def _ecma_pattern(pattern: str) -> str:
+    r"""Return ``pattern`` with every anchor ``$`` rewritten as ``\Z``.
+
+    JSON Schema patterns follow ECMA-262, where ``$`` matches only at the
+    end of the input, but Python's ``$`` also matches just before a trailing
+    newline, so an anchored pattern would wrongly accept a value that ends
+    in ``\n``. ``\Z`` is exactly the end of the string, so translating the
+    anchor keeps the rest of the pattern interpreted as before. An escaped
+    ``\$`` and a ``$`` inside a character class are literals in both and
+    are left untouched.
+    """
+    translated: list[str] = []
+    index = 0
+    in_class = False
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            translated.append(pattern[index : index + 2])  # keep the escape pair
+            index += 2
+        elif in_class:
+            translated.append(char)  # a literal $ in a class is left alone
+            if char == "]":
+                in_class = False
+            index += 1
+        elif char == "[":
+            in_class = True
+            translated.append(char)
+            index += 1
+            if index < len(pattern) and pattern[index] == "^":
+                translated.append("^")  # negated class
+                index += 1
+            if index < len(pattern) and pattern[index] == "]":
+                translated.append("]")  # a leading ] is a literal, not the end
+                index += 1
+        elif char == "$":
+            translated.append("\\Z")
+            index += 1
+        else:
+            translated.append(char)
+            index += 1
+    return "".join(translated)
+
+
 @lru_cache(maxsize=512)
 def _compiled_pattern(pattern: str):
-    return re.compile(pattern)
+    return re.compile(_ecma_pattern(pattern))
 
 
 def _compile_pattern(pattern: str, path: str):

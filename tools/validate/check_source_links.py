@@ -188,9 +188,16 @@ def check_link(
         try:
             resp = opener.open(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            if exc.code == 429:
+            # The error carries the response body. Close it here, so the
+            # connection is released now rather than by the garbage
+            # collector; since Python 3.12 an implicitly cleaned-up
+            # response warns (ResourceWarning) at whatever later point the
+            # collection happens to land.
+            code = exc.code
+            exc.close()
+            if code == 429:
                 return CheckResult("Inconclusive", "HTTP 429 Too Many Requests")
-            if exc.code == 405:
+            if code == 405:
                 # Some RPC endpoints (e.g., soroban-testnet) reject GET with 405 Method Not Allowed.
                 # Try POST with empty payload as a fallback check.
                 try:
@@ -204,13 +211,15 @@ def check_link(
                     )
                     resp = opener.open(post_req, timeout=timeout)
                 except urllib.error.HTTPError as post_exc:
-                    if post_exc.code == 429:
+                    post_code = post_exc.code
+                    post_exc.close()
+                    if post_code == 429:
                         return CheckResult("Inconclusive", "HTTP 429 Too Many Requests")
-                    return CheckResult("Failed", f"HTTP {post_exc.code}")
+                    return CheckResult("Failed", f"HTTP {post_code}")
                 except Exception as post_err:
                     return CheckResult("Failed", f"POST fallback failed: {post_err}")
             else:
-                return CheckResult("Failed", f"HTTP {exc.code}")
+                return CheckResult("Failed", f"HTTP {code}")
         except (TimeoutError, urllib.error.URLError) as exc:
             reason = getattr(exc, "reason", str(exc))
             if "timed out" in str(reason).lower() or isinstance(exc, TimeoutError):

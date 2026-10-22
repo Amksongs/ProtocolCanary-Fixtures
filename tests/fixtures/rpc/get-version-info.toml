@@ -1,0 +1,66 @@
+# Test fixture: the `get-version-info` RPC method (F-017, issue #280).
+#
+# F-017 adds `getHealth`, `getVersionInfo` and `getFeeStats` to the RPC
+# methods a fixture may name. This file is the fixture for
+# `get-version-info`, kept under `tests/fixtures/` so it documents the
+# accepted vocabulary without adding a fixture to a protocol pack; see
+# `get-health.toml` in this directory for why (the pack's live fixtures must
+# all be capturable, and capture_live.py's allowlist is the three read-only
+# methods CF-04 section 8 names).
+#
+# `tests/test_validate.py` runs this file through
+# `tools/validate/validate.py` and checks its `method` against the RPC method
+# enum in `schemas/fixture-v1.schema.json`.
+#
+# The assertion shapes below follow the real answer, captured live from
+# https://soroban-testnet.stellar.org on 2026-10-22:
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getVersionInfo"}'
+#   => {"jsonrpc":"2.0","id":1,"result":{
+#        "version":"30.0.0-13e53516633c3ce1281c7edbacb607107d3a4e55",
+#        "commitHash":"13e53516633c3ce1281c7edbacb607107d3a4e55",
+#        "buildTimestamp":"2026-10-20T22:36:51",
+#        "captiveCoreVersion":"stellar-core 30.0.0 (0e49751aa9ddf892302cca02cea7f3f5d97df9f1)",
+#        "protocolVersion":29}}
+#
+# `version` is the RPC release string, not the protocol, so no value is
+# pinned: a release changes on every deployment and that is not a defect.
+# `captiveCoreVersion` is optional in `canary-rpc`'s `VersionInfoResponse`
+# and is not asserted; an endpoint that bundles no Stellar Core omits it.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getVersionInfo
+
+id = "test-rpc-version-info"
+protocol = 28
+surface = "rpc"
+category = "version"
+description = "getVersionInfo reports a release string, commit hash, build timestamp and numeric protocol version"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getVersionInfo"
+
+method = "get-version-info"
+
+[[assert]]
+kind = "field-exists"
+field = "version"
+
+[[assert]]
+kind = "field-type"
+field = "version"
+expected_type = "string"
+
+[[assert]]
+kind = "field-type"
+field = "commitHash"
+expected_type = "string"
+
+[[assert]]
+kind = "field-type"
+field = "buildTimestamp"
+expected_type = "string"
+
+[[assert]]
+kind = "field-type"
+field = "protocolVersion"
+expected_type = "number"
