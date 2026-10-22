@@ -4,7 +4,7 @@
 ![ProtocolCanary-Fixtures](assets/ProtocolCanary-Fixtures-banner.svg)
 
 
-[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 23](https://img.shields.io/badge/fixtures-23-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
+[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 31](https://img.shields.io/badge/fixtures-31-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
 
 Canonical compatibility fixtures for Stellar Protocol Canary.
 
@@ -108,6 +108,11 @@ data is in [`upstream-matrix.json`](upstream-matrix.json).
 
 The command-line behavior, exit codes, and output streams of repository tools
 are documented in [`docs/tools.md`](docs/tools.md).
+
+The scheduled job that keeps the live read-only RPC evidence fresh -- its
+schedule, the endpoints it calls, the captures and verification records it
+writes, and how it fails -- is described in
+[`docs/live-verification.md`](docs/live-verification.md).
 
 ## Protocol packs
 

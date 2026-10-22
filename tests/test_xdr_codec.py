@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -127,6 +128,137 @@ class XdrCodecUnitTests(unittest.TestCase):
         corrupted2[47] ^= 1
         with self.assertRaises(xdr_codec.XdrCodecError):
             xdr_codec.decode_stellar_value(bytes(corrupted2))
+
+
+class TransactionEnvelopeCodecTests(unittest.TestCase):
+    """Codec-level tests for the TransactionEnvelope codec (F-089).
+
+    The round-trip payloads are the pack's own crate-produced fixtures
+    (``protocol-28/xdr/transaction-envelope/*.toml``): each ``value_base64``
+    was produced by the official ``stellar-xdr`` 28.0.1 crate (features
+    base64 and alloc) from the typed value whose generating expression is
+    recorded in the fixture's header comment.  The fixture headers are the
+    single source of truth for the bytes, so this file does not duplicate
+    them.  The full generating program is quoted in the pull request that
+    adds the fixtures.
+    """
+
+    FIXTURE_DIR = REPO_ROOT / "protocol-28" / "xdr" / "transaction-envelope"
+
+    def _fixture_bytes(self, name: str) -> bytes:
+        path = self.FIXTURE_DIR / name
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        self.assertEqual(data["type"], "TransactionEnvelope")
+        return base64.b64decode(data["value_base64"])
+
+    def test_pack_roundtrip_fixtures_decode_and_re_encode(self) -> None:
+        fixtures = {
+            "p28-xdr-transaction-envelope-v0-roundtrip.toml": xdr_codec.ENVELOPE_TYPE_TX_V0,
+            "p28-xdr-transaction-envelope-v1-roundtrip.toml": xdr_codec.ENVELOPE_TYPE_TX,
+            "p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml": xdr_codec.ENVELOPE_TYPE_TX,
+            "p28-xdr-transaction-envelope-fee-bump-roundtrip.toml": xdr_codec.ENVELOPE_TYPE_TX_FEE_BUMP,
+        }
+        for name, envelope_type in fixtures.items():
+            with self.subTest(fixture=name):
+                raw = self._fixture_bytes(name)
+                envelope = xdr_codec.decode_xdr("TransactionEnvelope", raw)
+                self.assertEqual(envelope.envelope_type, envelope_type)
+                self.assertEqual(
+                    xdr_codec.encode_xdr("TransactionEnvelope", envelope), raw
+                )
+
+    def test_v0_envelope_fields(self) -> None:
+        raw = self._fixture_bytes("p28-xdr-transaction-envelope-v0-roundtrip.toml")
+        envelope = xdr_codec.decode_transaction_envelope(raw)
+        tx = envelope.v0.tx
+        self.assertEqual(tx.fee, 100)
+        self.assertEqual(tx.seq_num, 1_234_567)
+        self.assertEqual(tx.memo.memo_type, xdr_codec.MEMO_NONE)
+        self.assertIsNotNone(tx.time_bounds)
+        self.assertEqual(tx.time_bounds.max_time, 1_760_000_000)
+        self.assertEqual(len(tx.operations), 1)
+        payment = tx.operations[0].body.payment
+        self.assertEqual(tx.operations[0].body.op_type, xdr_codec.OPERATION_TYPE_PAYMENT)
+        self.assertEqual(payment.amount, 1_000)
+        self.assertEqual(payment.asset.asset_type, xdr_codec.ASSET_TYPE_NATIVE)
+
+    def test_fee_bump_envelope_nests_an_inner_v1_envelope(self) -> None:
+        raw = self._fixture_bytes("p28-xdr-transaction-envelope-fee-bump-roundtrip.toml")
+        envelope = xdr_codec.decode_transaction_envelope(raw)
+        fee_bump = envelope.fee_bump.tx
+        self.assertEqual(fee_bump.fee, 200_000)
+        self.assertEqual(
+            fee_bump.inner_tx.tx.source_account.key_type, xdr_codec.KEY_TYPE_ED25519
+        )
+        self.assertEqual(fee_bump.inner_tx.tx.ext.ext_type, 0)
+
+    def test_soroban_envelope_decodes_resources(self) -> None:
+        raw = self._fixture_bytes(
+            "p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml"
+        )
+        envelope = xdr_codec.decode_transaction_envelope(raw)
+        tx = envelope.v1.tx
+        self.assertEqual(tx.ext.ext_type, 1)
+        soroban = tx.ext.soroban_data
+        self.assertEqual(soroban.resource_fee, 1_000)
+        self.assertEqual(soroban.resources.instructions, 1_000)
+        self.assertEqual(soroban.resources.disk_read_bytes, 100)
+        self.assertEqual(soroban.resources.write_bytes, 100)
+        invoke = tx.operations[0].body.invoke_host_function
+        self.assertEqual(
+            invoke.host_function.host_function_type,
+            xdr_codec.HOST_FUNCTION_TYPE_INVOKE_CONTRACT,
+        )
+        self.assertEqual(invoke.host_function.invoke_contract.function_name, "hello")
+
+    def test_truncation_at_every_byte_offset(self) -> None:
+        for name in (
+            "p28-xdr-transaction-envelope-v0-roundtrip.toml",
+            "p28-xdr-transaction-envelope-v1-roundtrip.toml",
+            "p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml",
+            "p28-xdr-transaction-envelope-fee-bump-roundtrip.toml",
+        ):
+            full = self._fixture_bytes(name)
+            for length in range(len(full)):
+                with self.subTest(fixture=name, offset=length):
+                    with self.assertRaises(xdr_codec.XdrCodecError):
+                        xdr_codec.decode_xdr("TransactionEnvelope", full[:length])
+
+    def test_trailing_bytes_rejected(self) -> None:
+        raw = self._fixture_bytes("p28-xdr-transaction-envelope-v1-roundtrip.toml")
+        with self.assertRaises(xdr_codec.XdrCodecError):
+            xdr_codec.decode_xdr("TransactionEnvelope", raw + b"\x00")
+
+    def test_unknown_envelope_type_rejected(self) -> None:
+        raw = self._fixture_bytes("p28-xdr-transaction-envelope-v1-roundtrip.toml")
+        mutated = bytearray(raw)
+        mutated[0:4] = (63).to_bytes(4, "big")
+        with self.assertRaises(xdr_codec.XdrCodecError) as caught:
+            xdr_codec.decode_xdr("TransactionEnvelope", bytes(mutated))
+        self.assertIn("discriminant", str(caught.exception))
+
+    def test_unsupported_operation_arm_rejected(self) -> None:
+        # OperationType 8 is ACCOUNT_MERGE, an arm the codec does not model.
+        raw = self._fixture_bytes("p28-xdr-transaction-envelope-v0-roundtrip.toml")
+        mutated = bytearray(raw)
+        mutated[80:84] = (8).to_bytes(4, "big")
+        with self.assertRaises(xdr_codec.XdrCodecError) as caught:
+            xdr_codec.decode_xdr("TransactionEnvelope", bytes(mutated))
+        self.assertIn("unsupported OperationType arm", str(caught.exception))
+
+    def test_unsupported_preconditions_arm_rejected(self) -> None:
+        # PreconditionType 2 is PRECOND_V2, an arm the codec does not model.
+        raw = self._fixture_bytes("p28-xdr-transaction-envelope-v1-roundtrip.toml")
+        mutated = bytearray(raw)
+        mutated[52:56] = (2).to_bytes(4, "big")
+        with self.assertRaises(xdr_codec.XdrCodecError) as caught:
+            xdr_codec.decode_xdr("TransactionEnvelope", bytes(mutated))
+        self.assertIn("unsupported Preconditions arm", str(caught.exception))
+
+    def test_unsupported_type_name_rejected(self) -> None:
+        with self.assertRaises(xdr_codec.XdrCodecError):
+            xdr_codec.decode_xdr("LedgerEntry", b"\x00\x00\x00\x00")
 
 
 if __name__ == "__main__":

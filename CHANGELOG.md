@@ -25,6 +25,82 @@ discussion and diff. New entries must include that link; see
   `docs/run-records.md` states the format and the rule. Closes
   [issue #367](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/367).
   ([PR #425])
+- `tools/pack/archive_digests.py` and `.github/workflows/archive-baseline.yml`:
+  a cross-platform baseline for the pack archive (issue #365). Every cell of
+  the platform and Python-version matrix builds the `protocol-28` archive with a
+  fixed version string and uploads the SHA-256 of the compressed `.tar.gz` and
+  of the uncompressed tar stream, together with the Python and zlib versions
+  that produced them; a final job compares the cells, fails when the
+  uncompressed digests differ (naming the first differing byte and the tar
+  member) and reports a compressed-digest difference as an observation only.
+  The first measured run found that the Windows checkout rewrote the fixture
+  files to CRLF, so the archive was not the same on every platform; `.gitattributes`
+  now checks the hashed files out with `eol=lf` and the second run agrees in
+  all nine cells. `docs/archive-reproducibility.md` records both runs and
+  states that no cross-platform byte equality is claimed for the compressed
+  archive. Closes
+  [issue #365](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/365).
+  ([PR #423])
+- `tools/evidence/capture_live.py` and `.github/workflows/live-evidence.yml`: the
+  scheduled read-only verification job (CF-04-E) that keeps the live RPC
+  evidence fresh (issue #368). The script calls only the read-only methods
+  CF-04 section 8 names (`getNetwork`, `getLatestLedger`, `getVersionInfo`)
+  on an approved endpoint, with no credentials, and refuses any other method
+  or endpoint before a request is made; a write call cannot be configured.
+  Each call that really happened is saved as a capture in the same envelope
+  the hand-taken corpus uses, and each RPC fixture gets a CF-04 verification
+  record with `method: "live-read-only"`, the SHA-256 of the fixture file,
+  `checkedAt` equal to the capture's `capturedAt`, and `observedProtocol`
+  copied from the real `getNetwork` answer. A call that fails, times out or
+  answers with something that is not a JSON-RPC result leaves no capture and
+  no record, and the run fails. The workflow runs on a weekly cron and
+  uploads the captures and the records as an artifact; the exact schedule,
+  endpoints, storage and record location stay maintainer decisions, each in
+  one place. `docs/live-verification.md` describes the schedule, the
+  endpoints, the outputs and the failure behaviour. Closes
+  [issue #368](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/368).
+- `tools/evidence/record_structural.py`: writes CF-04 verification records for
+  the structural check of a pack. The tool runs the check, then writes one
+  record per fixture with the SHA-256 of the file as it is on disk, the
+  instant the check ran and `method: "structural"`; it writes nothing when a
+  fixture does not validate, never derives an instant from a date-only header
+  comment and never records a live observation. The 23 records of the
+  `protocol-28` pack are in `protocol-28/evidence/records/`,
+  `docs/verification-records.md` states what they say and what they do not,
+  and the validate workflow now checks them. Closes
+  [issue #366](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/366).
+  ([PR #424])
+- Eight `protocol-28/xdr/transaction-envelope/` fixtures covering every arm of the
+  `TransactionEnvelope` union, which the pack previously had no evidence for:
+  `p28-xdr-transaction-envelope-v0-roundtrip` and
+  `p28-xdr-transaction-envelope-v0-decode-failure` (the `ENVELOPE_TYPE_TX_V0` arm),
+  `p28-xdr-transaction-envelope-v1-roundtrip` and
+  `p28-xdr-transaction-envelope-v1-decode-failure` (the `ENVELOPE_TYPE_TX` arm),
+  `p28-xdr-transaction-envelope-soroban-invoke-roundtrip` and
+  `p28-xdr-transaction-envelope-soroban-invoke-decode-failure` (a v1 envelope whose single
+  operation is `INVOKE_HOST_FUNCTION`) and
+  `p28-xdr-transaction-envelope-fee-bump-roundtrip` and
+  `p28-xdr-transaction-envelope-fee-bump-decode-failure` (the `ENVELOPE_TYPE_TX_FEE_BUMP`
+  arm). Every payload was produced by the official `stellar-xdr` 28.0.1 crate
+  (features `base64`, `alloc` — `rustc 1.99.1`, generated 2026-10-22 UTC) via a recorded
+  construction expression, never hand-assembled; the four decode-failure payloads are
+  documented mutations of those crate-produced values (three truncations — 150 of 212, 100 of
+  244 and 130 of 328 bytes — and one envelope-type discriminant changed to an undefined
+  value) that the same crate's `from_xdr_base64` rejects with `failed to fill whole buffer`
+  or `xdr value invalid`. The source accounts, payment destinations, contract id, signature
+  hints and signatures are labelled synthetic structural values in the headers, no secret
+  key is used anywhere, no fixture claims a network observation or a submitted transaction,
+  and each header cites `Stellar-transaction.x` (plus the ledger-entries, types and contract
+  files) at `stellar/stellar-xdr` v28.0 (commit `9c9c145`) with file and line ranges. All
+  eight pass the engine offline (`stellar-canary 0.2.0`, `Protocol-Canary` commit
+  `bc13306`): the four roundtrips byte-for-byte, the four decode-failures because the
+  engine rejects the value. Eight CF-04 structural verification records were added for
+  the new fixtures with `tools/evidence/record_structural.py`, and the pack's records
+  were regenerated, so `protocol-28/evidence/records/` holds one record per fixture
+  (31). Closes
+  [issue #362](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/362).
+  ([PR #434])
+
 - `tools/registry/diff.py`: Compares two fixture registries and reports which fixtures were
   added, removed or changed — the same id with a different file hash — so a pack release can
   be described from the registry data instead of by hand from `git log`. The output is three
@@ -656,6 +732,8 @@ discussion and diff. New entries must include that link; see
 [PR #380]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/380
 [PR #381]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/381
 [PR #425]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/425
+[PR #423]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/423
+[PR #424]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/424
 [PR #433]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/433
 [PR #432]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/432
 [PR #431]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/431

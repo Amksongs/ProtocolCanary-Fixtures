@@ -34,6 +34,15 @@ jobs:
       - name: Structural fixture validation
         run: python3 tools/validate/validate.py
 
+      - name: Verification records are valid
+        # The CF-04 records in protocol-28/evidence/records/ are checked
+        # against the record rules and against the fixture files that are
+        # there now (issue #366). A record whose fixtureSha256 no longer
+        # matches describes an earlier version of the fixture and has to be
+        # regenerated: `python3 tools/evidence/record_structural.py
+        # protocol-28`.
+        run: python3 tools/validate/validate.py --evidence protocol-28/evidence/records
+
       - name: Fixtures badge is current
         # README.md's fixture-count badge is generated from the fixture tree
         # by tools/badge/badge.py. Fail if a fixture was added or removed

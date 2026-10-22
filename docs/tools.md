@@ -10,7 +10,15 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 
 1. [`tools/pack/pack.py`](#toolspackpackpy)
 2. [`tools/pack/verify_archive.py`](#toolspackverify_archivepy)
+3. [`tools/pack/archive_digests.py`](#toolspackarchive_digestspy)
+3. [`tools/evidence/record_structural.py`](#toolsevidenerecord_structuralpy)
+4. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
 3. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
+4. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
+5. [`tools/badge/badge.py`](#toolsbadgebadgepy)
+6. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
+7. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
+8. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
 4. [`tools/registry/diff.py`](#toolsregistrydiffpy)
 5. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
 6. [`tools/badge/badge.py`](#toolsbadgebadgepy)
@@ -79,6 +87,71 @@ python3 tools/pack/verify_archive.py [--sha256 HEX] [--manifest PATH] archive
 
 - **stdout**: Verification status message (`OK: <archive>: ... valid; registry and pack digest match`); help text when `--help` is invoked.
 - **stderr**: Error diagnostics on failure.
+
+---
+
+## `tools/pack/archive_digests.py`
+
+Measures the archive's two digests and compares them across cells (issue #365, `docs/archive-reproducibility.md`). Builds the archive with `tools/pack/pack.py` and only reads the bytes back; it never changes the archive format or the compression settings.
+## `tools/evidence/record_structural.py`
+
+Writes CF-04 verification records for the structural check of a pack (issue #366, `docs/verification-records.md`). Runs the structural validation, then writes one record per fixture with the SHA-256 of the fixture file, the instant the check ran and `method: "structural"`. It writes nothing when a fixture does not validate, never derives an instant from a header comment, and never records a live observation.
+
+### Synopsis
+
+```bash
+python3 tools/pack/archive_digests.py build [--pack PACK] [--version VERSION]
+    [--output PATH] [--stream PATH] [--cell NAME]
+python3 tools/pack/archive_digests.py compare --results DIR
+    [--expected-cell CELL] [--expected-matrix JSON] [--summary-file PATH]
+python3 tools/evidence/record_structural.py PACK [--output-dir DIR]
+    [--verifier-version VERSION] [--dry-run]
+```
+
+### Options
+
+`build`:
+
+- `-h`, `--help`: show this help message and exit
+- `--pack PACK`: pack directory to build (default: `protocol-28`)
+- `--version VERSION`: release version used to name the archive (default: `0.0.0`)
+- `--output PATH`: also write the result document here (default: stdout only)
+- `--stream PATH`: also write the uncompressed tar stream here (default: `stream.tar` next to `--output`)
+- `--cell NAME`: the name of the cell this measurement was made in (default: the platform and Python version)
+
+`compare`:
+
+- `-h`, `--help`: show this help message and exit
+- `--results DIR`: directory holding the result documents of the cells (required)
+- `--expected-cell CELL`: a cell that must be present; may be given more than once
+- `--expected-matrix JSON`: the matrix the cells come from, as JSON (`{"os": [...], "python": [...]}`); every cell it names must be present
+- `--summary-file PATH`: also write the report here (for example `$GITHUB_STEP_SUMMARY`)
+- `-h`, `--help`: show this help message and exit
+- `PACK`: the pack directory to check (required)
+- `--output-dir DIR`: where to write the records (default: `PACK/evidence/records`)
+- `--verifier-version VERSION`: the version to record for the verifier (default: the commit the validator was read from)
+- `--dry-run`: run the check and report what would be written, but write nothing
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Success: the digests were measured, or the cells agree on the uncompressed tar-stream digest. |
+| `1` | The digests differ between cells, a cell produced no digest, the cell count does not match the declared matrix, a result document is unreadable, or the archive could not be built. |
+| `2` | Command-line syntax error: missing `--results`, unknown options, or `--expected-matrix` that is not a JSON object. |
+
+### Output Streams
+
+- **stdout**: the result document (`build`) or the markdown table and report (`compare`); help text when `--help` is invoked.
+- **stderr**: error diagnostics; the comparison failures are repeated there as `error: …`.
+| `0` | Success: the pack validates and every record was written (or would be, with `--dry-run`). |
+| `1` | The records cannot be written: the pack does not validate, holds no fixture, or a record would not satisfy the CF-04 rules. Nothing is written. |
+| `2` | Command-line syntax error: missing `PACK` or unknown options. |
+
+### Output Streams
+
+- **stdout**: the number of records written and their paths; help text when `--help` is invoked.
+- **stderr**: error diagnostics; the validator's own findings when the pack does not validate.
 
 ---
 
@@ -265,6 +338,45 @@ python3 tools/validate/schema_sync.py
 
 - **stdout**: `OK: schemas/fixture-v1.schema.json matches tools/validate/validate.py` on success.
 - **stderr**: Drift errors and summary on failure; usage message if any argument is supplied.
+
+---
+
+## `tools/evidence/capture_live.py`
+
+Captures live read-only RPC evidence from the approved endpoint and writes one CF-04 verification record per RPC fixture of a pack. Only the read-only methods CF-04 section 8 names are called, no credentials are used, and a record is written only for a capture that actually happened. See [`docs/live-verification.md`](live-verification.md).
+
+### Synopsis
+
+```bash
+python3 tools/evidence/capture_live.py PACK [--output-dir DIR] [--endpoint HOST]
+    [--local-endpoint URL] [--capture-method METHOD] [--timeout SECONDS]
+    [--verifier-version VERSION] [--dry-run]
+```
+
+### Options
+
+- `-h`, `--help`: show this help message and exit
+- `PACK`: the pack directory whose RPC fixtures are verified live
+- `--output-dir DIR`: where to write the captures and the records (default: `PACK/evidence/live`)
+- `--endpoint HOST`: the approved endpoint to call (default: the first approved endpoint)
+- `--local-endpoint URL`: a loopback mock endpoint to call instead of an approved one, for the tests and for a dry run on a fork
+- `--capture-method METHOD`: an extra read-only method to capture, on top of the ones the pack's fixtures need (repeatable)
+- `--timeout SECONDS`: how long one call may take before it is a failure (default: 30)
+- `--verifier-version VERSION`: the version to record for the verifier (default: the commit the script was read from)
+- `--dry-run`: make the calls and print what would be written, but write nothing
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Success: every capture succeeded; the captures and the records were written (or printed, in a dry run). |
+| `1` | Capture error: a call failed, timed out or answered with something that is not a JSON-RPC result; no record was written for it. The same code is used for a refused method, endpoint or local endpoint. |
+| `2` | Command-line syntax error: missing the `PACK` argument, or an unknown option. |
+
+### Output Streams
+
+- **stdout**: the endpoint, the captures, the records and their outcomes; the documents that would be written in a dry run; help text when `--help` is invoked.
+- **stderr**: the reason each failed capture failed, and the `FAILED:` summary.
 
 ---
 

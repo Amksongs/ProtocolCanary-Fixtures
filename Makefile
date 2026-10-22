@@ -11,6 +11,10 @@
 #                       needs the dev dependency `pip install coverage==7.16.2`
 #   make registry     - write PACK/registry-v1.json (tools/registry/generate.py);
 #                       PACK defaults to protocol-28. Not part of `make check`.
+#   make records      - write PACK/evidence/records/*.json, the CF-04 structural
+#                       verification records (tools/evidence/record_structural.py);
+#                       PACK defaults to protocol-28. Run it after a fixture
+#                       changes: a record holds the hash of the file it checked.
 #   make registry-diff- compare two registries and report what changed
 #                       (tools/registry/diff.py); OLD and NEW are the registry
 #                       files, FORMAT is text (default), json or markdown.
@@ -26,6 +30,7 @@ OLD ?=
 NEW ?=
 FORMAT ?= text
 
+.PHONY: validate badge badge-check test check-links coverage registry records pack check
 .PHONY: validate badge badge-check test check-links coverage registry registry-diff pack check
 
 validate:
@@ -50,6 +55,8 @@ coverage:
 registry:
 	python3 tools/registry/generate.py $(PACK)
 
+records:
+	python3 tools/evidence/record_structural.py $(PACK)
 registry-diff:
 	@test -n "$(OLD)" && test -n "$(NEW)" || { echo "usage: make registry-diff OLD=REGISTRY NEW=REGISTRY [FORMAT=text|json|markdown]" >&2; exit 2; }
 	python3 tools/registry/diff.py "$(OLD)" "$(NEW)" --format "$(FORMAT)"

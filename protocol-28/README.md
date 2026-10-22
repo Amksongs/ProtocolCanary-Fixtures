@@ -1,6 +1,6 @@
 # Protocol 28 compatibility pack
 
-This pack contains **23 fixtures**.
+This pack contains **31 fixtures**.
 
 Implemented in Stellar Core 28.0.0, Stellar RPC 28.0.0 (integration-tested
 against Soroban host 28.0.1), and the official `stellar-xdr` 28.0.0 crate.
@@ -37,6 +37,14 @@ enumeration.
 | [`xdr/stellar-value/p28-xdr-stellar-value-signed-roundtrip.toml`](xdr/stellar-value/p28-xdr-stellar-value-signed-roundtrip.toml) | xdr | — | A `StellarValue` using the `STELLAR_VALUE_SIGNED` ext arm round-trips byte-for-byte. |
 | [`xdr/stellar-value/p28-xdr-stellar-value-signed-decode-success.toml`](xdr/stellar-value/p28-xdr-stellar-value-signed-decode-success.toml) | xdr | — | A well-formed `StellarValue` using the `STELLAR_VALUE_SIGNED` ext arm decodes successfully. |
 | [`xdr/stellar-value/p28-xdr-stellar-value-signed-decode-failure.toml`](xdr/stellar-value/p28-xdr-stellar-value-signed-decode-failure.toml) | xdr | — | A truncated `STELLAR_VALUE_SIGNED` `StellarValue` encoding is correctly rejected, not silently accepted. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-roundtrip.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-roundtrip.toml) | xdr | — | A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX_V0` arm round-trips byte-for-byte. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-decode-failure.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-decode-failure.toml) | xdr | — | A `TransactionEnvelope` whose signature is truncated mid-signature is correctly rejected, not silently accepted. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-roundtrip.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-roundtrip.toml) | xdr | — | A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX` arm round-trips byte-for-byte. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-decode-failure.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-decode-failure.toml) | xdr | — | A `TransactionEnvelope` with an unknown envelope-type discriminant is correctly rejected, not silently accepted. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml) | xdr | — | A `TransactionEnvelope` whose single operation is `INVOKE_HOST_FUNCTION` round-trips byte-for-byte. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-soroban-invoke-decode-failure.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-soroban-invoke-decode-failure.toml) | xdr | — | A Soroban `TransactionEnvelope` truncated inside its contract id is correctly rejected, not silently accepted. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-fee-bump-roundtrip.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-fee-bump-roundtrip.toml) | xdr | — | A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX_FEE_BUMP` arm round-trips byte-for-byte. |
+| [`xdr/transaction-envelope/p28-xdr-transaction-envelope-fee-bump-decode-failure.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-fee-bump-decode-failure.toml) | xdr | — | A fee-bump `TransactionEnvelope` whose inner transaction is truncated is correctly rejected, not silently accepted. |
 | [`rpc/p28-rpc-network.toml`](rpc/p28-rpc-network.toml) | rpc | — | A configured RPC endpoint's `getNetwork` reports protocol 28 with a `passphrase` field. |
 | [`rpc/p28-rpc-latest-ledger.toml`](rpc/p28-rpc-latest-ledger.toml) | rpc | — | The same endpoint's `getLatestLedger` reports protocol 28, a numeric `sequence`, a string ledger `id`, and no `getNetwork`-only fields. |
 | [`soroban/p28-soroban-native-asset-name.toml`](soroban/p28-soroban-native-asset-name.toml) | soroban | — | The full construct → `simulateTransaction` → result pipeline works against real Protocol 28 infrastructure. |

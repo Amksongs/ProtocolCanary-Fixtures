@@ -228,6 +228,100 @@ correctly.
 229-237) at `stellar/stellar-xdr` tag `v28.0`, commit
 `9c9c145953e80990d6ff1ae3a6a973a0ce6d0694`.
 
+## TransactionEnvelope: every arm of the union
+
+Added 2026-10-22. The `TransactionEnvelope` union in `Stellar-transaction.x`
+at [`stellar/stellar-xdr` v28.0](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x)
+is the envelope every transaction reaches a network in, and it is the most
+complex union the engine decodes — three arms, two of which nest a whole
+envelope inside another. `enum EnvelopeType`
+([`Stellar-ledger-entries.x` lines 656-669](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x))
+gives the union's discriminant: `ENVELOPE_TYPE_TX_V0 = 0`, `ENVELOPE_TYPE_TX = 2`
+and `ENVELOPE_TYPE_TX_FEE_BUMP = 5`; `union TransactionEnvelope`
+(`Stellar-transaction.x` lines 1002-1010) carries a `TransactionV0Envelope`
+(lines 924-930) for the first, a `TransactionV1Envelope` (lines 967-973) for
+the second and a `FeeBumpTransactionEnvelope` (lines 993-999) for the third.
+Until these fixtures existed the pack had no evidence for any arm, so a
+decoder that mis-handled the bare `uint256` source account of the v0 arm, the
+`MuxedAccount`/`Preconditions` pair of the v1 arm, or the nesting of the
+fee-bump arm would pass this pack unnoticed.
+
+**What this pack tests.** Eight fixtures under
+[`protocol-28/xdr/transaction-envelope/`](../protocol-28/xdr/transaction-envelope/):
+one roundtrip per arm (decode + re-encode must reproduce the bytes) and one
+decode-failure per arm, whose payload is a documented mutation of the
+crate-produced value:
+
+| Fixture | Arm | Decode-failure mutation |
+| --- | --- | --- |
+| `p28-xdr-transaction-envelope-v0-roundtrip` | `ENVELOPE_TYPE_TX_V0` | — |
+| `p28-xdr-transaction-envelope-v0-decode-failure` | `ENVELOPE_TYPE_TX_V0` | first 150 of 212 bytes — cut inside the 64-byte signature |
+| `p28-xdr-transaction-envelope-v1-roundtrip` | `ENVELOPE_TYPE_TX` | — |
+| `p28-xdr-transaction-envelope-v1-decode-failure` | `ENVELOPE_TYPE_TX` | the 4-byte discriminant changed from `ENVELOPE_TYPE_TX` (2) to 63, an undefined envelope type |
+| `p28-xdr-transaction-envelope-soroban-invoke-roundtrip` | `ENVELOPE_TYPE_TX` with one `INVOKE_HOST_FUNCTION` operation | — |
+| `p28-xdr-transaction-envelope-soroban-invoke-decode-failure` | `ENVELOPE_TYPE_TX` with one `INVOKE_HOST_FUNCTION` operation | first 100 of 244 bytes — cut inside the 32-byte contract id |
+| `p28-xdr-transaction-envelope-fee-bump-roundtrip` | `ENVELOPE_TYPE_TX_FEE_BUMP` | — |
+| `p28-xdr-transaction-envelope-fee-bump-decode-failure` | `ENVELOPE_TYPE_TX_FEE_BUMP` | first 130 of 328 bytes — cut inside the inner transaction's destination account |
+
+**How the payloads were made.** Every `value_base64` is the output of a
+program that builds the typed value with the official `stellar-xdr` 28.0.1
+crate (features `base64` and `alloc` — the version pinned for Protocol 28) and
+calls `to_xdr_base64(Limits::none())`; each fixture's header records the
+construction expression, the crate version, the Rust version
+(`rustc 1.99.1 (58cf8f9c3 2026-10-13)`) and the generation date
+(2026-10-22 UTC). The same crate round-trips all four well-formed values
+byte-for-byte, and its `from_xdr_base64` returns `Err("failed to fill whole
+buffer")` for the three truncations and `Err("xdr value invalid")` for the
+mutated discriminant — the headers record which of the two each fixture
+provokes.
+
+**Every byte is a synthetic structural value.** The source accounts, payment
+destinations, contract id, signature hints and signatures are fixed bytes
+repeated to fill a field (0x11, 0x22, 0x33 for the v0 envelope; 0x44, 0x55,
+0x66 for the v1 one; 0x77, 0xab, 0x88 for the Soroban one; 0xcc, 0x99, 0xaa,
+0xbb, 0xdd for the fee-bump one). None of them is a real account, contract or
+network object, the signatures sign nothing, no secret key is used anywhere,
+and nothing here was observed on a network or submitted to one. The fees,
+sequence numbers, time bounds, amounts, resource limits and resource fee are
+arbitrary fixed numbers; the Soroban footprint and authorization list are
+empty, so the value invokes nothing.
+
+**Surface.** XDR only, like the fixtures above — a transaction envelope is
+wire representation, and what a fixture can check is that the bytes decode
+and re-encode exactly, and that a malformed encoding is rejected.
+
+**What Canary does not test here.** Anything about whether a real network
+would accept the envelope: the signatures do not sign anything, no sequence
+number is meaningful against a real account, and the Soroban value names a
+contract that does not exist. Only that the wire representation of each arm
+decodes, encodes and — when malformed — is refused.
+
+**Source.** [`Stellar-transaction.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x)
+(`TransactionEnvelope` union lines 1002-1010, `TransactionV0` lines 902-922,
+`TransactionV0Envelope` lines 924-930, `Transaction` lines 932-965,
+`TransactionV1Envelope` lines 967-973, `FeeBumpTransaction` lines 975-991,
+`FeeBumpTransactionEnvelope` lines 993-999, `Operation` lines 653-719,
+`InvokeHostFunctionOp` lines 618-629, `HostFunction` union lines 521-531,
+`InvokeContractArgs` lines 515-519, `SorobanTransactionData` lines 879-900,
+`SorobanResources` lines 856-869, `LedgerFootprint` lines 849-854,
+`Preconditions` union lines 839-847, `MuxedAccount` union lines 20-31,
+`DecoratedSignature` lines 33-37, `PaymentOp` lines 92-97),
+[`Stellar-ledger-entries.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x)
+(`EnvelopeType` lines 656-669, `Asset` union lines 55-66),
+[`Stellar-types.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-types.x)
+(`CryptoKeyType` lines 29-38, `Signature` line 80, `SignatureHint` line 82)
+and [`Stellar-contract.x`](https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x)
+(`SCAddress` union lines 206-222, `SCSymbol` line 12) at `stellar/stellar-xdr`
+tag `v28.0`, commit `9c9c145953e80990d6ff1ae3a6a973a0ce6d0694`.
+
+**Verified against the engine.** `stellar-canary 0.2.0`, built from
+`Protocol-Canary` main at commit `bc1330660c36eb67a87747513c7d14ba04d39238`,
+run as `stellar-canary check --fixtures-dir <repo>/protocol-28 --protocol 28
+--offline --no-cache --json` from a project directory whose
+`.stellar-canary.toml` enables `xdr = true`: all eight fixtures pass, the
+four roundtrips as "TransactionEnvelope round-tripped byte-for-byte" and the
+four decode-failures as "TransactionEnvelope was correctly rejected".
+
 ## CAP-0086: sparse-map host functions
 
 **What changed.** [CAP-0086](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0086.md)

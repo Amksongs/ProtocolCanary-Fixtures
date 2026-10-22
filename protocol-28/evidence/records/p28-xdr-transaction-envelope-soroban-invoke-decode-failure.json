@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-transaction-envelope-soroban-invoke-decode-failure",
+  "fixtureSha256": "bab09f61e941d87a7f822e0e537b338b89301ed0e11570dc418326a825a849c7",
+  "method": "structural",
+  "checkedAt": "2026-10-22T06:44:39Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "eb90c66ca49451d6d672397bb0dd6e64de580db1"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

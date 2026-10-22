@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-transaction-envelope-fee-bump-decode-failure",
+  "fixtureSha256": "cb135689a51db32956dadc4747a7d55a4f5ea972723b2cc61a6fbf579373a90a",
+  "method": "structural",
+  "checkedAt": "2026-10-22T06:44:39Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "eb90c66ca49451d6d672397bb0dd6e64de580db1"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}
