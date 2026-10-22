@@ -55,8 +55,10 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    credentials. A link into GitHub (`github.com/.../blob/...` or
    `raw.githubusercontent.com/...`) must name a full commit SHA or a release
    tag, not a branch such as `master`, so it keeps describing what the
-   fixture was written against; documentation pages have no ref to pin. The
-   header comment (a `#`
+   fixture was written against; documentation pages have no ref to pin.
+   The host name in a `source_reference` URL may only contain ASCII letters,
+   digits, `.` and `-` without empty labels or percent-encoding (non-ASCII hosts
+   must be written in punycode). The header comment (a `#`
    comment block above the TOML body) explains, in prose, how the expected
    value was derived or observed — e.g. "built with the official
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
