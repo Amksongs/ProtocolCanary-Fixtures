@@ -286,6 +286,11 @@ discussion and diff. New entries must include that link; see
   schema and validator remain in sync. Closes
   [issue #344](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/344).
 
+- `tools/validate/check_changelog.py` and pull-request CI workflow job enforcing
+  a CHANGELOG entry under `## [Unreleased]` for changes modifying fixtures
+  (`protocol-*/`), schemas (`schemas/`), or tools (`tools/`) (rule [F-055]),
+  with support for bypassing via the `no-changelog` PR label. Closes
+  [issue #329](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/329).
 - `tools/validate/validate.py` and `schemas/fixture-v1.schema.json` accept
   the `TransactionEnvelope` and `LedgerEntry` XDR type names, matching the
   five variants of `canary-xdr`'s `XdrTypeName` (read at Protocol-Canary

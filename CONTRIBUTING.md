@@ -465,6 +465,52 @@ introducing commit instead:
 
 A changelog entry without one of these links is not ready for review.
 
+### Automated CHANGELOG validation (rule [F-055])
+
+Pull request CI validates that a changelog entry is present whenever a pull
+request modifies governed files:
+
+- **Governed paths** requiring an entry under `## [Unreleased]`:
+  - Protocol packs (`protocol-*/`)
+  - Schemas (`schemas/`)
+  - Tools and scripts (`tools/`)
+- **Exempt paths** that do not require an entry when changed on their own:
+  - Documentation (`docs/`, root `README.md`, `CONTRIBUTING.md`, `SECURITY.md`)
+  - Tests (`tests/`)
+  - CI workflows (`.github/`)
+  - Repository configuration (`Makefile`, `.gitignore`, `.gitattributes`)
+
+If a pull request modifies governed files without modifying `CHANGELOG.md`, the
+pull request CI job will fail.
+
+#### Opting out with the `no-changelog` label
+
+If a pull request touches governed files but represents an internal refactoring,
+code cleanup, or other non-user-facing change that does not warrant a changelog
+entry, apply the **`no-changelog`** label to the pull request. CI reads pull
+request labels from the event payload and bypasses the changelog check when
+`no-changelog` is present.
+
+#### Checking changelog status locally
+
+Contributors can check changelog compliance locally before opening or pushing a
+PR:
+
+```bash
+# Compare working branch against origin/main:
+python3 tools/validate/check_changelog.py --base origin/main
+
+# Or check specific changed files:
+python3 tools/validate/check_changelog.py protocol-28/xdr/fixture.toml CHANGELOG.md
+
+# Or via make:
+make check-changelog
+```
+
+*(Note: CI does not require the changelog entry to include the PR number at check
+time, since the PR number is not known before the pull request is opened. You can
+add the link with the assigned PR number before merge.)*
+
 ## Development setup
 
 No build system is required. `tools/validate/validate.py` uses only the
@@ -476,6 +522,7 @@ For convenience, a `Makefile` wraps the commands CI runs:
 - `make badge` — regenerates README.md's fixture-count badge.
 - `make badge-check` — fails if that badge is stale.
 - `make test` — the repository test suite.
+- `make check-changelog` — verify CHANGELOG entry for changed files.
 - `make check-links` — check fixture source reference links across all packs.
 - `make coverage` — the test suite under branch coverage of `tools/`, failing
   below `.coveragerc`'s threshold. Needs the development-only dependency
