@@ -4,7 +4,7 @@
 ![ProtocolCanary-Fixtures](assets/ProtocolCanary-Fixtures-banner.svg)
 
 
-[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 31](https://img.shields.io/badge/fixtures-31-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
+[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 90](https://img.shields.io/badge/fixtures-90-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
 
 Canonical compatibility fixtures for Stellar Protocol Canary.
 
@@ -171,9 +171,14 @@ but the format supports them. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the fuller field
 table.
 
-**Currently supported RPC methods.** The `rpc` surface accepts only two
-methods today — `get-network` and `get-latest-ledger`, the same pair listed
-in [`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table.
+**Currently supported RPC methods.** The `rpc` surface accepts the ten
+methods the engine's `canary-rpc` crate parses — `get-network`,
+`get-latest-ledger`, `get-health`, `get-version-info`, `get-fee-stats`,
+`get-ledger-entries`, `get-transaction`, `get-ledgers`, `get-transactions`
+and `get-events` — the same set listed in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table, and
+pinned together with the engine commit it was read from in
+[`tests/fixtures/engine-vocabulary.json`](tests/fixtures/engine-vocabulary.json).
 Stellar RPC exposes many more (for example `getTransaction`); a fixture
 naming any other method is rejected by the validator. Adding support for
 another method is a `Protocol-Canary` change first (its `canary-rpc` crate),
@@ -219,7 +224,9 @@ an upstream XDR definition, or an official release/API reference — and
 carries a header comment explaining what was verified, how, and (for
 anything involving a live network call) when and against which endpoint.
 No fixture asserts a value that isn't traceable to an authoritative
-upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md). The full procedure
+for packaging, verifying, attesting, and publishing a pack release is documented
+in [`docs/releasing.md`](docs/releasing.md).
 
 ## Validation
 

@@ -770,6 +770,8 @@ class ValidatorTests(unittest.TestCase):
     def test_load_fixture_handles_unreadable_file_oserror(self) -> None:
         report = validate.Report()
         path = Path("unreadable.toml")
+        # load_fixture reads bytes (F-112), so the read error must come from
+        # read_bytes and still be reported as "failed to read file".
         with mock.patch.object(Path, "read_bytes", side_effect=OSError("Permission denied")):
             result = validate.load_fixture(path, report)
         self.assertIsNone(result)
@@ -1179,6 +1181,552 @@ field = "error"
 """
         report = self.run_validation({"a.toml": fixture})
         self.assertEqual(report.errors, [])
+
+    # --- F-052 (issue #326): RPC methods and [request] table validation ---
+
+    def test_rpc_parameterless_methods_reject_request_table(self) -> None:
+        for method in ("get-network", "get-latest-ledger"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    # --- F-017 (issue #280): the health and diagnostic RPC methods
+    def test_rpc_health_and_diagnostic_methods_are_accepted(self) -> None:
+        # canary-rpc parses get-health, get-version-info and get-fee-stats
+        # (crates/canary-rpc/src/request.rs, read at Protocol-Canary commit
+        # 94d7c794780a7c87944c5177ff1f8eb3edec300e), so a fixture naming one
+        # of them is a request the engine can run, not a misspelling.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                good = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{method}"'
+                )
+                report = self.run_validation({"a.toml": good})
+                self.assertEqual(report.errors, [], report.errors)
+
+    def test_rpc_health_and_diagnostic_methods_reject_a_request_table(self) -> None:
+        # The engine's parameter table lists these three as taking no
+        # parameters, so a [request] table must be rejected the same way it
+        # is for get-network and get-latest-ledger.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    def test_rpc_fixture_rejects_misspelled_health_method_names(self) -> None:
+        # The accepted names are the engine's own kebab-case spellings;
+        # an underscore or camelCase spelling of the same method is not
+        # accepted, and the diagnostic must name the allowed methods.
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                bad = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{invalid_method}"'
+                )
+                report = self.run_validation({"a.toml": bad})
+                errors = [e for e in report.errors if "'method'" in e]
+                self.assertEqual(len(errors), 1, report.errors)
+                self.assertIn(invalid_method, errors[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, errors[0])
+
+    def test_rpc_get_ledger_entries_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-entries"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-ledger-entries"
+"""
+        # Missing [request] table entirely
+        no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": no_req})
+        self.assertTrue(any("requires a [request] table with 'keys'" in e for e in rep.errors))
+
+        # Valid keys and xdrFormat
+        valid = base + """
+[request]
+keys = ["AAAAAA=="]
+xdrFormat = "base64"
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # Empty keys
+        empty_keys = base + """
+[request]
+keys = []
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": empty_keys})
+        self.assertTrue(any("keys: must not be empty" in e for e in rep.errors))
+
+        # 50 keys accepted
+        fifty = base + f"""
+[request]
+keys = {['AAAA'] * 50}
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": fifty})
+        self.assertEqual(rep.errors, [])
+
+        # 51 keys rejected (> MAX_KEYS)
+        fifty_one = base + f"""
+[request]
+keys = {['AAAA'] * 51}
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": fifty_one})
+        self.assertTrue(any("allows at most 50" in e for e in rep.errors))
+
+        # Non-base64 key
+        bad_b64 = base + """
+[request]
+keys = ["not base64!"]
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": bad_b64})
+        self.assertTrue(any("not a base64 string" in e for e in rep.errors))
+
+        # Unknown key in request
+        extra_key = base + """
+[request]
+keys = ["AAAAAA=="]
+unknownKey = 123
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": extra_key})
+        self.assertTrue(any("unknown [request] key(s)" in e for e in rep.errors))
+
+        # Invalid xdrFormat
+        bad_format = base + """
+[request]
+keys = ["AAAAAA=="]
+xdrFormat = "json"
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": bad_format})
+        self.assertTrue(any("only 'base64' is supported" in e for e in rep.errors))
+
+    def test_rpc_get_transaction_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-tx"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-transaction"
+"""
+        # Missing hash
+        no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": no_req})
+        self.assertTrue(any("requires a [request] table with 'hash'" in e for e in rep.errors))
+
+        # Valid 64 lowercase hex
+        valid = base + f"""
+[request]
+hash = "{"ab" * 32}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # Uppercase hex rejected
+        bad_upper = base + f"""
+[request]
+hash = "{"AB" * 32}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_upper})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+        # Wrong length (63 chars)
+        bad_len = base + f"""
+[request]
+hash = "{"a" * 63}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_len})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+        # Non-hex characters
+        bad_chars = base + f"""
+[request]
+hash = "{"g" * 64}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_chars})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+    def test_rpc_paged_methods_pagination_and_limits(self) -> None:
+        for method in ("get-ledgers", "get-transactions"):
+            with self.subTest(method=method):
+                base = f"""
+id = "p28-rpc-paged"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+"""
+                # Valid without [request] table
+                valid_no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": valid_no_req})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 1 accepted
+                lim1 = base + """
+[request]
+startLedger = 0
+[request.pagination]
+limit = 1
+cursor = "c1"
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim1})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 50 accepted
+                lim50 = base + """
+[request.pagination]
+limit = 50
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim50})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 0 rejected
+                lim0 = base + """
+[request.pagination]
+limit = 0
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim0})
+                self.assertTrue(any("limit 0 is outside 1..=50" in e for e in rep.errors))
+
+                # Pagination limit = 51 rejected
+                lim51 = base + """
+[request.pagination]
+limit = 51
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim51})
+                self.assertTrue(any("limit 51 is outside 1..=50" in e for e in rep.errors))
+
+                # Empty cursor rejected
+                empty_cur = base + """
+[request.pagination]
+cursor = ""
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": empty_cur})
+                self.assertTrue(any("cursor must be a non-empty string" in e for e in rep.errors))
+
+                # Unknown key in pagination
+                bad_pag_key = base + """
+[request.pagination]
+unknown = 1
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": bad_pag_key})
+                self.assertTrue(any("expected 'cursor' or 'limit'" in e for e in rep.errors))
+
+                # startLedger out of range: negative
+                neg_ledger = base + """
+[request]
+startLedger = -1
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": neg_ledger})
+                self.assertTrue(any("is not a ledger sequence" in e for e in rep.errors))
+
+                # startLedger > 4294967295
+                huge_ledger = base + """
+[request]
+startLedger = 4294967296
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": huge_ledger})
+                self.assertTrue(any("is not a ledger sequence" in e for e in rep.errors))
+
+    def test_rpc_get_events_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-events"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-events"
+"""
+        # Valid events request
+        valid = base + """
+[request]
+startLedger = 100
+endLedger = 200
+[[request.filters]]
+type = "contract"
+contractIds = ["CAAA", "CBBB"]
+topics = [["topic1"], ["topic2"]]
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # More than 2 filters rejected
+        three_filters = base + """
+[request]
+[[request.filters]]
+type = "contract"
+[[request.filters]]
+type = "system"
+[[request.filters]]
+type = "diagnostic"
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": three_filters})
+        self.assertTrue(any("has 3 filters; the engine allows at most 2" in e for e in rep.errors))
+
+        # Invalid filter type
+        bad_type = base + """
+[request]
+[[request.filters]]
+type = "other"
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": bad_type})
+        self.assertTrue(any("type must be 'contract', 'system' or 'diagnostic'" in e for e in rep.errors))
+
+        # Filter contractIds > 5 rejected
+        six_cids = base + f"""
+[request]
+[[request.filters]]
+type = "contract"
+contractIds = {['C' + str(i) for i in range(6)]}
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": six_cids})
+        self.assertTrue(any("contractIds has more than 5 entries" in e for e in rep.errors))
+
+        # Filter topics > 5 rejected
+        six_topics = base + f"""
+[request]
+[[request.filters]]
+type = "contract"
+topics = {[["t"] for _ in range(6)]}
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": six_topics})
+        self.assertTrue(any("topics has more than 5 entries" in e for e in rep.errors))
+
+    def test_rpc_request_structural_edge_cases(self) -> None:
+        from tools.validate.validate import validate_rpc_request, Report
+
+        # 1. request is not a dict
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": "not-a-table"}, Path("a.toml"), rep)
+        self.assertTrue(any("[request] must be a table" in e for e in rep.errors))
+
+        # 2. keys is not a list
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": {"keys": "not-a-list"}}, Path("a.toml"), rep)
+        self.assertTrue(any("keys: must be an array of strings" in e for e in rep.errors))
+
+        # 3. keys entry is not a string
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": {"keys": [123]}}, Path("a.toml"), rep)
+        self.assertTrue(any("keys: entry 0 must be a string" in e for e in rep.errors))
+
+        # 4. hash is not a string
+        rep = Report()
+        validate_rpc_request("get-transaction", {"request": {"hash": 123}}, Path("a.toml"), rep)
+        self.assertTrue(any("hash: must be a string" in e for e in rep.errors))
+
+        # 5. startLedger is bool or not int
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"startLedger": True}}, Path("a.toml"), rep)
+        self.assertTrue(any("startLedger: must be an integer" in e for e in rep.errors))
+
+        # 6. pagination is not a table
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"pagination": "not-a-table"}}, Path("a.toml"), rep)
+        self.assertTrue(any("pagination: must be a table" in e for e in rep.errors))
+
+        # 7. pagination limit is bool or not int
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"pagination": {"limit": "not-int"}}}, Path("a.toml"), rep)
+        self.assertTrue(any("pagination: limit must be an integer" in e for e in rep.errors))
+
+        # 8. filters is not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": "not-a-list"}}, Path("a.toml"), rep)
+        self.assertTrue(any("filters: must be an array of tables" in e for e in rep.errors))
+
+        # 9. filter is not a dict
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": ["not-a-dict"]}}, Path("a.toml"), rep)
+        self.assertTrue(any("filter 0 must be a table" in e for e in rep.errors))
+
+        # 10. filter unknown key
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"bad_key": 1}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("unknown key 'bad_key'" in e for e in rep.errors))
+
+        # 11. filter contractIds not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"contractIds": "not-a-list"}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("contractIds must be an array of strings" in e for e in rep.errors))
+
+        # 12. filter contractIds contains non-string
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"contractIds": [123]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("contractIds must contain only strings" in e for e in rep.errors))
+
+        # 13. filter topics not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": "not-a-list"}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("topics must be an array of arrays" in e for e in rep.errors))
+
+        # 14. filter topics row not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": ["not-a-row-list"]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry must be an array of strings" in e for e in rep.errors))
+
+        # 15. filter topics row len > 5
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": [["a", "b", "c", "d", "e", "f"]]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry has more than 5 entries" in e for e in rep.errors))
+
+        # 16. filter topics row contains non-string
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": [[123]]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry must contain only strings" in e for e in rep.errors))
 
     def test_soroban_fixture_requires_expect(self) -> None:
         bad = VALID_SOROBAN.replace("[expect]\nkind = \"simulation-success\"\n", "")
@@ -2018,10 +2566,10 @@ class SchemaSyncTests(unittest.TestCase):
         drift = copy.deepcopy(self.schema)
         block = schema_sync.surface_block(drift, "rpc")
         assert block is not None
-        block["properties"]["method"]["enum"].append("get-transaction")
+        block["properties"]["method"]["enum"].append("get-unreleased-method")
         errors = schema_sync.check_sync(drift, self.validator)
         self.assertTrue(any("rpc method enum" in e for e in errors), errors)
-        self.assertTrue(any("get-transaction" in e for e in errors), errors)
+        self.assertTrue(any("get-unreleased-method" in e for e in errors), errors)
 
     def test_detects_xdr_type_drift(self) -> None:
         drift = copy.deepcopy(self.schema)
@@ -3051,6 +3599,92 @@ class PortableFixtureNameTests(unittest.TestCase):
             with self.subTest(name=name):
                 report = self.run_validation(name)
                 self.assertEqual(report.errors, [])
+
+
+class FixtureFileReadingTests(unittest.TestCase):
+    """F-112: fixtures are read from bytes, like the engine reads them.
+
+    No newline translation (a lone carriage return must reach the TOML parser
+    and fail there with a line number) and exactly one leading UTF-8 BOM is
+    accepted, matching the engine. Every test writes raw bytes to a
+    temporary directory.
+    """
+
+    @staticmethod
+    def run_validation(contents: bytes) -> validate.Report:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.toml").write_bytes(contents)
+            return validate.validate_directory(root)
+
+    def test_ordinary_lf_fixture_is_unchanged(self) -> None:
+        # Control: the same file without a BOM still validates, so the BOM
+        # test below proves only the BOM handling changed.
+        report = self.run_validation(VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_one_leading_utf8_bom_is_accepted(self) -> None:
+        report = self.run_validation(b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_a_second_bom_is_rejected_as_invalid_toml(self) -> None:
+        report = self.run_validation(
+            b"\xef\xbb\xbf\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        )
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(any("line 1" in error for error in matching), matching)
+
+    def test_lone_carriage_return_fails_with_a_toml_error_and_line_number(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r").encode("utf-8"))
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        # Negative: the failure is the TOML parser's complaint about the
+        # newline, not a decoding error.
+        self.assertFalse(
+            any("not valid UTF-8" in error for error in report.errors), report.errors
+        )
+        self.assertTrue(any("line " in error for error in matching), matching)
+        # The structured diagnostic carries the same line number.
+        entries = [
+            entry for entry in report.error_entries if "invalid TOML" in entry.message
+        ]
+        self.assertTrue(all(isinstance(entry.line, int) for entry in entries), entries)
+
+    def test_crlf_line_endings_are_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_missing_final_newline_is_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.rstrip("\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_field_line_reports_the_same_line_the_parser_saw(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.toml"
+            path.write_bytes(contents)
+            # VALID_XDR opens with an empty line, so `id` is line 2 whether or
+            # not the BOM is present -- the BOM must not shift it to line 3.
+            self.assertEqual(validate._field_line(path, "id"), 2)
+
+    def test_type_error_on_a_bom_file_still_points_at_the_right_line(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.replace(
+            "protocol = 28", 'protocol = "28"'
+        ).encode("utf-8")
+        report = self.run_validation(contents)
+        matching = [
+            entry
+            for entry in report.error_entries
+            if "'protocol' must be of type int" in entry.message
+        ]
+        self.assertTrue(matching, report.errors)
+        # `protocol` is the third line of VALID_XDR; the BOM occupies part of
+        # line 1 and must not change the line _field_line attributes to the
+        # diagnostic (the machine-readable view; text format omits it).
+        self.assertEqual(matching[0].line, 3)
 
 
 _MISSING = object()

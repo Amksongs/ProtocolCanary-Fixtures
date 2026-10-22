@@ -110,7 +110,41 @@ XDR_KINDS = {"decode-success", "decode-failure", "roundtrip", "encode-equals"}
 # Set of RPC methods supported by canary-rpc. Must be kept in sync with the
 # methods canary-rpc actually implements: a value added here only names a string;
 # the corresponding method must already exist upstream in canary-rpc.
-RPC_METHODS = {"get-network", "get-latest-ledger"}
+RPC_METHODS = {
+    "get-events",
+    "get-fee-stats",
+    "get-health",
+    "get-latest-ledger",
+    "get-ledger-entries",
+    "get-ledgers",
+    "get-network",
+    "get-transaction",
+    "get-transactions",
+    "get-version-info",
+}
+_RPC_METHOD_PARAMS: dict[str, dict[str, bool]] = {
+    "get-network": {},
+    "get-latest-ledger": {},
+    "get-health": {},
+    "get-version-info": {},
+    "get-fee-stats": {},
+    "get-ledger-entries": {"keys": True, "xdrFormat": False},
+    "get-transaction": {"hash": True, "xdrFormat": False},
+    "get-ledgers": {"startLedger": False, "pagination": False, "xdrFormat": False},
+    "get-transactions": {"startLedger": False, "pagination": False, "xdrFormat": False},
+    "get-events": {
+        "startLedger": False,
+        "endLedger": False,
+        "filters": False,
+        "pagination": False,
+        "xdrFormat": False,
+    },
+}
+_RPC_MAX_KEYS = 50
+_RPC_MAX_LIMIT = 50
+_RPC_MAX_FILTERS = 2
+_RPC_MAX_LEDGER = 4294967295
+_RPC_EVENT_FILTER_TYPES = {"contract", "system", "diagnostic"}
 RPC_ASSERT_KINDS = {
     "field-exists",
     "field-absent",
@@ -290,7 +324,7 @@ XDR_CONDITIONAL_REQUIRED_FIELDS = {"encode-equals": ("expected_base64",)}
 COMMON_OPTIONAL_FIELDS = ("required_capabilities", "input_file", "expected_file")
 SURFACE_FIELDS = {
     "xdr": ("type", "kind", "value_base64", "expected_base64"),
-    "rpc": ("method", "assert"),
+    "rpc": ("method", "assert", "request"),
     "soroban": (
         "source_account",
         "contract_id",
@@ -591,6 +625,19 @@ def _toml_error_line(exc: tomllib.TOMLDecodeError) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _strip_one_leading_bom(text: str) -> str:
+    """Remove exactly one leading UTF-8 BOM from ``text``, if present.
+
+    Windows editors commonly save UTF-8 files with a byte order mark, and the
+    engine accepts such a file, so the validator must accept it too. Exactly
+    one is removed: a second BOM is left in the text, where the TOML parser
+    rejects it at line 1 instead of the file silently validating twice over.
+    """
+    if text.startswith(BYTE_ORDER_MARK):
+        return text[1:]
+    return text
+
+
 def _field_line(path: Path, key: str) -> int | None:
     """The 1-based line defining top-level ``key`` in ``path``, else ``None``.
 
@@ -600,14 +647,19 @@ def _field_line(path: Path, key: str) -> int | None:
     or the key is not defined exactly once -- for example it also appears in a
     comment -- because pointing at the wrong line would mislead more than
     omitting the line does.
+
+    The file is read exactly the way ``load_fixture`` reads it (bytes, decoded
+    as UTF-8, one leading BOM removed, no newline translation) so the line
+    numbers reported here match the text the TOML parser saw.
     """
     try:
         if path.stat().st_size > pack_limits.MAX_FILE_BYTES:
             return None
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read(pack_limits.MAX_FILE_BYTES + 1)
-        if len(text.encode("utf-8", errors="replace")) > pack_limits.MAX_FILE_BYTES:
+        with open(path, "rb") as f:
+            data = f.read(pack_limits.MAX_FILE_BYTES + 1)
+        if len(data) > pack_limits.MAX_FILE_BYTES:
             return None
+        text = _strip_one_leading_bom(data.decode("utf-8", errors="replace"))
     except OSError:
         return None
     pattern = re.compile(rf"^[ \t]*{re.escape(key)}[ \t]*=")
@@ -752,7 +804,7 @@ def load_fixture(path: Path, report: Report, root: Path | None = None) -> Fixtur
         return None
     report_unsafe_characters(path, raw, report)
     try:
-        data = tomllib.loads(raw)
+        data = tomllib.loads(_strip_one_leading_bom(raw))
     except tomllib.TOMLDecodeError as exc:
         report.error(path, f"invalid TOML: {exc}", line=_toml_error_line(exc))
         return None
@@ -1043,6 +1095,273 @@ def validate_xdr_body(fx: Fixture, report: Report) -> None:
         )
 
 
+def _is_canonical_base64_string(text: str) -> bool:
+    if not isinstance(text, str) or not text or len(text) % 4 != 0:
+        return False
+    body = text.rstrip("=")
+    pad = len(text) - len(body)
+    if pad > 2:
+        return False
+    return all(c.isalnum() or c in "+/" for c in body)
+
+
+def validate_rpc_request(method: str, data: dict, path: Path, report: Report) -> None:
+    """Validate [request] table per CA-01-K, mirroring canary-rpc's request.rs."""
+    if method not in _RPC_METHOD_PARAMS:
+        return
+    params = _RPC_METHOD_PARAMS[method]
+    request = data.get("request")
+
+    if request is None:
+        required = [name for name, req in params.items() if req]
+        if required:
+            report.error(
+                path,
+                f"method {method!r} requires a [request] table with {required[0]!r}",
+                line=_field_line(path, "method"),
+            )
+        return
+
+    if not params:
+        report.error(
+            path,
+            f"method {method!r} takes no parameters, so it cannot have a [request] table",
+            line=_field_line(path, "request"),
+        )
+        return
+
+    if not isinstance(request, dict):
+        report.error(
+            path,
+            "[request] must be a table",
+            line=_field_line(path, "request"),
+        )
+        return
+
+    unknown = sorted(set(request) - set(params))
+    if unknown:
+        report.error(
+            path,
+            f"unknown [request] key(s) {unknown} for method {method!r}; its parameters are {sorted(params)}",
+            line=_field_line(path, "request"),
+        )
+
+    for name, req in params.items():
+        if req and name not in request:
+            report.error(
+                path,
+                f"[request] is missing required key {name!r}",
+                line=_field_line(path, "request"),
+            )
+
+    if "keys" in request:
+        keys = request["keys"]
+        if not isinstance(keys, list):
+            report.error(
+                path,
+                "[request] keys: must be an array of strings",
+                line=_field_line(path, "request"),
+            )
+        elif len(keys) == 0:
+            report.error(
+                path,
+                "[request] keys: must not be empty",
+                line=_field_line(path, "request"),
+            )
+        elif len(keys) > _RPC_MAX_KEYS:
+            report.error(
+                path,
+                f"[request] keys: has {len(keys)} entries; the engine allows at most {_RPC_MAX_KEYS}",
+                line=_field_line(path, "request"),
+            )
+        else:
+            for idx, key in enumerate(keys):
+                if not isinstance(key, str):
+                    report.error(
+                        path,
+                        f"[request] keys: entry {idx} must be a string",
+                        line=_field_line(path, "request"),
+                    )
+                elif not _is_canonical_base64_string(key):
+                    report.error(
+                        path,
+                        f"[request] keys: entry {idx} is not a base64 string",
+                        line=_field_line(path, "request"),
+                    )
+
+    if "hash" in request:
+        val = request["hash"]
+        if not isinstance(val, str):
+            report.error(
+                path,
+                "[request] hash: must be a string",
+                line=_field_line(path, "request"),
+            )
+        elif len(val) != 64 or not all(c in "0123456789abcdef" for c in val):
+            report.error(
+                path,
+                "[request] hash: must be 64 lowercase hex characters",
+                line=_field_line(path, "request"),
+            )
+
+    for ledger_key in ("startLedger", "endLedger"):
+        if ledger_key in request:
+            val = request[ledger_key]
+            if isinstance(val, bool) or not isinstance(val, int):
+                report.error(
+                    path,
+                    f"[request] {ledger_key}: must be an integer",
+                    line=_field_line(path, "request"),
+                )
+            elif not (0 <= val <= _RPC_MAX_LEDGER):
+                report.error(
+                    path,
+                    f"[request] {ledger_key}: {val} is not a ledger sequence (0..={_RPC_MAX_LEDGER})",
+                    line=_field_line(path, "request"),
+                )
+
+    if "pagination" in request:
+        pag = request["pagination"]
+        if not isinstance(pag, dict):
+            report.error(
+                path,
+                "[request] pagination: must be a table",
+                line=_field_line(path, "request"),
+            )
+        else:
+            unknown_pag = sorted(set(pag) - {"cursor", "limit"})
+            for k in unknown_pag:
+                report.error(
+                    path,
+                    f"[request] pagination: unknown key {k!r}; expected 'cursor' or 'limit'",
+                    line=_field_line(path, "request"),
+                )
+            if "cursor" in pag:
+                cur = pag["cursor"]
+                if not isinstance(cur, str) or len(cur) == 0:
+                    report.error(
+                        path,
+                        "[request] pagination: cursor must be a non-empty string",
+                        line=_field_line(path, "request"),
+                    )
+            if "limit" in pag:
+                lim = pag["limit"]
+                if isinstance(lim, bool) or not isinstance(lim, int):
+                    report.error(
+                        path,
+                        "[request] pagination: limit must be an integer",
+                        line=_field_line(path, "request"),
+                    )
+                elif not (1 <= lim <= _RPC_MAX_LIMIT):
+                    report.error(
+                        path,
+                        f"[request] pagination: limit {lim} is outside 1..={_RPC_MAX_LIMIT}",
+                        line=_field_line(path, "request"),
+                    )
+
+    if "filters" in request:
+        filters = request["filters"]
+        if not isinstance(filters, list):
+            report.error(
+                path,
+                "[request] filters: must be an array of tables",
+                line=_field_line(path, "request"),
+            )
+        elif len(filters) > _RPC_MAX_FILTERS:
+            report.error(
+                path,
+                f"[request] filters: has {len(filters)} filters; the engine allows at most {_RPC_MAX_FILTERS}",
+                line=_field_line(path, "request"),
+            )
+        else:
+            for idx, flt in enumerate(filters):
+                if not isinstance(flt, dict):
+                    report.error(
+                        path,
+                        f"[request] filters: filter {idx} must be a table",
+                        line=_field_line(path, "request"),
+                    )
+                    continue
+                unknown_flt = sorted(set(flt) - {"type", "contractIds", "topics"})
+                for k in unknown_flt:
+                    report.error(
+                        path,
+                        f"[request] filters: filter {idx}: unknown key {k!r}",
+                        line=_field_line(path, "request"),
+                    )
+                if "type" in flt:
+                    t = flt["type"]
+                    if t not in _RPC_EVENT_FILTER_TYPES:
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: type must be 'contract', 'system' or 'diagnostic'",
+                            line=_field_line(path, "request"),
+                        )
+                if "contractIds" in flt:
+                    cids = flt["contractIds"]
+                    if not isinstance(cids, list):
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: contractIds must be an array of strings",
+                            line=_field_line(path, "request"),
+                        )
+                    elif len(cids) > 5:
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: contractIds has more than 5 entries",
+                            line=_field_line(path, "request"),
+                        )
+                    elif not all(isinstance(c, str) for c in cids):
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: contractIds must contain only strings",
+                            line=_field_line(path, "request"),
+                        )
+                if "topics" in flt:
+                    topics = flt["topics"]
+                    if not isinstance(topics, list):
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: topics must be an array of arrays",
+                            line=_field_line(path, "request"),
+                        )
+                    elif len(topics) > 5:
+                        report.error(
+                            path,
+                            f"[request] filters: filter {idx}: topics has more than 5 entries",
+                            line=_field_line(path, "request"),
+                        )
+                    else:
+                        for row_idx, row in enumerate(topics):
+                            if not isinstance(row, list):
+                                report.error(
+                                    path,
+                                    f"[request] filters: filter {idx}: a topics entry must be an array of strings",
+                                    line=_field_line(path, "request"),
+                                )
+                            elif len(row) > 5:
+                                report.error(
+                                    path,
+                                    f"[request] filters: filter {idx}: a topics entry has more than 5 entries",
+                                    line=_field_line(path, "request"),
+                                )
+                            elif not all(isinstance(elem, str) for elem in row):
+                                report.error(
+                                    path,
+                                    f"[request] filters: filter {idx}: a topics entry must contain only strings",
+                                    line=_field_line(path, "request"),
+                                )
+
+    if "xdrFormat" in request:
+        xf = request["xdrFormat"]
+        if xf != "base64":
+            report.error(
+                path,
+                "[request] xdrFormat: only 'base64' is supported",
+                line=_field_line(path, "request"),
+            )
+
+
 def validate_rpc_body(fx: Fixture, report: Report) -> None:
     data, path = fx.data, fx.path
 
@@ -1053,6 +1372,8 @@ def validate_rpc_body(fx: Fixture, report: Report) -> None:
             f"field 'method' must be one of {sorted(RPC_METHODS)}, got {data['method']!r}",
             line=_field_line(path, "method"),
         )
+    elif ok_method:
+        validate_rpc_request(data["method"], data, path, report)
 
     if "assert" not in data:
         report.error(path, "rpc fixture must define at least one [[assert]] table")

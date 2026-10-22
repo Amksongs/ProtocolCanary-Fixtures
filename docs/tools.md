@@ -11,20 +11,15 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 1. [`tools/pack/pack.py`](#toolspackpackpy)
 2. [`tools/pack/verify_archive.py`](#toolspackverify_archivepy)
 3. [`tools/pack/archive_digests.py`](#toolspackarchive_digestspy)
-3. [`tools/evidence/record_structural.py`](#toolsevidenerecord_structuralpy)
-4. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
-3. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
-4. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
-5. [`tools/badge/badge.py`](#toolsbadgebadgepy)
-6. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
-7. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
-8. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
-4. [`tools/registry/diff.py`](#toolsregistrydiffpy)
-5. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
-6. [`tools/badge/badge.py`](#toolsbadgebadgepy)
-7. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
-8. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
-9. [Observed Inconsistencies](#observed-inconsistencies)
+4. [`tools/evidence/record_structural.py`](#toolsevidencerecord_structuralpy)
+5. [`tools/registry/generate.py`](#toolsregistrygeneratepy)
+6. [`tools/registry/diff.py`](#toolsregistrydiffpy)
+7. [`tools/release/manifest.py`](#toolsreleasemanifestpy)
+8. [`tools/badge/badge.py`](#toolsbadgebadgepy)
+9. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
+10. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
+11. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
+12. [Observed Inconsistencies](#observed-inconsistencies)
 
 ---
 
@@ -162,12 +157,15 @@ Generates the fixture registry (`registry-v1.json`) for one protocol pack per CF
 ### Synopsis
 
 ```bash
-python3 tools/registry/generate.py [--output PATH | --stdout] pack
+python3 tools/registry/generate.py [--allow-empty] [--protocol N]
+    [--output PATH | --stdout] pack
 ```
 
 ### Options
 
 - `-h`, `--help`: show this help message and exit
+- `--allow-empty`: allow generating an empty baseline registry (requires `--protocol N`)
+- `--protocol N`: protocol number for the pack (required with `--allow-empty`)
 - `--output PATH`: write the registry here (default: PACK/registry-v1.json)
 - `--stdout`: print the registry instead of writing a file
 
@@ -176,7 +174,7 @@ python3 tools/registry/generate.py [--output PATH | --stdout] pack
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: registry generated and successfully validated against `schemas/registry-v1.schema.json`. |
-| `1` | Pack error: pack path is not a directory, contains invalid fixtures, or violates extraction limits. |
+| `1` | Pack error: pack path is not a directory, contains invalid fixtures, violates extraction limits, empty pack without `--allow-empty`, or `--allow-empty` without a valid `--protocol`. |
 | `2` | Command-line syntax error: missing `pack` argument, unknown options, or mutually exclusive options (`--output` and `--stdout` together). |
 
 ### Output Streams
@@ -259,24 +257,28 @@ Generates or checks the dynamic fixture-count shield badge in `README.md`.
 ### Synopsis
 
 ```bash
-python3 tools/badge/badge.py [--check]
+python3 tools/badge/badge.py [-h] [--check]
 ```
 
 ### Options
 
+- `-h`, `--help`: show this help message and exit without modifying `README.md`
 - `--check`: verify that the badge count in `README.md` is current without modifying the file; exits non-zero if stale.
+
+Any other argument is a command-line error: usage is printed to stderr and the tool exits 2 without touching `README.md` (issue #392).
 
 ### Exit Codes
 
 | Exit Code | Meaning |
 |---|---|
-| `0` | Success: badge updated or already current. When called without `--check`, exits 0 even if arbitrary arguments or nonexistent paths are passed. |
+| `0` | Success: badge updated or already current, or `--help` requested. |
 | `1` | Under `--check`: badge in `README.md` is stale. Also returned if `README.md` cannot be read or markers are missing. |
+| `2` | Command-line syntax error: unrecognized arguments (usage printed to stderr; `README.md` is not modified). |
 
 ### Output Streams
 
-- **stdout**: Success and status messages (`OK: README.md fixtures badge ...`).
-- **stderr**: Error message when the badge is stale or file read fails.
+- **stdout**: Success and status messages (`OK: README.md fixtures badge ...`); help text on `--help`.
+- **stderr**: Error message when the badge is stale or file read fails; usage on a command-line syntax error.
 
 ---
 
@@ -319,25 +321,27 @@ Verifies that `schemas/fixture-v1.schema.json` mirrors the constants in `tools/v
 ### Synopsis
 
 ```bash
-python3 tools/validate/schema_sync.py
+python3 tools/validate/schema_sync.py [-h]
 ```
 
 ### Options
 
-- None. The tool takes no arguments.
+- `-h`, `--help`: show this help message and exit.
+
+Without arguments the tool performs the sync check.
 
 ### Exit Codes
 
 | Exit Code | Meaning |
 |---|---|
-| `0` | Success: schema matches validator constants. |
+| `0` | Success: schema matches validator constants; or `--help` requested. |
 | `1` | Schema drift: one or more discrepancies found between schema and validator. |
-| `2` | Any argument provided (including `--help` or arbitrary paths). |
+| `2` | Command-line syntax error: any argument other than `-h`/`--help` (usage printed to stderr). |
 
 ### Output Streams
 
-- **stdout**: `OK: schemas/fixture-v1.schema.json matches tools/validate/validate.py` on success.
-- **stderr**: Drift errors and summary on failure; usage message if any argument is supplied.
+- **stdout**: `OK: schemas/fixture-v1.schema.json matches tools/validate/validate.py` on success; help text on `--help`.
+- **stderr**: Drift errors and summary on failure; usage on a command-line syntax error.
 
 ---
 

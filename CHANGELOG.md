@@ -25,6 +25,106 @@ discussion and diff. New entries must include that link; see
   `docs/run-records.md` states the format and the rule. Closes
   [issue #367](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/367).
   ([PR #425])
+- Thirty-four `protocol-28/xdr/scval/` fixtures covering the scalar `ScVal`
+  variants, which the pack previously had no evidence for: the primitives
+  (`void`, `bool` true and false, `u32`, `i32`, `u64`, `i64`, `timepoint`,
+  `duration`), the wide integers (`u128`, `i128`, `u256`, `i256` at their
+  minimum, maximum and zero, plus a `u128` with the high bit set), and
+  `bytes`, `string` and `symbol` at empty, small and — for `symbol` — the
+  `SCSYMBOL_LIMIT` boundary of 32 bytes. Seven decode-failure fixtures complete
+  the set: six truncations and a 33-byte symbol. Every payload was produced by
+  the official `stellar-xdr` 28.0.1 crate (features `base64`, `alloc` —
+  `rustc 1.99.1`, generated 2026-10-22 UTC) through a recorded construction
+  expression, never hand-assembled, and the same program asserted that
+  `from_xdr_base64` round-trips each valid value and rejects each invalid one
+  (`failed to fill whole buffer` for the truncations, `xdr value max length
+  exceeded` for the 33-byte symbol). The `u128` high-bit fixture is valid
+  input and its header distinguishes it by ScValType discriminant from the
+  bit-identical `i128` minimum; `u8` and `i8` are not ScVal variants and no
+  fixture invents one. Every header cites `Stellar-contract.x` (plus
+  `Stellar-types.x` where a typedef is involved) at `stellar/stellar-xdr`
+  v28.0 (commit `9c9c145`) with file and line ranges, labels its bytes as
+  synthetic structural values, and claims no network observation. All 34 pass
+  `tools/validate/validate.py` and agree with `tests/scval_xdr.py` (decode and
+  re-encode bit-for-bit; the seven invalid payloads rejected), and all 34 pass
+  the engine offline (`stellar-canary 0.2.0`, `Protocol-Canary` commit
+  `bc13306`): 27 round-trips byte-for-byte, 7 correctly rejected. The
+  `protocol-28` pack's CF-04 structural records were regenerated, so
+  `protocol-28/evidence/records/` holds one record per fixture. Closes
+  [issue #360](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/360).
+  ([PR #439])
+
+- Fourteen `protocol-28/xdr/scval-composite/` fixtures covering the composite
+  and address `ScVal` variants: `Vec` absent, present-but-empty, one element and
+  three heterogeneous elements; `Map` empty, one entry, three entries, one
+  level of map-in-vec nesting, and an encoding with non-ascending keys; and
+  `Address` in both the account and contract arms. Three decode-failure
+  fixtures complete the set: a vec whose count exceeds its data, a map cut
+  after its key, and an address with an undefined `SCAddressType`. The vec and
+  map fixtures pin the optional-pointer distinction (`SCVec *`/`SCMap *`), so
+  an absent container and a present-but-empty one are shown to be different
+  encodings. The non-ascending map records an observation: the pinned crate's
+  `from_xdr_base64` accepted it and re-encoded it unchanged, and the engine
+  passed it offline, so neither enforces ascending entry order on decode at
+  these versions. Every payload was produced by the official `stellar-xdr`
+  28.0.1 crate (features `base64`, `alloc` — `rustc 1.99.1`, generated
+  2026-10-22 UTC) through a recorded construction expression, never
+  hand-assembled; the three invalid payloads are documented mutations of
+  crate-produced values that the same crate rejects (`failed to fill whole
+  buffer` twice, `xdr value invalid` once). Address bytes are labelled
+  synthetic structural values — 0x11-filled is not a real account key and
+  0x22-filled is not a real contract id — and no fixture targets a depth limit
+  (open #303). Every header cites `Stellar-contract.x` and `Stellar-types.x`
+  at `stellar/stellar-xdr` v28.0 (commit `9c9c145`) with file and line ranges.
+  All 14 pass `tools/validate/validate.py` and agree with `tests/scval_xdr.py`
+  (11 roundtrips byte-for-byte, 3 rejected), and all 14 pass the engine offline
+  (`stellar-canary 0.2.0`, `Protocol-Canary` commit `bc13306`). The pack's
+  CF-04 structural records were regenerated, so `protocol-28/evidence/records/`
+  holds one record per fixture. Closes
+  [issue #361](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/361).
+  ([PR #440])
+
+- `docs/releasing.md`: comprehensive release guide detailing pre-release checks,
+  build and verification commands with real outputs, tag naming and immutability rules,
+  automated vs manual steps, post-release verification, and rollback procedures
+  (issue #339). Linked from `README.md` and `CONTRIBUTING.md`. Closes
+  [issue #339](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/339).
+- `tools/validate/validate.py` and `schemas/fixture-v1.schema.json`: accept
+  the lookup and paged RPC methods (`get-ledger-entries`, `get-transaction`,
+  `get-ledgers`, `get-transactions`, `get-events`) alongside `get-network`
+  and `get-latest-ledger`, and enforce `[request]` table validation according
+  to CA-01-K. Closes
+  [issue #326](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/326).
+
+- Eleven `protocol-28/xdr/ledger-entry/` fixtures covering the ledger-entry arms
+  that matter to the protocol: `ACCOUNT`, `TRUSTLINE`, `CONTRACT_DATA`,
+  `CONTRACT_CODE` and `TTL`, each with a roundtrip and at least one
+  decode-failure fixture (six in total: four end-of-structure truncations, a
+  contract-code blob cut inside its length prefix, and a trustline whose
+  `TrustLineAsset` discriminant is changed from `ASSET_TYPE_CREDIT_ALPHANUM4`
+  to the undefined value 9). Every payload was produced by the official
+  `stellar-xdr` 28.0.1 crate (features `base64`, `alloc` — `rustc 1.99.1`,
+  generated 2026-10-22 UTC) through a recorded construction expression, never
+  hand-assembled; the same program asserted that `from_xdr_base64` round-trips
+  each valid entry and rejects each invalid one (`failed to fill whole buffer`
+  for the five truncations, `xdr value invalid` for the undefined asset type).
+  Every id, hash, key and balance is a synthetic structural value: the account
+  ids, issuer, contract id, code hash and TTL key hash are fixed placeholders,
+  the contract-code bytes are the four-byte WebAssembly magic used only to
+  exercise the opaque path and are not a WASM module, `example.test` is a
+  documentation domain, and no secret key appears anywhere. Each header cites
+  `Stellar-ledger-entries.x` at `stellar/stellar-xdr` v28.0 (commit
+  `9c9c145`) with file and line ranges, including the extension unions. The
+  independent standard-library codec in `tests/xdr_codec.py` was extended with
+  the five arms and checks all eleven fixtures (5 roundtrips byte-for-byte, 6
+  rejected). All eleven pass `tools/validate/validate.py` and the engine
+  offline (`stellar-canary 0.2.0`, `Protocol-Canary` commit `bc13306`): 5
+  round-trips byte-for-byte, 6 correctly rejected. The pack's CF-04 structural
+  records were regenerated, so `protocol-28/evidence/records/` holds one record
+  per fixture (42). Closes
+  [issue #363](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/363).
+  ([PR #444])
+
 - `tools/pack/archive_digests.py` and `.github/workflows/archive-baseline.yml`:
   a cross-platform baseline for the pack archive (issue #365). Every cell of
   the platform and Python-version matrix builds the `protocol-28` archive with a
@@ -737,3 +837,6 @@ discussion and diff. New entries must include that link; see
 [PR #433]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/433
 [PR #432]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/432
 [PR #431]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/431
+[PR #444]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/444
+[PR #440]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/440
+[PR #439]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/439

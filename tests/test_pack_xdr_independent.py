@@ -9,6 +9,7 @@ Iterates over every fixture under protocol-*/xdr/ and asserts:
 from __future__ import annotations
 
 import base64
+import importlib.util
 import sys
 import tomllib
 import unittest
@@ -19,6 +20,17 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tests import xdr_codec
+
+# ScVal has its own standard-library codec (tests/scval_xdr.py, issue #304);
+# xdr_codec deliberately covers only StellarValue, ContractExecutable and
+# TransactionEnvelope. Fixtures of type ScVal are checked against that codec.
+_scval_spec = importlib.util.spec_from_file_location(
+    "scval_xdr", Path(__file__).resolve().parent / "scval_xdr.py"
+)
+assert _scval_spec is not None and _scval_spec.loader is not None
+scval_xdr = importlib.util.module_from_spec(_scval_spec)
+sys.modules["scval_xdr"] = scval_xdr
+_scval_spec.loader.exec_module(scval_xdr)
 
 
 class PackXdrIndependentTests(unittest.TestCase):
@@ -45,7 +57,26 @@ class PackXdrIndependentTests(unittest.TestCase):
             raw_bytes = base64.b64decode(value_b64)
 
             with self.subTest(fixture_id=fixture_id, type=type_name, kind=kind):
-                if kind == "roundtrip":
+                if type_name == "ScVal":
+                    # Decoded by the dedicated ScVal codec: a decode-failure
+                    # payload must be rejected, anything else must round-trip
+                    # byte-for-byte.
+                    if kind == "decode-failure":
+                        with self.assertRaises(scval_xdr.XdrDecodeError) as caught:
+                            scval_xdr.decode(raw_bytes)
+                        err_msg = str(caught.exception).lower()
+                        self.assertTrue(
+                            any(term in err_msg for term in ("truncated", "need", "length", "limit", "padding", "discriminant", "unsupported")),
+                            f"Unexpected error reason for {fixture_id}: {caught.exception}",
+                        )
+                    else:
+                        decoded = scval_xdr.decode(raw_bytes)
+                        self.assertEqual(
+                            raw_bytes,
+                            scval_xdr.encode(decoded),
+                            f"Roundtrip byte mismatch for {fixture_id} (ScVal)",
+                        )
+                elif kind == "roundtrip":
                     decoded = xdr_codec.decode_xdr(type_name, raw_bytes)
                     re_encoded = xdr_codec.encode_xdr(type_name, decoded)
                     self.assertEqual(

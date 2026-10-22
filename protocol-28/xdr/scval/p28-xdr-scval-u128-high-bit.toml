@@ -1,0 +1,64 @@
+# Protocol 28 / ScVal: an `SCV_U128` with the high bit set round-trips.
+#
+# What this tests:
+# `SCV_U128` carrying 2^127: `UInt128Parts { hi: 1u64 << 63, lo: 0 }`. The
+# value is unsigned and valid in this slot; its two payload limbs are bit-
+# identical to the payload of p28-xdr-scval-i128-min, but the ScValType
+# discriminant is 9 (SCV_U128) rather than 10 (SCV_I128), so the two values
+# are distinct encodings.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `case SCV_U128: UInt128Parts u128;` — Stellar-contract.x lines 277-278;
+#     `struct UInt128Parts` — lines 140-143; `struct Int128Parts` — lines
+#     149-152; `enum SCValType` discriminants — lines 26-81.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Why it matters:
+# This is the exact case where "high bit set" must not be read as "negative":
+# the same 128 payload bits are a large unsigned value under SCV_U128 and
+# -2^127 under SCV_I128. The discriminant, not the payload, decides which, so
+# reading the payload alone is wrong. The fixture is valid input and must be
+# accepted. # Note: u8 and i8 are not ScVal variants (Stellar-contract.x
+# defines no such cases), so no fixture here invents one.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this value and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   ScVal::U128(UInt128Parts { hi: 1u64 << 63, lo: 0 })
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: Yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes, which are quoted
+# in full in the fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# network object: the number, boolean, symbol or string is an arbitrary fixed
+# value chosen by the generator, no account key, contract id, signature or
+# secret key appears anywhere, and nothing here was observed on a network.
+#
+# The XDR definition cited below is the pinned file, not a moving branch.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-u128-high-bit"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "`ScVal::U128` with the high bit set round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "roundtrip"
+value_base64 = "AAAACYAAAAAAAAAAAAAAAAAAAAA="

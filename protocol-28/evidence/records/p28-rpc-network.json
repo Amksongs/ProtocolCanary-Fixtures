@@ -3,10 +3,10 @@
   "fixtureId": "p28-rpc-network",
   "fixtureSha256": "cd53626db9d7a130e678f90d7d32545c23c95895cc0eb3de71e44cd82fc9596d",
   "method": "structural",
-  "checkedAt": "2026-10-22T06:44:39Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "eb90c66ca49451d6d672397bb0dd6e64de580db1"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

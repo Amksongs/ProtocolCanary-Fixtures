@@ -20,10 +20,16 @@ It does not execute fixtures, contact the network, or validate fixture files
 end to end -- that remains ``tools/validate/validate.py``'s job.
 
 Usage:
-    python3 tools/validate/schema_sync.py
+    python3 tools/validate/schema_sync.py          # run the drift check
+    python3 tools/validate/schema_sync.py --help    # print usage and exit 0
+
+Arguments are parsed with argparse: ``--help`` prints usage and exits 0, and
+any other argument prints usage to stderr and exits 2, so a misspelt flag can
+never be mistaken for a successful check.
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import sys
@@ -244,10 +250,29 @@ def check_sync(schema: dict, validator) -> list[str]:
     return errors
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """The command-line contract: no options besides the implicit ``--help``."""
+    return argparse.ArgumentParser(
+        prog=Path(__file__).name,
+        allow_abbrev=False,
+        description=(
+            "Check that schemas/fixture-v1.schema.json stays in sync with "
+            "tools/validate/validate.py."
+        ),
+    )
+
+
 def main(argv: list[str]) -> int:
-    if argv:
-        print(f"usage: {Path(__file__).name}", file=sys.stderr)
-        return 2
+    # No arguments are accepted: argparse answers --help with usage on stdout
+    # (exit 0) and rejects anything else with usage on stderr (exit 2), before
+    # the schema or validator is read.
+    try:
+        build_parser().parse_args(argv)
+    except SystemExit as exc:
+        # argparse has already printed usage and chosen the status; translate
+        # it into this function's int-returning contract (the process exit
+        # code is unchanged).
+        return exc.code if isinstance(exc.code, int) else 0
     schema = load_schema()
     validator = load_validator()
     errors = check_sync(schema, validator)

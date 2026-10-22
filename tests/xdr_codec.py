@@ -1,5 +1,5 @@
-"""Independent pure-Python XDR codec for StellarValue, ContractExecutable and
-TransactionEnvelope (F-083, F-089).
+"""Independent pure-Python XDR codec for StellarValue, ContractExecutable,
+TransactionEnvelope and LedgerEntry (F-083, F-089, F-090).
 
 Transcribed strictly according to RFC 4506 from the authoritative XDR
 definitions in ``stellar/stellar-xdr`` at tag ``v28.0`` (commit
@@ -35,6 +35,15 @@ definitions in ``stellar/stellar-xdr`` at tag ``v28.0`` (commit
   - ``typedef opaque AssetCode12[12]`` (line 22)
   - ``enum AssetType`` (lines 24-30)
   - ``union Asset switch (AssetType type)`` (lines 55-68)
+  - ``struct Signer`` (lines 106-110)
+  - ``struct AccountEntry`` (lines 190-217)
+  - ``union TrustLineAsset switch (AssetType type)`` (lines 247-262)
+  - ``struct TrustLineEntry`` (lines 276-307)
+  - ``enum ContractDataDurability`` (lines 485-488)
+  - ``struct ContractDataEntry`` (lines 490-497)
+  - ``struct ContractCodeEntry`` (lines 513-528)
+  - ``struct TTLEntry`` (lines 530-534)
+  - ``struct LedgerEntry`` (lines 548-586)
   - ``enum EnvelopeType`` (lines 656-669)
 - ``Stellar-transaction.x``:
   - ``const MAX_OPS_PER_TX = 100`` (line 12)
@@ -83,6 +92,11 @@ instead of being silently accepted:
 - ``PreconditionType``: ``PRECOND_NONE`` and ``PRECOND_TIME``.
 - ``SCVal`` vectors (contract call arguments), ``LedgerKey`` footprint vectors
   and ``SorobanAuthorizationEntry`` vectors: empty vectors only.
+- ``LedgerEntry``: the ``ACCOUNT``, ``TRUSTLINE``, ``CONTRACT_DATA``,
+  ``CONTRACT_CODE`` and ``TTL`` arms, with ext arm V0 only, and the embedded
+  ``SCVal`` key/value restricted to ``SCV_U32`` and ``SCV_SYMBOL`` (the arms
+  the pack's contract-data fixtures use; the full ScVal codec is
+  ``tests/scval_xdr.py``).
 """
 from __future__ import annotations
 
@@ -290,6 +304,97 @@ class Asset:
     asset_type: int  # AssetType
     alpha_num4: AlphaNum4 | None = None  # for ASSET_TYPE_CREDIT_ALPHANUM4
     alpha_num12: AlphaNum12 | None = None  # for ASSET_TYPE_CREDIT_ALPHANUM12
+
+
+# ------------------------------------------- LedgerEntry data models (F-090)
+
+# LedgerEntryType, Stellar-ledger-entries.x at v28.0 (lines 92-104).
+LEDGER_ENTRY_TYPE_ACCOUNT = 0
+LEDGER_ENTRY_TYPE_TRUSTLINE = 1
+LEDGER_ENTRY_TYPE_CONTRACT_DATA = 6
+LEDGER_ENTRY_TYPE_CONTRACT_CODE = 7
+LEDGER_ENTRY_TYPE_TTL = 9
+
+# AssetType::ASSET_TYPE_POOL_SHARE, used by TrustLineAsset.
+ASSET_TYPE_POOL_SHARE = 3
+
+# ContractDataDurability, Stellar-ledger-entries.x at v28.0 (lines 485-488).
+CONTRACT_DATA_TEMPORARY = 0
+CONTRACT_DATA_PERSISTENT = 1
+
+# ScVal discriminants used by the pack's contract-data fixtures. The full
+# ScVal codec is tests/scval_xdr.py; this module only needs the two arms a
+# contract-data key/value currently uses, and rejects every other arm loudly.
+SCV_U32 = 3
+SCV_SYMBOL = 15
+
+
+@dataclass(frozen=True)
+class Signer:
+    key_type: int  # SignerKeyType
+    key: bytes  # 32 bytes for the arms this codec implements
+    weight: int  # uint32
+
+
+@dataclass(frozen=True)
+class AccountEntry:
+    account_id: PublicKey
+    balance: int  # int64
+    seq_num: int  # int64
+    num_sub_entries: int  # uint32
+    inflation_dest: PublicKey | None
+    flags: int  # uint32
+    home_domain: str  # string32
+    thresholds: bytes  # 4 bytes
+    signers: tuple[Signer, ...]
+
+
+@dataclass(frozen=True)
+class TrustLineAsset:
+    asset_type: int  # AssetType
+    alpha_num4: AlphaNum4 | None = None
+    alpha_num12: AlphaNum12 | None = None
+    pool_id: bytes | None = None  # 32 bytes for ASSET_TYPE_POOL_SHARE
+
+
+@dataclass(frozen=True)
+class TrustLineEntry:
+    account_id: PublicKey
+    asset: TrustLineAsset
+    balance: int  # int64
+    limit: int  # int64
+    flags: int  # uint32
+
+
+@dataclass(frozen=True)
+class ContractDataEntry:
+    contract: SCAddress
+    key: tuple[str, Any]
+    durability: int  # ContractDataDurability
+    val: tuple[str, Any]
+
+
+@dataclass(frozen=True)
+class ContractCodeEntry:
+    hash: bytes  # 32 bytes
+    code: bytes  # opaque<>
+
+
+@dataclass(frozen=True)
+class TTLEntry:
+    key_hash: bytes  # 32 bytes
+    live_until_ledger_seq: int  # uint32
+
+
+@dataclass(frozen=True)
+class LedgerEntry:
+    last_modified_ledger_seq: int  # uint32
+    entry_type: int  # LedgerEntryType
+    account: AccountEntry | None = None
+    trustline: TrustLineEntry | None = None
+    contract_data: ContractDataEntry | None = None
+    contract_code: ContractCodeEntry | None = None
+    ttl: TTLEntry | None = None
 
 
 @dataclass(frozen=True)
@@ -1425,6 +1530,286 @@ def encode_transaction_envelope(val: TransactionEnvelope) -> bytes:
     return writer.to_bytes()
 
 
+# ------------------------------------------------------ LedgerEntry Codec
+#
+# F-090 (issue #363). Transcribed from Stellar-ledger-entries.x at v28.0:
+# LedgerEntry (lines 548-586), LedgerEntryType (92-104), AccountEntry
+# (190-217), TrustLineEntry (276-307), TrustLineAsset (247-262), Signer
+# (106-110), ContractDataEntry (490-497), ContractDataDurability (485-488),
+# ContractCodeEntry (513-528) and TTLEntry (530-534). Extension arms other
+# than V0 are rejected rather than guessed; the pack's fixtures use V0 only.
+
+def _decode_scval_used(reader: XdrReader) -> tuple[str, Any]:
+    code = reader.read_int32()
+    if code == SCV_U32:
+        return "u32", reader.read_uint32()
+    if code == SCV_SYMBOL:
+        return "symbol", reader.read_string(32)
+    raise XdrCodecError(
+        f"unsupported ScVal discriminant in the LedgerEntry codec: {code}"
+    )
+
+
+def _encode_scval_used(writer: XdrWriter, value: tuple[str, Any]) -> None:
+    kind, payload = value
+    if kind == "u32":
+        writer.write_int32(SCV_U32)
+        writer.write_uint32(payload)
+    elif kind == "symbol":
+        writer.write_int32(SCV_SYMBOL)
+        writer.write_string(payload, max_length=32)
+    else:
+        raise XdrCodecError(f"unsupported ScVal kind in the LedgerEntry codec: {kind!r}")
+
+
+def _decode_account_entry(reader: XdrReader) -> AccountEntry:
+    account_id = _decode_public_key(reader)
+    balance = reader.read_int64()
+    seq_num = reader.read_int64()
+    num_sub_entries = reader.read_uint32()
+    inflation_dest = _decode_public_key(reader) if _read_optional_flag(reader, "inflationDest") else None
+    flags = reader.read_uint32()
+    home_domain = reader.read_string(32)
+    thresholds = reader.read_fixed_opaque(4)
+    count = _read_vector_length(reader, 20, "signers")
+    signers = []
+    for _ in range(count):
+        key_type = reader.read_int32()
+        if key_type not in (0, 1, 2):
+            raise XdrCodecError(f"unsupported SignerKeyType discriminant: {key_type}")
+        signers.append(Signer(key_type=key_type, key=reader.read_fixed_opaque(32), weight=reader.read_uint32()))
+    ext = reader.read_int32()
+    if ext != 0:
+        raise XdrCodecError(f"unsupported AccountEntryExt discriminant: {ext}")
+    return AccountEntry(
+        account_id=account_id,
+        balance=balance,
+        seq_num=seq_num,
+        num_sub_entries=num_sub_entries,
+        inflation_dest=inflation_dest,
+        flags=flags,
+        home_domain=home_domain,
+        thresholds=thresholds,
+        signers=tuple(signers),
+    )
+
+
+def _encode_account_entry(writer: XdrWriter, entry: AccountEntry) -> None:
+    _encode_public_key(writer, entry.account_id)
+    writer.write_int64(entry.balance)
+    writer.write_int64(entry.seq_num)
+    writer.write_uint32(entry.num_sub_entries)
+    _write_optional_flag(writer, entry.inflation_dest is not None)
+    if entry.inflation_dest is not None:
+        _encode_public_key(writer, entry.inflation_dest)
+    writer.write_uint32(entry.flags)
+    writer.write_string(entry.home_domain, max_length=32)
+    if len(entry.thresholds) != 4:
+        raise XdrCodecError("thresholds must be 4 bytes")
+    writer.write_fixed_opaque(entry.thresholds)
+    writer.write_uint32(len(entry.signers))
+    for signer in entry.signers:
+        writer.write_int32(signer.key_type)
+        writer.write_fixed_opaque(signer.key)
+        writer.write_uint32(signer.weight)
+    writer.write_int32(0)  # AccountEntryExt::V0
+
+
+def _decode_trustline_asset(reader: XdrReader) -> TrustLineAsset:
+    asset_type = reader.read_int32()
+    if asset_type == ASSET_TYPE_NATIVE:
+        return TrustLineAsset(asset_type=asset_type)
+    if asset_type == ASSET_TYPE_CREDIT_ALPHANUM4:
+        return TrustLineAsset(
+            asset_type=asset_type,
+            alpha_num4=AlphaNum4(
+                asset_code=reader.read_fixed_opaque(4), issuer=_decode_public_key(reader)
+            ),
+        )
+    if asset_type == ASSET_TYPE_CREDIT_ALPHANUM12:
+        return TrustLineAsset(
+            asset_type=asset_type,
+            alpha_num12=AlphaNum12(
+                asset_code=reader.read_fixed_opaque(12), issuer=_decode_public_key(reader)
+            ),
+        )
+    if asset_type == ASSET_TYPE_POOL_SHARE:
+        return TrustLineAsset(
+            asset_type=asset_type, pool_id=reader.read_fixed_opaque(32)
+        )
+    raise XdrCodecError(f"unknown TrustLineAssetType discriminant: {asset_type}")
+
+
+def _encode_trustline_asset(writer: XdrWriter, asset: TrustLineAsset) -> None:
+    writer.write_int32(asset.asset_type)
+    if asset.asset_type == ASSET_TYPE_NATIVE:
+        return
+    if asset.asset_type == ASSET_TYPE_CREDIT_ALPHANUM4:
+        if asset.alpha_num4 is None:
+            raise XdrCodecError("alpha_num4 required for ASSET_TYPE_CREDIT_ALPHANUM4")
+        writer.write_fixed_opaque(asset.alpha_num4.asset_code)
+        _encode_public_key(writer, asset.alpha_num4.issuer)
+        return
+    if asset.asset_type == ASSET_TYPE_CREDIT_ALPHANUM12:
+        if asset.alpha_num12 is None:
+            raise XdrCodecError("alpha_num12 required for ASSET_TYPE_CREDIT_ALPHANUM12")
+        writer.write_fixed_opaque(asset.alpha_num12.asset_code)
+        _encode_public_key(writer, asset.alpha_num12.issuer)
+        return
+    if asset.asset_type == ASSET_TYPE_POOL_SHARE:
+        if asset.pool_id is None or len(asset.pool_id) != 32:
+            raise XdrCodecError("a 32-byte pool_id is required for ASSET_TYPE_POOL_SHARE")
+        writer.write_fixed_opaque(asset.pool_id)
+        return
+    raise XdrCodecError(f"unknown TrustLineAssetType discriminant: {asset.asset_type}")
+
+
+def _decode_trustline_entry(reader: XdrReader) -> TrustLineEntry:
+    account_id = _decode_public_key(reader)
+    asset = _decode_trustline_asset(reader)
+    balance = reader.read_int64()
+    limit = reader.read_int64()
+    flags = reader.read_uint32()
+    ext = reader.read_int32()
+    if ext != 0:
+        raise XdrCodecError(f"unsupported TrustLineEntryExt discriminant: {ext}")
+    return TrustLineEntry(
+        account_id=account_id, asset=asset, balance=balance, limit=limit, flags=flags
+    )
+
+
+def _encode_trustline_entry(writer: XdrWriter, entry: TrustLineEntry) -> None:
+    _encode_public_key(writer, entry.account_id)
+    _encode_trustline_asset(writer, entry.asset)
+    writer.write_int64(entry.balance)
+    writer.write_int64(entry.limit)
+    writer.write_uint32(entry.flags)
+    writer.write_int32(0)  # TrustLineEntryExt::V0
+
+
+def _decode_contract_data_entry(reader: XdrReader) -> ContractDataEntry:
+    ext = reader.read_int32()
+    if ext != 0:
+        raise XdrCodecError(f"unsupported ExtensionPoint discriminant: {ext}")
+    contract = _decode_sc_address(reader)
+    key = _decode_scval_used(reader)
+    durability = reader.read_int32()
+    if durability not in (CONTRACT_DATA_TEMPORARY, CONTRACT_DATA_PERSISTENT):
+        raise XdrCodecError(f"unknown ContractDataDurability discriminant: {durability}")
+    val = _decode_scval_used(reader)
+    return ContractDataEntry(contract=contract, key=key, durability=durability, val=val)
+
+
+def _encode_contract_data_entry(writer: XdrWriter, entry: ContractDataEntry) -> None:
+    writer.write_int32(0)  # ExtensionPoint::V0
+    _encode_sc_address(writer, entry.contract)
+    _encode_scval_used(writer, entry.key)
+    writer.write_int32(entry.durability)
+    _encode_scval_used(writer, entry.val)
+
+
+def _decode_contract_code_entry(reader: XdrReader) -> ContractCodeEntry:
+    ext = reader.read_int32()
+    if ext != 0:
+        raise XdrCodecError(f"unsupported ContractCodeEntryExt discriminant: {ext}")
+    return ContractCodeEntry(hash=reader.read_fixed_opaque(32), code=reader.read_var_opaque())
+
+
+def _encode_contract_code_entry(writer: XdrWriter, entry: ContractCodeEntry) -> None:
+    writer.write_int32(0)  # ContractCodeEntryExt::V0
+    if len(entry.hash) != 32:
+        raise XdrCodecError("contract code hash must be 32 bytes")
+    writer.write_fixed_opaque(entry.hash)
+    writer.write_var_opaque(entry.code)
+
+
+def _decode_ttl_entry(reader: XdrReader) -> TTLEntry:
+    return TTLEntry(
+        key_hash=reader.read_fixed_opaque(32), live_until_ledger_seq=reader.read_uint32()
+    )
+
+
+def _encode_ttl_entry(writer: XdrWriter, entry: TTLEntry) -> None:
+    if len(entry.key_hash) != 32:
+        raise XdrCodecError("TTL key hash must be 32 bytes")
+    writer.write_fixed_opaque(entry.key_hash)
+    writer.write_uint32(entry.live_until_ledger_seq)
+
+
+def decode_ledger_entry(raw: bytes) -> LedgerEntry:
+    reader = XdrReader(raw)
+    last_modified = reader.read_uint32()
+    entry_type = reader.read_int32()
+    entry = LedgerEntry(last_modified_ledger_seq=last_modified, entry_type=entry_type)
+    if entry_type == LEDGER_ENTRY_TYPE_ACCOUNT:
+        entry = LedgerEntry(
+            last_modified_ledger_seq=last_modified,
+            entry_type=entry_type,
+            account=_decode_account_entry(reader),
+        )
+    elif entry_type == LEDGER_ENTRY_TYPE_TRUSTLINE:
+        entry = LedgerEntry(
+            last_modified_ledger_seq=last_modified,
+            entry_type=entry_type,
+            trustline=_decode_trustline_entry(reader),
+        )
+    elif entry_type == LEDGER_ENTRY_TYPE_CONTRACT_DATA:
+        entry = LedgerEntry(
+            last_modified_ledger_seq=last_modified,
+            entry_type=entry_type,
+            contract_data=_decode_contract_data_entry(reader),
+        )
+    elif entry_type == LEDGER_ENTRY_TYPE_CONTRACT_CODE:
+        entry = LedgerEntry(
+            last_modified_ledger_seq=last_modified,
+            entry_type=entry_type,
+            contract_code=_decode_contract_code_entry(reader),
+        )
+    elif entry_type == LEDGER_ENTRY_TYPE_TTL:
+        entry = LedgerEntry(
+            last_modified_ledger_seq=last_modified,
+            entry_type=entry_type,
+            ttl=_decode_ttl_entry(reader),
+        )
+    else:
+        raise XdrCodecError(f"unsupported LedgerEntryType discriminant: {entry_type}")
+    ext = reader.read_int32()
+    if ext != 0:
+        raise XdrCodecError(f"unsupported LedgerEntryExt discriminant: {ext}")
+    reader.assert_eof()
+    return entry
+
+
+def encode_ledger_entry(value: LedgerEntry) -> bytes:
+    writer = XdrWriter()
+    writer.write_uint32(value.last_modified_ledger_seq)
+    writer.write_int32(value.entry_type)
+    if value.entry_type == LEDGER_ENTRY_TYPE_ACCOUNT:
+        if value.account is None:
+            raise XdrCodecError("account entry required for ACCOUNT")
+        _encode_account_entry(writer, value.account)
+    elif value.entry_type == LEDGER_ENTRY_TYPE_TRUSTLINE:
+        if value.trustline is None:
+            raise XdrCodecError("trustline entry required for TRUSTLINE")
+        _encode_trustline_entry(writer, value.trustline)
+    elif value.entry_type == LEDGER_ENTRY_TYPE_CONTRACT_DATA:
+        if value.contract_data is None:
+            raise XdrCodecError("contract data entry required for CONTRACT_DATA")
+        _encode_contract_data_entry(writer, value.contract_data)
+    elif value.entry_type == LEDGER_ENTRY_TYPE_CONTRACT_CODE:
+        if value.contract_code is None:
+            raise XdrCodecError("contract code entry required for CONTRACT_CODE")
+        _encode_contract_code_entry(writer, value.contract_code)
+    elif value.entry_type == LEDGER_ENTRY_TYPE_TTL:
+        if value.ttl is None:
+            raise XdrCodecError("TTL entry required for TTL")
+        _encode_ttl_entry(writer, value.ttl)
+    else:
+        raise XdrCodecError(f"unsupported LedgerEntryType discriminant: {value.entry_type}")
+    writer.write_int32(0)  # LedgerEntryExt::V0
+    return writer.to_bytes()
+
+
 # --------------------------------------------------- Generic Interface
 
 def decode_xdr(type_name: str, raw: bytes) -> Any:
@@ -1434,6 +1819,8 @@ def decode_xdr(type_name: str, raw: bytes) -> Any:
         return decode_contract_executable(raw)
     elif type_name == "TransactionEnvelope":
         return decode_transaction_envelope(raw)
+    elif type_name == "LedgerEntry":
+        return decode_ledger_entry(raw)
     else:
         raise XdrCodecError(f"unsupported XDR type for independent codec: {type_name}")
 
@@ -1445,5 +1832,7 @@ def encode_xdr(type_name: str, value: Any) -> bytes:
         return encode_contract_executable(value)
     elif type_name == "TransactionEnvelope":
         return encode_transaction_envelope(value)
+    elif type_name == "LedgerEntry":
+        return encode_ledger_entry(value)
     else:
         raise XdrCodecError(f"unsupported XDR type for independent codec: {type_name}")

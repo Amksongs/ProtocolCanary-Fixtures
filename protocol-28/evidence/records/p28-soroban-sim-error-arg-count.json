@@ -3,10 +3,10 @@
   "fixtureId": "p28-soroban-sim-error-arg-count",
   "fixtureSha256": "a61b900ca8247b9c418f65e96a8ee12a13cf1ef6f1554e09f151268991c66066",
   "method": "structural",
-  "checkedAt": "2026-10-22T06:44:39Z",
+  "checkedAt": "2026-10-22T07:52:29Z",
   "verifier": {
     "name": "protocolcanary-fixtures-validate",
-    "version": "eb90c66ca49451d6d672397bb0dd6e64de580db1"
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
   },
   "outcome": "matched",
   "evidenceRef": null

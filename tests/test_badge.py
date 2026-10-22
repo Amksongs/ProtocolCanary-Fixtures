@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -194,6 +195,61 @@ class BadgeMainTests(unittest.TestCase):
             code, out, err = self.run_main(root, [])
             self.assertEqual(code, 1)
             self.assertIn("error:", err)
+
+
+class BadgeArgumentTests(unittest.TestCase):
+    """Real argument handling: --help and typos never touch README.md.
+
+    These run badge.py as a subprocess, so the exit status argparse produces
+    (0 for --help, 2 for an unknown or misspelt flag) and the byte-identity of
+    the repository's README.md are observed exactly as CI sees them. Before
+    argparse, ``--help`` and ``--chek`` both ran the write mode silently.
+    """
+
+    def run_cli(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(BADGE_PATH), *args],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+
+    @staticmethod
+    def readme_bytes() -> bytes:
+        return (REPO_ROOT / "README.md").read_bytes()
+
+    def test_help_exits_0_with_usage_and_leaves_readme_byte_identical(self) -> None:
+        before = self.readme_bytes()
+        result = self.run_cli("--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("usage:", result.stdout)
+        self.assertIn("--check", result.stdout)
+        self.assertEqual(self.readme_bytes(), before)
+
+    def test_unknown_arguments_exit_2_with_usage_and_leave_readme_byte_identical(
+        self,
+    ) -> None:
+        for arg in ("--nope", "--chek", "--ch", "extra"):
+            with self.subTest(arg=arg):
+                before = self.readme_bytes()
+                result = self.run_cli(arg)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("usage:", result.stderr)
+                self.assertEqual(self.readme_bytes(), before)
+
+    def test_check_mode_is_unchanged_on_a_current_readme(self) -> None:
+        before = self.readme_bytes()
+        result = self.run_cli("--check")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("OK: README.md fixtures badge is current", result.stdout)
+        self.assertEqual(self.readme_bytes(), before)
+
+    def test_default_write_mode_is_unchanged_on_a_current_readme(self) -> None:
+        before = self.readme_bytes()
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("OK: README.md fixtures badge already current", result.stdout)
+        self.assertEqual(self.readme_bytes(), before)
 
 
 if __name__ == "__main__":
