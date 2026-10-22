@@ -142,6 +142,53 @@ class TestVerificationFreshness(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn("future timestamp", errors[0][1])
 
+            # main exits 1 when errors exist
+            exit_code = freshness.main([str(tmppath)])
+            self.assertEqual(exit_code, 1)
+
+    def test_additional_coverage_paths(self) -> None:
+        # parse_checked_at with now=None
+        now_dt = datetime.now(timezone.utc)
+        parsed = freshness.parse_checked_at(now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.assertIsNotNone(parsed)
+
+        # calculate_record_freshness with now=None
+        rec = freshness.calculate_record_freshness(
+            Path("rec.json"),
+            {"fixtureId": "f1", "checkedAt": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")},
+        )
+        self.assertEqual(rec.status, "fresh")
+
+        # calculate_record_freshness missing checkedAt
+        with self.assertRaises(freshness.FreshnessFormatError):
+            freshness.calculate_record_freshness(Path("rec.json"), {"fixtureId": "f1"})
+
+        # format_table with empty results
+        self.assertEqual(freshness.format_table([]), "No evidence records evaluated.")
+
+        # find_record_files with direct file path
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "direct.json"
+            f.write_text("{}", encoding="utf-8")
+            self.assertEqual(freshness.find_record_files([f]), [f])
+
+            # scan_freshness with invalid JSON
+            bad_json = Path(tmpdir) / "bad.json"
+            bad_json.write_text("{bad", encoding="utf-8")
+
+            # scan_freshness with verificationVersion but missing checkedAt
+            no_checked = Path(tmpdir) / "no_checked.json"
+            no_checked.write_text(json.dumps({"verificationVersion": 1}), encoding="utf-8")
+
+            _, errors = freshness.scan_freshness([f, bad_json, no_checked])
+            self.assertTrue(any("JSON parse error" in e[1] for e in errors))
+            self.assertTrue(any("missing 'checkedAt' field" in e[1] for e in errors))
+
+    def test_default_main_execution(self) -> None:
+        # main() with default paths
+        code = freshness.main([])
+        self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

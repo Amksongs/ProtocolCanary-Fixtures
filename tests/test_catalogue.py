@@ -114,6 +114,40 @@ class TestCatalogueGenerator(unittest.TestCase):
         self.assertIn("unnamed-fixture", html)
         self.assertIn("No file link", html)
 
+    def test_other_surfaces_generation(self) -> None:
+        """Fixtures on non-standard surfaces are grouped under Other Surfaces."""
+        custom_reg = {
+            "registryVersion": 1,
+            "protocol": 28,
+            "fixtures": [
+                {
+                    "id": "p28-custom-with-path",
+                    "surface": "custom",
+                    "category": "ext",
+                    "description": "Custom surface fixture with path",
+                    "path": "custom/test.toml",
+                },
+                {
+                    "id": "p28-custom-no-path",
+                    "surface": "custom",
+                    "category": "ext",
+                    "description": "Custom surface fixture without path",
+                },
+            ],
+        }
+        html = generate_html.generate_catalogue_html(custom_reg)
+        self.assertIn("Other Surfaces", html)
+        self.assertIn("p28-custom-with-path", html)
+        self.assertIn("custom/test.toml", html)
+        self.assertIn("p28-custom-no-path", html)
+        self.assertIn("No file link", html)
+
+    def test_load_registry_fallback_and_options(self) -> None:
+        # Nonexistent path returns fallback empty registry
+        nonexistent = Path("/nonexistent/registry.json")
+        reg = generate_html.load_registry(nonexistent)
+        self.assertEqual(reg.get("registryVersion"), 1)
+
     def test_main_cli_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             out_path = Path(tmpdir) / "output.html"
@@ -123,6 +157,15 @@ class TestCatalogueGenerator(unittest.TestCase):
             content = out_path.read_text(encoding="utf-8")
             self.assertIn("<!DOCTYPE html>", content)
             self.assertIn("Protocol Canary Fixture Catalogue", content)
+
+            # Test with explicit --registry argument
+            import json
+            sample_reg = Path(tmpdir) / "sample_reg.json"
+            sample_reg.write_text(json.dumps(self.sample_registry), encoding="utf-8")
+            out_path2 = Path(tmpdir) / "output2.html"
+            code2 = generate_html.main(["--registry", str(sample_reg), "-o", str(out_path2)])
+            self.assertEqual(code2, 0)
+            self.assertTrue(out_path2.exists())
 
 
 if __name__ == "__main__":
