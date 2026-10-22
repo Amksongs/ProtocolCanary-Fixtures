@@ -12,6 +12,11 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `.github/workflows/release-pack.yml`: automated release workflow with reproducible
+  build validation and SLSA build provenance attestations using
+  `actions/attest-build-provenance` for release archives and manifests (issue #332).
+  Documented attestation verification in `SECURITY.md`. Closes
+  [issue #332](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/332).
 - `tools/validate/validate.py` and `schemas/fixture-v1.schema.json`: accept
   the lookup and paged RPC methods (`get-ledger-entries`, `get-transaction`,
   `get-ledgers`, `get-transactions`, `get-events`) alongside `get-network`
