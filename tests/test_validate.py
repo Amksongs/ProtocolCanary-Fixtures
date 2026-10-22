@@ -2913,6 +2913,68 @@ class SourceReferenceFormatTests(unittest.TestCase):
             )
         )
 
+    def test_github_host_spellings_and_trailing_dot_accepted_when_pinned(self) -> None:
+        """Positive tests: commit-pinned and tag-pinned links on github.com.,
+        WWW.GITHUB.COM. and the raw host with a trailing dot; ordinary hosts (F-121, issue #415).
+        """
+        path = f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"
+        tag_path = "/stellar/stellar-protocol/blob/v28.0.1/core/cap-0083.md"
+        raw_commit_path = f"/stellar/stellar-protocol/{self.SHA}/core/cap-0083.md"
+        raw_tag_path = "/stellar/stellar-protocol/v28.0.1/core/cap-0083.md"
+
+        for base_url in (
+            f"https://github.com.{path}",
+            f"https://github.com.{tag_path}",
+            f"https://WWW.GITHUB.COM.{path}",
+            f"https://WWW.GITHUB.COM.{tag_path}",
+            f"https://raw.githubusercontent.com.{raw_commit_path}",
+            f"https://raw.githubusercontent.com.{raw_tag_path}",
+            "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork",
+            f"https://github.com:443{path}",
+        ):
+            with self.subTest(url=base_url):
+                self.assertIsNone(self.problem(base_url), base_url)
+
+    def test_github_host_spellings_and_malformed_hosts_rejected(self) -> None:
+        """Negative tests: branch refs on trailing dot spellings, malformed hosts,
+        percent, non-ASCII letters, empty labels, only dots (F-121, issue #415).
+        """
+        branch_path = "/stellar/stellar-protocol/blob/master/core/cap-0083.md"
+        raw_branch_path = "/stellar/stellar-protocol/master/core/cap-0083.md"
+
+        # Valid trailing-dot hosts with branch ref must be rejected with the pin message
+        for host, p in (
+            ("github.com.", branch_path),
+            ("WWW.GITHUB.COM.", branch_path),
+            ("www.github.com.", branch_path),
+            ("GITHUB.COM.", branch_path),
+            ("raw.githubusercontent.com.", raw_branch_path),
+        ):
+            with self.subTest(host=host, case="branch_ref"):
+                message = self.problem(f"https://{host}{p}")
+                self.assertIsNotNone(message, host)
+                self.assertIn("pin", message)
+                self.assertIn("branch name", message)
+
+        # Malformed host spellings must be rejected with host-character message naming source_reference
+        malformed_hosts = (
+            "github.com..",
+            "github..com",
+            ".github.com",
+            "git%68ub.com",
+            "github.com\u3002",
+            "g\u00edthub.com",
+            "....",
+            ".",
+        )
+        for host in malformed_hosts:
+            for p in (branch_path, f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"):
+                with self.subTest(host=host, path=p, case="malformed"):
+                    message = self.problem(f"https://{host}{p}")
+                    self.assertIsNotNone(message, host)
+                    self.assertIn("source_reference", message)
+                    self.assertIn("host", message)
+
     def test_rejects_a_short_commit_hash(self) -> None:
         # Seven characters is ambiguous and can start to collide; the link
         # must name the full object so it cannot silently change meaning.
