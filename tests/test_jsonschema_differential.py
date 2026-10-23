@@ -79,6 +79,7 @@ IN_SCOPE_SCHEMAS = {
     "simulation-resource-estimate": (
         REPO_ROOT / "schemas" / "proposed" / "simulation-resource-estimate.expect.json"
     ),
+    "run-record-v1": REPO_ROOT / "schemas" / "run-record-v1.schema.json",
 }
 
 

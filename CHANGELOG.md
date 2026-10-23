@@ -12,6 +12,31 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Protocol 29 coverage now includes a Protocol 28-versus-29 RPC mismatch
+  fixture, with separate Testnet and Futurenet verification records whose
+  passphrases are validated against their network names. The release pack
+  tests also cover deterministic archives and D-06 limits, and `pack.py
+  --verified` requires valid, passing CF-04 evidence for every fixture.
+  Closes
+  [issues #294](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/294),
+  [#293](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/293),
+  [#292](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/292),
+  and [#266](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/266).
+  ([PR #468](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/468))
+
+- `schemas/run-record-v1.schema.json` and `tools/release/run_records.py`: the
+  pack-by-engine run record and its reader (issue #367). A record names one
+  exact engine version, the CF-02 pack digest of the pack it ran against, the
+  RFC 3339 UTC instant of the run, the verifier and the outcome; a range, a
+  future date, a record for another pack or a malformed file is refused.
+  `tools/release/manifest.py --runs DIR` sets `compatibleEngines[].verified`
+  to `true` only for an engine version whose record names that exact engine,
+  that exact pack digest and a passed run; without `--runs`, and with an
+  empty record directory, every engine stays unverified exactly as before.
+  The tool never writes a record: a record comes from an actual run.
+  `docs/run-records.md` states the format and the rule. Closes
+  [issue #367](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/367).
+  ([PR #425])
 - `tools/common/atomic_write.py` writes release artifacts atomically, and
   `tools/pack/pack.py`, `tools/release/manifest.py` and
   `tools/registry/generate.py` use it for every output, including the
@@ -92,6 +117,20 @@ discussion and diff. New entries must include that link; see
   caught, and the production tools are never modified. Closes
   [issue #349](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/349).
   ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
+- `tools/validate/validate_registry.py` — cross-validates a pack's fixtures
+  against its committed `registry-v1.json` (issue #273, CF-02 section 6 rules
+  2 and 3): every regular `*.toml` on disk must be listed in the registry,
+  every listed fixture and payload must exist on disk, and every recorded
+  `sha256` must equal the file's bytes — an orphaned fixture, a phantom entry
+  or a drifted hash is rejected by path (exit 1), while an unusable registry
+  is input error (exit 2). Without arguments every `protocol-*` directory is
+  checked; freshness and `packDigest` stay with CI's regeneration diff.
+  `tests/test_validate_registry.py` covers the three rejections, payload
+  entries, unusable inputs and the CLI contract (24 tests), and
+  `docs/tools.md` records the command-line contract. Closes
+  [issue #273](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/273).
+  ([PR #473](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/473))
+
 - `tools/inventory/compare.py`: a standard-library tool that compares the
   inventory `stellar-canary fixtures --format json` prints (CA-02,
   `inventoryVersion` 1) with a pack's `registry-v1.json`, asserting that the
@@ -967,6 +1006,7 @@ discussion and diff. New entries must include that link; see
 [#354]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/354
 [PR #380]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/380
 [PR #381]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/381
+[PR #425]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/425
 [PR #423]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/423
 [PR #424]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/424
 [PR #433]: https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/433
