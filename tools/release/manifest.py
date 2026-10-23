@@ -16,17 +16,17 @@ What is recorded, and where it comes from:
   a registry that does not describe its own archive is refused;
 * ``revision``: the full git commit of the pack source, given by the caller.
   It is provenance only (CF-06 section 3);
-* ``compatibleEngines``: exact engine versions given by the caller, each marked
-  ``verified: false``. ``true`` is only ever correct when that exact engine and
-  pack were run together and the run is recorded under CF-04, so this tool does
-  not set it.
+* ``compatibleEngines``: exact engine versions given by the caller. An engine
+  is marked ``verified: false`` unless a run record says that exact engine
+  version was run against this exact pack (issue #367): the records are read
+  from the directory given with ``--runs``, never written by this tool.
 
 Nothing is executed or extracted to disk. A missing, truncated or malformed
 archive fails with a message and writes nothing.
 
 Usage:
     python3 tools/release/manifest.py ARCHIVE --revision COMMIT [--engine 0.2.0]
-        [--output PATH]
+        [--runs DIR] [--output PATH]
 
 Requires Python 3.11+ and nothing outside the standard library.
 """
@@ -61,6 +61,7 @@ write_bytes_atomic = atomic_write.write_bytes_atomic
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from tools.release import run_records
 from tools.common.json_strict import JSONInputError, load_json
 from tools.common import paths
 
@@ -141,8 +142,16 @@ def build_manifest(
     revision: str,
     engines: list[str],
     version: str | None = None,
+    records: list[dict] | None = None,
 ) -> dict:
-    """The manifest mapping, in the key order the contract shows."""
+    """The manifest mapping, in the key order the contract shows.
+
+    ``records`` are the run records read by the caller (see
+    ``--runs``). An engine is marked verified only when a record names that
+    exact engine version, that exact pack digest and a passed run. Without a
+    record the engine stays unverified, and this tool never writes a record
+    itself.
+    """
     if not archive.is_file():
         raise ManifestError(f"archive not found: {archive}")
     if version is None:
@@ -216,9 +225,38 @@ def build_manifest(
             "uncompressedBytes": content["uncompressed"],
         },
         "compatibleEngines": [
-            {"version": engine, "verified": False} for engine in sorted(set(engines))
+            {"version": engine, "verified": _is_verified(engine, declared, records)}
+            for engine in sorted(set(engines))
         ],
     }
+
+
+def _is_verified(engine: str, pack_digest: str, records: list[dict] | None) -> bool:
+    """Whether a run record says this exact engine ran against this pack.
+
+    Without records nothing is verified. With records, the engine is verified
+    only when a record names that exact engine version, that exact pack
+    digest, and a run that passed.
+
+    A record for the same engine but a different pack is an inconsistency the
+    caller has to resolve, not something to guess about: the manifest is
+    refused with a message, because writing "verified: false" there would
+    hide that the record offered for this engine describes another pack.
+    """
+    if not records:
+        return False
+    record = run_records.find_record(records, engine, pack_digest)
+    if record is not None:
+        return record.get("outcome") == "passed"
+    others = run_records.records_for_engine(records, engine)
+    if others:
+        described = ", ".join(sorted(str(other.get("packDigest")) for other in others))
+        raise ManifestError(
+            f"the run record for engine {engine} describes pack {described}, not "
+            f"this archive ({pack_digest}); the engine stays unverified until a "
+            "record of this engine against this pack exists"
+        )
+    return False
 
 
 def render_manifest(manifest: dict) -> str:
@@ -249,8 +287,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="VERSION",
         help=(
-            "an exact engine version to list as a compatible engine, "
-            "recorded as unverified; may be given more than once"
+            "an exact engine version to list as a compatible engine; it is "
+            "recorded as unverified unless a run record (--runs) says that "
+            "exact engine ran against this exact pack; may be given more than once"
+        ),
+    )
+    parser.add_argument(
+        "--runs",
+        type=Path,
+        metavar="DIR",
+        help=(
+            "directory of pack-by-engine run records (issue #367); an engine is "
+            "marked verified only when a record there names that exact engine "
+            "version, this exact pack digest and a passed run. Without this "
+            "option every engine stays unverified, as before"
         ),
     )
     parser.add_argument(
@@ -270,6 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    records: list[dict] | None = None
     output = args.output or args.archive.with_name(
         args.archive.name.removesuffix(".tar.gz") + ".manifest.json"
     )
@@ -287,8 +338,19 @@ def main(argv: list[str]) -> int:
         return 1
 
     try:
-        manifest = build_manifest(args.archive, revision=args.revision, engines=args.engine)
+        if args.runs is not None:
+            records = run_records.load_run_records(args.runs)
+        manifest = build_manifest(
+            args.archive,
+            revision=args.revision,
+            engines=args.engine,
+            records=records,
+        )
     except ManifestError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+    except run_records.RunRecordError as error:
         print(f"error: {error}", file=sys.stderr)
         print("FAILED: no manifest written", file=sys.stderr)
         return 1
@@ -305,6 +367,13 @@ def main(argv: list[str]) -> int:
         print(f"error: could not write the manifest: {error}", file=sys.stderr)
         return 1
     print(f"OK: wrote {output}")
+    for entry in manifest["compatibleEngines"]:
+        if entry["verified"]:
+            record = run_records.find_record(
+                records or [], entry["version"], manifest["packDigest"]
+            )
+            checked_at = record.get("checkedAt") if record else "?"
+            print(f"verified: {entry['version']} (run recorded at {checked_at})")
     return 0
 
 

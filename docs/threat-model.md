@@ -117,10 +117,10 @@ the `ProtocolCanary-Action` GitHub Action, and the Stellar network itself.
 
 | Threat | Description | Control | Status |
 |--------|-------------|---------|--------|
-| T4.1 | Archive modified after build (SHA-256 mismatch) | Manifest records archive SHA-256; consumer verifies via `verify_archive.py --sha256` | **Controlled** — `tools/release/manifest.py::build_manifest` (line 133-134) records hash; `tools/pack/verify_archive.py::verify_archive` (lines 250-256) checks it |
-| T4.2 | Registry in archive doesn't match archived files (pack digest mismatch) | Manifest tool recomputes pack digest from archived files and compares to registry's `packDigest` | **Controlled** — `tools/release/manifest.py::build_manifest` (lines 156-162) |
+| T4.1 | Archive modified after build (SHA-256 mismatch) | Manifest records archive SHA-256; consumer verifies via `verify_archive.py --sha256` | **Controlled** — `tools/release/manifest.py::build_manifest` (line 188-189) records hash; `tools/pack/verify_archive.py::verify_archive` (lines 250-256) checks it |
+| T4.2 | Registry in archive doesn't match archived files (pack digest mismatch) | Manifest tool recomputes pack digest from archived files and compares to registry's `packDigest` | **Controlled** — `tools/release/manifest.py::build_manifest` (lines 170-176) |
 | T4.3 | Manifest itself is forged | No signature on manifest; consumer must trust GitHub release page or pin manifest hash out-of-band | **Not controlled today** — **Gap tracked by D-07 / issue #332** (provenance attestation). Checksums protect against corruption, not authenticity. |
-| T4.4 | Git revision in manifest doesn't match actual source | Manifest requires full 40-char commit SHA; release workflow must pass correct revision | **Controlled** — `tools/release/manifest.py` line 122-125 validates 40-hex format; release workflow must supply correct value |
+| T4.4 | Git revision in manifest doesn't match actual source | Manifest requires full 40-char commit SHA; release workflow must pass correct revision | **Controlled** — `tools/release/manifest.py` line 136-139 validates 40-hex format; release workflow must supply correct value |
 
 ### 5. Stale or Forged Evidence
 
@@ -169,7 +169,8 @@ Each control above should be spot-checkable in under a minute. Key references:
 | Case-fold duplicate detection | `tools/registry/generate.py` | `scan_pack` folded dict | 192-197 |
 | Archive safe extraction | `tools/pack/verify_archive.py` | `extract_safely`, `_check_member_path` | 119-185, 94-116 |
 | Archive size limits | `tools/pack/verify_archive.py` | `MAX_ENTRIES`, `MAX_TOTAL_BYTES`, `MAX_FILE_BYTES`, `MAX_DEPTH` | 45-48 |
-| Manifest pack digest verification | `tools/release/manifest.py` | `build_manifest`, `_pack_digest` | 102-162, 64-70 |
+| Manifest pack digest verification | `tools/release/manifest.py` | `build_manifest`, `_pack_digest` | 108-176, 70-76 |
+| Engine compatibility verification | `tools/release/manifest.py` | `_is_verified`, `tools/release/run_records.py` | 200-225, whole file |
 | Workflow action pinning | `.github/workflows/validate.yml` | `uses:` lines | 23, 25, 56, 58, 88, 91, 122, 124 |
 | Workflow permissions | `.github/workflows/validate.yml` | `permissions:` | 13-14 |
 | CODEOWNERS review requirement | `.github/CODEOWNERS` | `*` pattern | 16 |
