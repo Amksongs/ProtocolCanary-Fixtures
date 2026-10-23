@@ -12,6 +12,19 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/validate/jsonschema_lite.py` supports the `allOf` keyword (F-113): the
+  instance is checked against every subschema in order and each failure is
+  reported, with the subschema's location in a schema error such as
+  `$.allOf[1]`. Sibling keywords are still applied next to `allOf` (including
+  when the instance has the wrong type), an empty or non-list `allOf` and an
+  entry that is not a schema are schema errors, and a local `$ref` inside a
+  subschema resolves as before. A schema that uses an unsupported keyword
+  such as `if` is still rejected, which keeps the fixture schema's behavior in
+  `tests/test_validate.py` unchanged. Eight new tests in
+  `tests/test_jsonschema_lite.py`. Closes
+  [issue #395](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/395).
+  ([PR #417](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/417))
+
 - `tools/validate/check_root_files.py` (F-054): a CI guard, run by the validate
   workflow, that fails when a file or directory outside an explicit allow-list
   appears in the repository root (`protocol-NN/` packs are always allowed), so a
