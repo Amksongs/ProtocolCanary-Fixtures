@@ -590,5 +590,74 @@ source_reference = "ftp://example.com/spec.txt"
             self.assertIn("Warning: could not write to summary file", stderr_buf.getvalue())
 
 
+class MarkdownTableEscapingTests(unittest.TestCase):
+    """F-107: hostile fixture text must not reshape the job summary table.
+
+    URLs, file names and result details all originate from fixture content or
+    exception text a fixture author influences, so every interpolated value
+    must stay inside exactly one cell of exactly one line.
+    """
+
+    HOSTILE_ROWS = [
+        ("https://a.example/x|y", "f.toml", CheckResult("Failed", "a|b\nc")),
+        (
+            "https://b.example/[x](https://evil.example)<script>",
+            "b|c.toml",
+            CheckResult("OK"),
+        ),
+        (
+            "https://c.example/a?b=c",
+            "plain name.toml",
+            CheckResult("Inconclusive", "tick `code` & slash \\ end"),
+        ),
+    ]
+
+    @staticmethod
+    def cells(line: str) -> list[str]:
+        """Split a table line into cells; escaped pipes are not separators."""
+        # "| a | b | c |" -> ['', ' a ', ' b ', ' c ', '']
+        return line.replace("\\|", "").split("|")[1:-1]
+
+    def test_header_and_separator_are_exact(self) -> None:
+        table = generate_markdown_table(list(self.HOSTILE_ROWS))
+        lines = table.split("\n")
+        self.assertEqual(lines[0], "| URL | Fixture File | Result |")
+        self.assertEqual(lines[1], "|---|---|---|")
+        # One line per row: no value's line break split a row in two.
+        self.assertEqual(len(lines), 2 + len(self.HOSTILE_ROWS))
+
+    def test_every_row_has_exactly_three_cells(self) -> None:
+        table = generate_markdown_table(list(self.HOSTILE_ROWS))
+        for line in table.split("\n"):
+            with self.subTest(line=line):
+                self.assertEqual(len(self.cells(line)), 3)
+
+    def test_pipes_in_values_do_not_add_columns(self) -> None:
+        table = generate_markdown_table(list(self.HOSTILE_ROWS))
+        self.assertIn("https://a.example/x\\|y", table)
+        self.assertIn("b\\|c.toml", table)
+        self.assertIn("Failed (a\\|b c)", table)
+
+    def test_markup_is_neutralised_but_plain_urls_stay_readable(self) -> None:
+        table = generate_markdown_table(list(self.HOSTILE_ROWS))
+        # No live HTML tag, Markdown link or code span survives.
+        self.assertNotIn("<script>", table)
+        self.assertNotIn("[x](https://evil.example)", table)
+        self.assertNotIn("`code`", table)
+        self.assertIn("&lt;script&gt;", table)
+        self.assertIn("&#91;x&#93;", table)
+        self.assertIn("&#96;code&#96;", table)
+        self.assertIn("&amp;", table)
+        # Ordinary URLs and names are untouched.
+        self.assertIn("https://c.example/a?b=c", table)
+        self.assertIn("plain name.toml", table)
+
+    def test_count_of_rows_matches_input(self) -> None:
+        table = generate_markdown_table(list(self.HOSTILE_ROWS))
+        self.assertEqual(len(table.split("\n")) - 2, len(self.HOSTILE_ROWS))
+        empty = generate_markdown_table([])
+        self.assertEqual(len(empty.split("\n")), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

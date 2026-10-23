@@ -12,6 +12,19 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/validate/check_source_links.py` escapes every value it writes into the
+  Markdown job summary (F-107). The URL, the fixture file name and the result
+  detail come from fixture content, file names and exception text, so a fixture
+  author could add table cells, split a row across lines or smuggle a live link
+  or raw HTML into the summary maintainers read; even a plain `|` in a URL broke
+  the table. Line breaks now become a space, `&`, `<`, `>`, `[`, `]`, backticks
+  and backslashes become HTML entities, and `|` becomes `\|`, so every row keeps
+  exactly three cells and nothing in a cell can form a link, tag or code span.
+  Ordinary URLs contain none of those characters and are unchanged. Five new
+  tests in `tests/test_check_source_links.py`. Closes
+  [issue #389](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/389).
+  ([PR #435](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/435))
+
 - `tools/validate/jsonschema_lite.py` supports the `allOf` keyword (F-113): the
   instance is checked against every subschema in order and each failure is
   reported, with the subschema's location in a schema error such as
