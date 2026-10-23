@@ -1,0 +1,94 @@
+# Test vector: `get-events` with two filters and topic matching (F-040, issue #297).
+#
+# Request shape (CA-01 section 3): `filters` carries at most 2 tables under
+# decision D-06 (upstream allows 5). Each filter's `topics` is an array of
+# topic patterns; a pattern is an array of segments, each either a base64
+# `ScVal` that must match that topic position exactly, or the wildcard "*",
+# which matches any single segment.
+#
+#   filter 1  contract CADR3ZIARTBJDBDMNBXCKEVMSAETCPCJK3NPOHUQBOMF5LWPODMQU5RQ,
+#             topic [ScVal symbol "new_block_event"]
+#             "AAAADwAAAA9uZXdfYmxvY2tfZXZlbnQA" is XDR 0000000f (SCV_SYMBOL),
+#             0000000f (length 15) + "new_block_event" + one padding byte.
+#   filter 2  any contract, topic [ScVal symbol "transfer", "*", "*"]
+#             "AAAADwAAAAh0cmFuc2Zlcg==" is 0000000f + 00000008 + "transfer".
+#
+# The segment encodings are checked by `tests/test_rpc_events_fixtures.py`,
+# which decodes them with the repository's own ScVal codec (`tests/scval_xdr.py`).
+#
+# Verified live against https://soroban-testnet.stellar.org on 2026-10-23 (UTC)
+# with `startLedger` 2000 ledgers behind the tip and `pagination.limit` 2:
+#
+#   filter 1 alone      -> 2 events, each with topic ["AAAADwAAAA9uZXdfYmxvY2tfZXZlbnQA"]
+#   filter 1 + "*"      -> 0 events (that event has one topic segment, so a
+#                          second segment never matches)
+#   a different symbol  -> 0 events
+#   both filters        -> 2 events (topic of 3 segments: the transfer symbol
+#                          and two address ScVals)
+#
+# Result keys on every answer: events (array), cursor (string), latestLedger,
+# oldestLedger, latestLedgerCloseTime, oldestLedgerCloseTime. Each event
+# carried: type, ledger, ledgerClosedAt, contractId, id, operationIndex,
+# transactionIndex, txHash, topic (array of base64 strings), value (base64).
+#
+# Assertions are on the top-level result fields only, by type, because the
+# fixture vocabulary addresses a top-level `field` (nested `path` is CA-01-E and
+# not yet in this repository's validator). The per-event structure above is
+# recorded here and checked against a recorded response in the test.
+#
+# `startLedger` is a capture-time value and ages out with the endpoint's
+# retention (CA-01 section 2), so this vector is not durable for a live run.
+# Kept under `tests/fixtures/rpc/`, not in a pack: `getEvents` is not on
+# `tools/evidence/capture_live.py`'s read-only allowlist, and the engine does
+# not run it yet (Protocol-Canary E-029, issue #478, is open).
+#
+# Note found while capturing: the live endpoint rejects a filter `type` of
+# "diagnostic" ("type must be either 'system' or 'contract'"), although this
+# repository's validator and the engine's request builder both allow it. It is
+# not exercised here.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getEvents
+
+id = "test-rpc-events-multitopic"
+protocol = 28
+surface = "rpc"
+category = "events"
+description = "getEvents with two filters, an exact ScVal topic segment and wildcard segments"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getEvents"
+
+method = "get-events"
+
+[request]
+startLedger = 5347400
+
+[request.pagination]
+limit = 2
+
+[[request.filters]]
+type = "contract"
+contractIds = ["CADR3ZIARTBJDBDMNBXCKEVMSAETCPCJK3NPOHUQBOMF5LWPODMQU5RQ"]
+topics = [["AAAADwAAAA9uZXdfYmxvY2tfZXZlbnQA"]]
+
+[[request.filters]]
+type = "contract"
+topics = [["AAAADwAAAAh0cmFuc2Zlcg==", "*", "*"]]
+
+[[assert]]
+kind = "field-type"
+field = "events"
+expected_type = "array"
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "number"
+
+[[assert]]
+kind = "field-type"
+field = "oldestLedger"
+expected_type = "number"
+
+[[assert]]
+kind = "field-type"
+field = "cursor"
+expected_type = "string"
