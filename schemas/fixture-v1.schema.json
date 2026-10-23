@@ -122,7 +122,22 @@
         "properties": {
           "method": {
             "type": "string",
-            "enum": ["get-network", "get-latest-ledger"]
+            "enum": [
+              "get-events",
+              "get-fee-stats",
+              "get-health",
+              "get-latest-ledger",
+              "get-ledger-entries",
+              "get-ledgers",
+              "get-network",
+              "get-transaction",
+              "get-transactions",
+              "get-version-info"
+            ]
+          },
+          "request": {
+            "type": "object",
+            "description": "Optional parameters for the RPC call, matching canary-rpc request builder (CA-01-K)."
           },
           "assert": {
             "type": "array",

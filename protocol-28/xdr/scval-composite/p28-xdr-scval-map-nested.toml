@@ -1,0 +1,63 @@
+# Protocol 28 / ScVal: a `SCV_MAP` whose value is a `SCV_VEC` round-trips.
+#
+# What this tests:
+# the `SCV_MAP` arm carrying one entry, `Symbol("outer") => Vec([U32(1),
+# U32(2)])`: one level of map-in-vec nesting, no deeper. Depth and recursion
+# limits are out of scope for this issue (open #303) and this fixture does not
+# target any.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `typedef SCMapEntry SCMap<>;` — Stellar-contract.x line 243; `struct
+#     SCMapEntry` — lines 318-322; `typedef SCVal SCVec<>;` — line 242; `case
+#     SCV_MAP: SCMap *map;` and `case SCV_VEC: SCVec *vec;` — lines 300-301 and
+#     298-299.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Why it matters:
+# A container holding a container is where a decoder's recursion bookkeeping
+# and its pointer-flag handling meet. One level is enough to prove the nested
+# encoding without asserting anything about a depth limit, which is a separate
+# issue.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this value and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   ScVal::Map(Some(ScMap(VecM::try_from(vec![ScMapEntry { key: ScVal::Symbol(ScSymbol::try_from(b"outer".to_vec()).unwrap()), val: ScVal::Vec(Some(ScVec(VecM::try_from(vec![ScVal::U32(1), ScVal::U32(2)]).unwrap()))) }]).unwrap())))
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: Yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes, which are quoted
+# in full in the fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# network object: the integers, symbols and booleans inside the containers are
+# arbitrary fixed values chosen by the generator, no account key, contract id,
+# signature or secret key appears anywhere, and nothing here was observed on a
+# network.
+#
+# The XDR definition cited below is the pinned file, not a moving branch.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-map-nested"
+protocol = 28
+surface = "xdr"
+category = "scval-composite"
+description = "A `ScVal::Map` with a `ScVal::Vec` value round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "roundtrip"
+value_base64 = "AAAAEQAAAAEAAAABAAAADwAAAAVvdXRlcgAAAAAAABAAAAABAAAAAgAAAAMAAAABAAAAAwAAAAI="

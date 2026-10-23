@@ -361,6 +361,211 @@ class TestValidateSorobanFields(unittest.TestCase):
             report.errors,
         )
 
+    def test_soroban_integer_ranges_table_driven(self) -> None:
+        """Test Soroban argument integer ranges at their exact limits (F-124, issue #420)."""
+        def make_arg_fx(kind: str, val_repr: str, protocol: int = 28) -> str:
+            return f"""
+id = "test-soroban-fixture"
+protocol = {protocol}
+surface = "soroban"
+category = "smoke"
+description = "test fixture"
+source_reference = "CAP-0083"
+
+source_account = "{self.valid_source}"
+contract_id = "{self.valid_contract}"
+function = "transfer"
+sequence_number = 1
+
+[[args]]
+kind = "{kind}"
+value = {val_repr}
+
+[expect]
+kind = "simulation-success"
+"""
+
+        rows = [
+            # kind, val_repr, is_accepted, expected_fragment, label
+            ("u32", "0", True, None, "u32 lower bound"),
+            ("u32", "-1", False, "allowed range", "u32 below lower bound"),
+            ("u32", "4294967295", True, None, "u32 upper bound"),
+            ("u32", "4294967296", False, "allowed range", "u32 above upper bound"),
+
+            ("i32", "-2147483648", True, None, "i32 lower bound"),
+            ("i32", "-2147483649", False, "allowed range", "i32 below lower bound"),
+            ("i32", "2147483647", True, None, "i32 upper bound"),
+            ("i32", "2147483648", False, "allowed range", "i32 above upper bound"),
+
+            ("i64", "-9223372036854775808", True, None, "i64 lower bound"),
+            ("i64", "9223372036854775807", True, None, "i64 upper bound"),
+            ("i64", "9223372036854775808", False, "outside the signed 64-bit range", "i64 above signed 64-bit range"),
+
+            ("u64", "0", True, None, "u64 lower bound"),
+            ("u64", "-1", False, "allowed range", "u64 below lower bound"),
+            ("u64", "9223372036854775807", True, None, "u64 signed 64-bit max"),
+            ("u64", "9223372036854775808", False, "outside the signed 64-bit range", "u64 above signed 64-bit range"),
+
+            ("duration", "0", True, None, "duration lower bound"),
+            ("duration", "-1", False, "must be a non-negative", "duration below lower bound"),
+            ("duration", "9223372036854775807", True, None, "duration signed 64-bit max"),
+            ("duration", "9223372036854775808", False, "outside the signed 64-bit range", "duration above signed 64-bit range"),
+
+            ("timepoint", "0", True, None, "timepoint lower bound"),
+            ("timepoint", "-1", False, "must be a non-negative", "timepoint below lower bound"),
+            ("timepoint", "9223372036854775807", True, None, "timepoint signed 64-bit max"),
+            ("timepoint", "9223372036854775808", False, "outside the signed 64-bit range", "timepoint above signed 64-bit range"),
+
+            ("i128", '"-170141183460469231731687303715884105728"', True, None, "i128 decimal lower bound"),
+            ("i128", '"-170141183460469231731687303715884105729"', False, "below the minimum", "i128 decimal below lower bound"),
+            ("i128", '"170141183460469231731687303715884105727"', True, None, "i128 decimal upper bound"),
+            ("i128", '"170141183460469231731687303715884105728"', False, "above the maximum", "i128 decimal above upper bound"),
+            ("i128", f'"{hex(2**127 - 1)}"', True, None, "i128 hex upper bound"),
+            ("i128", f'"-{hex(2**127)}"', True, None, "i128 hex lower bound"),
+
+            ("u128", '"0"', True, None, "u128 decimal lower bound"),
+            ("u128", '"-1"', False, "must not be negative", "u128 negative decimal"),
+            ("u128", '"340282366920938463463374607431768211455"', True, None, "u128 decimal upper bound"),
+            ("u128", '"340282366920938463463374607431768211456"', False, "above the maximum", "u128 decimal above upper bound"),
+            ("u128", f'"{hex(2**128 - 1)}"', True, None, "u128 hex upper bound"),
+
+            ("i256", f'"{-(2**255)}"', True, None, "i256 decimal lower bound"),
+            ("i256", f'"{-(2**255) - 1}"', False, "below the minimum", "i256 decimal below lower bound"),
+            ("i256", f'"{2**255 - 1}"', True, None, "i256 decimal upper bound"),
+            ("i256", f'"{2**255}"', False, "above the maximum", "i256 decimal above upper bound"),
+            ("i256", f'"{hex(2**255 - 1)}"', True, None, "i256 hex upper bound"),
+            ("i256", f'"-{hex(2**255)}"', True, None, "i256 hex lower bound"),
+
+            ("u256", '"0"', True, None, "u256 decimal lower bound"),
+            ("u256", '"-1"', False, "must not be negative", "u256 negative decimal"),
+            ("u256", f'"{2**256 - 1}"', True, None, "u256 decimal upper bound"),
+            ("u256", f'"{2**256}"', False, "above the maximum", "u256 decimal above upper bound"),
+            ("u256", f'"{hex(2**256 - 1)}"', True, None, "u256 hex upper bound"),
+        ]
+
+        for kind, val_repr, is_accepted, expected_fragment, label in rows:
+            with self.subTest(label=label, kind=kind, val_repr=val_repr):
+                content = make_arg_fx(kind, val_repr)
+                report = validate_fixture_content(content)
+                if is_accepted:
+                    self.assertEqual(report.errors, [], f"expected {label} to be accepted: {report.errors}")
+                else:
+                    self.assertTrue(
+                        any(expected_fragment in e for e in report.errors),
+                        f"expected {expected_fragment!r} in errors for {label}, got: {report.errors}",
+                    )
+
+    def test_soroban_nesting_depth_exact_limits(self) -> None:
+        """Test vec and map nesting depth at exact limits of 8 (accepted) and 9 (rejected) (F-124, issue #420)."""
+        def to_toml_val(obj: object) -> str:
+            if isinstance(obj, dict):
+                items = [f"{k} = {to_toml_val(v)}" for k, v in obj.items()]
+                return "{ " + ", ".join(items) + " }"
+            elif isinstance(obj, list):
+                items = [to_toml_val(x) for x in obj]
+                return "[ " + ", ".join(items) + " ]"
+            elif isinstance(obj, str):
+                return json.dumps(obj)
+            elif isinstance(obj, int):
+                return str(obj)
+            raise ValueError(f"unsupported type {type(obj)}")
+
+        def make_fixture(kind: str, val_repr: str) -> str:
+            return f"""
+id = "test-soroban-fixture"
+protocol = 28
+surface = "soroban"
+category = "smoke"
+description = "test fixture"
+source_reference = "CAP-0083"
+
+source_account = "{self.valid_source}"
+contract_id = "{self.valid_contract}"
+function = "transfer"
+sequence_number = 1
+
+[[args]]
+kind = "{kind}"
+value = {val_repr}
+
+[expect]
+kind = "simulation-success"
+"""
+
+        # Vec nesting depth
+        def build_vec(depth: int) -> list:
+            val = [{"kind": "u32", "value": 1}]
+            for _ in range(depth - 1):
+                val = [{"kind": "vec", "value": val}]
+            return val
+
+        # Vec depth 8: accepted
+        rep_vec8 = validate_fixture_content(make_fixture("vec", to_toml_val(build_vec(8))))
+        self.assertEqual(rep_vec8.errors, [], f"vec depth 8 failed: {rep_vec8.errors}")
+
+        # Vec depth 9: rejected
+        rep_vec9 = validate_fixture_content(make_fixture("vec", to_toml_val(build_vec(9))))
+        self.assertTrue(
+            any("vec/map arguments are nested deeper than the limit of 8 levels" in e for e in rep_vec9.errors),
+            f"expected depth 9 rejection, got: {rep_vec9.errors}",
+        )
+
+        # Map nesting depth
+        def build_map(depth: int) -> list:
+            val = [{"key": {"kind": "symbol", "value": "x"}, "value": {"kind": "u32", "value": 1}}]
+            for i in range(depth - 1):
+                val = [{"key": {"kind": "symbol", "value": f"k{i}"}, "value": {"kind": "map", "value": val}}]
+            return val
+
+        # Map depth 8: accepted
+        rep_map8 = validate_fixture_content(make_fixture("map", to_toml_val(build_map(8))))
+        self.assertEqual(rep_map8.errors, [], f"map depth 8 failed: {rep_map8.errors}")
+
+        # Map depth 9: rejected
+        rep_map9 = validate_fixture_content(make_fixture("map", to_toml_val(build_map(9))))
+        self.assertTrue(
+            any("vec/map arguments are nested deeper than the limit of 8 levels" in e for e in rep_map9.errors),
+            f"expected depth 9 rejection, got: {rep_map9.errors}",
+        )
+
+    def test_soroban_protocol_positive_integer_limits(self) -> None:
+        """Test protocol field positive integer limits: 1 accepted, 0 and negative rejected (F-124, issue #420)."""
+        def make_proto_fx(protocol: int) -> str:
+            return f"""
+id = "test-soroban-fixture"
+protocol = {protocol}
+surface = "soroban"
+category = "smoke"
+description = "test fixture"
+source_reference = "CAP-0083"
+
+source_account = "{self.valid_source}"
+contract_id = "{self.valid_contract}"
+function = "transfer"
+sequence_number = 1
+
+[expect]
+kind = "simulation-success"
+"""
+
+        # Protocol 1: accepted
+        rep1 = validate_fixture_content(make_proto_fx(1))
+        self.assertEqual(rep1.errors, [])
+
+        # Protocol 0: rejected
+        rep0 = validate_fixture_content(make_proto_fx(0))
+        self.assertTrue(
+            any("field 'protocol' must be a positive integer" in e for e in rep0.errors),
+            rep0.errors,
+        )
+
+        # Protocol -1: rejected
+        rep_neg = validate_fixture_content(make_proto_fx(-1))
+        self.assertTrue(
+            any("field 'protocol' must be a positive integer" in e for e in rep_neg.errors),
+            rep_neg.errors,
+        )
+
 
 class TestEngineSorobanVerification(unittest.TestCase):
     def test_engine_rejects_four_failing_cases(self) -> None:
