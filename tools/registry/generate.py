@@ -412,7 +412,7 @@ def pack_digest(pack_files) -> str:
 
 def render_registry(registry: dict) -> str:
     """The canonical encoding: UTF-8, LF, two-space indent, trailing newline."""
-    return json.dumps(registry, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    return json.dumps(registry, indent=2, ensure_ascii=False) + "\n"
 
 
 def check_against_schema(
