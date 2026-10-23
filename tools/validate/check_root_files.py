@@ -41,6 +41,7 @@ DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     "protocol-27",
     "protocol-28",
     "protocol-29",
+    "requirements-differential.txt",
     "schemas",
     "tests",
     "tools",
