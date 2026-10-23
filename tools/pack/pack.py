@@ -42,6 +42,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load(name: str, relative: str):
+    path = REPO_ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules.setdefault(name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Atomic writes (F-081): a release artifact is published under its final name
+# only once it is complete.
+atomic_write = _load("canary_atomic_write", "tools/common/atomic_write.py")
+write_bytes_atomic = atomic_write.write_bytes_atomic
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -204,7 +220,7 @@ def build_archive(pack: Path, output_dir: Path, version: str) -> ArchiveInfo:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / archive_name(version)
-    path.write_bytes(data)
+    write_bytes_atomic(path, data)
     return ArchiveInfo(
         path=path,
         sha256=hashlib.sha256(data).hexdigest(),
