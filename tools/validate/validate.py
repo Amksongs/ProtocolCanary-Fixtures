@@ -14,19 +14,30 @@ never treats a fixture field as a command to run.
 
 Usage:
     python3 tools/validate/validate.py [root ...]
+    python3 tools/validate/validate.py --format json [root ...]
 
 With no arguments, validates every protocol-*/ directory found next to
 this script's repository root. Exits 0 if every fixture is valid, 1
 otherwise.
+
+With ``--format json``, writes a structured JSON report to stdout instead
+of human-readable text. The schema for this report is documented in
+``schemas/validator-report-v1.schema.json``.
 """
 from __future__ import annotations
 
 import base64
 import binascii
+import json
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# tomllib is available in Python 3.11+. For Python 3.10, fall back to tomli.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 SURFACES = {"xdr", "rpc", "soroban"}
 XDR_TYPES = {"StellarValue", "ContractExecutable"}
@@ -305,8 +316,60 @@ def validate_directory(root: Path) -> Report:
     return report
 
 
+def build_json_report(
+    combined: Report,
+    roots: list[Path],
+    total_files: int,
+) -> dict:
+    """Build a JSON-serializable report dict from a validation run.
+
+    The shape of this dict is documented by
+    ``schemas/validator-report-v1.schema.json``.
+    """
+    return {
+        "version": 1,
+        "status": "ok" if combined.ok else "failed",
+        "roots": [
+            {
+                "path": str(root),
+                "valid": root.is_dir(),
+                "fixture_count": len(find_fixture_files(root)),
+            }
+            for root in roots
+        ],
+        "total_fixture_files": total_files,
+        "errors": [
+            {"path": err.split(":", 1)[0], "message": err.split(":", 1)[1].strip()}
+            for err in combined.errors
+        ],
+        "warnings": combined.warnings,
+    }
+
+
+def render_json(report: dict) -> str:
+    """Render a JSON report dict as a formatted JSON string."""
+    return json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+
+
 def main(argv: list[str]) -> int:
-    roots = [Path(a) for a in argv] if argv else None
+    format_json = False
+    roots_args: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--format":
+            format_json = True
+            i += 2  # Skip both --format and its value
+            continue
+        elif arg.startswith("--format="):
+            format_json = arg.split("=", 1)[1] == "json"
+            i += 1
+            continue
+        else:
+            roots_args.append(arg)
+        i += 1
+
+    roots = [Path(a) for a in roots_args] if roots_args else None
     if roots is None:
         repo_root = Path(__file__).resolve().parents[2]
         roots = sorted(p for p in repo_root.glob("protocol-*") if p.is_dir())
@@ -323,6 +386,11 @@ def main(argv: list[str]) -> int:
         sub_report = validate_directory(root)
         combined.errors.extend(sub_report.errors)
         combined.warnings.extend(sub_report.warnings)
+
+    if format_json:
+        report = build_json_report(combined, roots, total_files)
+        sys.stdout.write(render_json(report))
+        return 0 if combined.ok else 1
 
     for warning in combined.warnings:
         print(f"warning: {warning}")

@@ -13,6 +13,15 @@ All notable changes to this project are documented in this file.
 - `tools/validate/validate.py`: structural validator (schema conformance,
   unique IDs, protocol/surface enums, source references, referenced-file
   existence). No live-network or execution behavior.
+- `schemas/validator-report-v1.schema.json`: JSON Schema for the
+  ``--format json`` report produced by the validator.
+- ``--format json`` flag on ``validate.py``: emits a structured JSON report
+  instead of human-readable text. The report shape is documented in
+  `docs/contracts.md` and validated against the schema in tests.
+- `tools/jsonschema_lite.py`: a minimal JSON Schema validator (draft 2020-12
+  subset) used to validate reports in tests.
+- `docs/contracts.md`: documents the validator report contract and fixture
+  schema.
 - Protocol 28 compatibility pack (`protocol-28/`):
   - `p28-xdr-cap83-empty-tx-set` — CAP-0083 `StellarValue`
     (`STELLAR_VALUE_EMPTY_TX_SET`) round-trip, built with the official
