@@ -1,10 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/StellarCanary/ProtocolCanary-Fixtures/schemas/fixture-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/ProtocolCanary-Fixtures/main/schemas/fixture-v1.schema.json",
   "title": "Protocol Canary fixture (schema_version 1)",
-  "description": "A single compatibility-assertion fixture consumed by StellarCanary/Protocol-Canary's canary-fixtures loader. This schema mirrors that implementation (see Protocol-Canary's docs/fixture-contract.md); it is a convenience for editor/CI linting in this repository, not an independent specification. On any disagreement, Protocol-Canary's implementation is authoritative.",
+  "description": "A single compatibility-assertion fixture consumed by StellarCanary/Protocol-Canary's canary-fixtures loader. This schema mirrors that implementation (see Protocol-Canary's docs/fixture-contract.md); it is a convenience for editor/CI linting in this repository, not an independent specification. On any disagreement, Protocol-Canary's implementation is authoritative. Strictness note (F-031): the top-level object and every nested object set additionalProperties: false, so an undeclared (typo'd) key is rejected here and by tools/validate/validate.py's unknown-key check. The top-level properties list the union of the common fields and every surface's keys — additionalProperties can only see properties declared in this same schema object — while the per-surface conditionals under allOf enforce which subset each surface actually accepts and carry the strict enums. tools/validate/schema_sync.py checks this schema's enums and required-field lists against tools/validate/validate.py's constants, so the two cannot drift unnoticed. See CONTRIBUTING.md for the rationale.",
   "type": "object",
-  "required": ["id", "protocol", "surface", "category", "description"],
+  "additionalProperties": false,
+  "required": ["id", "protocol", "surface", "category", "description", "source_reference"],
+  "$comment": "examples mirrors protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml; keep the two in sync.",
+  "examples": [
+    {
+      "id": "p28-xdr-cap85-external-ref-roundtrip",
+      "protocol": 28,
+      "surface": "xdr",
+      "category": "cap-0085",
+      "description": "ContractExecutable using the CAP-0085 CONTRACT_EXECUTABLE_EXTERNAL_REF case round-trips byte-for-byte",
+      "source_reference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md",
+      "type": "ContractExecutable",
+      "kind": "roundtrip",
+      "value_base64": "AAAAAgAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQAAAAhmbGVldC12MQ=="
+    }
+  ],
   "properties": {
     "id": {
       "type": "string",
@@ -25,7 +40,7 @@
     "category": {
       "type": "string",
       "minLength": 1,
-      "description": "Free-text grouping, e.g. a CAP slug (\"cap-0083\") or \"network\"/\"smoke\". Avoid vague values such as misc/other/test/general."
+      "description": "Free-text grouping, e.g. a CAP slug (\"cap-0083\") or \"network\"/\"smoke\". tools/validate/validate.py rejects the vague values \"misc\", \"other\", \"test\" and \"general\" as errors, in any letter case; use a specific CAP or topic slug instead."
     },
     "description": {
       "type": "string",
@@ -34,7 +49,10 @@
     "source_reference": {
       "type": "string",
       "minLength": 1,
-      "description": "An authoritative upstream reference: a CAP identifier/URL, an upstream XDR definition, or an official release/API doc URL. Strongly expected for any protocol-specific fixture (omitting it currently produces a warning, not a validator error)."
+      "maxLength": 2048,
+      "pattern": "^(CAP-[0-9]{4}|https://[^\\s/?#@]+/[^\\s]+)$",
+      "description": "An authoritative upstream reference: a CAP identifier such as CAP-0083, or an absolute https:// URL to a CAP, an upstream XDR definition, or an official release/API doc. Required for every protocol-specific fixture in this repository: tools/validate/validate.py reports a missing or empty source_reference as an error, so omitting it fails validation and CI.",
+      "$comment": "The pattern is the syntactic rule and is kept identical to SOURCE_REFERENCE_PATTERN in tools/validate/validate.py (tools/validate/schema_sync.py checks it). That a github.com or raw.githubusercontent.com link is pinned to a commit or tag, not a branch, cannot be expressed here and is enforced only by validate.py, like the other loader-side invariants."
     },
     "required_capabilities": {
       "type": "array",
@@ -47,19 +65,29 @@
           "wasm-artifact",
           "raw-ledger-access"
         ]
-      },
-      "description": "kebab-case canary_core::Capability values. A fixture requiring a capability the target project lacks is skipped, not failed."
-    },
+      },"description": "kebab-case canary_core::Capability values. A fixture requiring a capability the target project lacks is skipped, not failed. This enum must be kept in sync with CAPABILITIES in tools/validate/validate.py and with canary_core::Capability in StellarCanary/Protocol-Canary; the three lists are maintained independently (a JSON Schema enum, a Python set and a Rust type), so a new capability added to one without the others silently creates a divergence. tests/fixtures/capabilities.json (F-032) publishes the canonical vocabulary, and tests/test_validate.py pins this enum, the validator's set and that file to each other; engine-side parity is tracked in StellarCanary/Protocol-Canary#512."},
     "input_file": {
       "type": "string",
       "minLength": 1,
-      "description": "Path to an externally stored input file, relative to this fixture file's own directory. Existence is checked by the validator; the loader does not read the file's contents itself. (Note: Currently unused by any existing fixture in this repository; values are typically inlined via value_base64.)"
+      "description": "Path to an externally stored input file, relative to this fixture file's own directory. Existence is checked by the validator; the loader does not read the file's contents itself. This is the external-file alternative to inlining the input via value_base64 - a fixture supplies its input one way or the other, not both. Prefer an external file for large inputs (e.g. a multi-kilobyte binary payload) and value_base64 for short XDR values. (Note: Currently unused by any existing fixture in this repository; XDR inputs are inlined via value_base64.)"
     },
     "expected_file": {
       "type": "string",
       "minLength": 1,
-      "description": "Path to an externally stored expected-output file, relative to this fixture file's own directory. (Note: Currently unused by any existing fixture in this repository; values are typically inlined via expected_base64.)"
-    }
+      "description": "Path to an externally stored expected-output file, relative to this fixture file's own directory. Existence is checked by the validator; like input_file, the loader does not read the file's contents itself. This is the external-file alternative to inlining the expected value via expected_base64 (used with kind = encode-equals) - a fixture supplies the expected value one way or the other, not both. Prefer an external file for large expected payloads and expected_base64 for short XDR values. (Note: Currently unused by any existing fixture in this repository; expected values are inlined via expected_base64.)"
+    },
+    "type": { "type": "string" },
+    "kind": { "type": "string" },
+    "value_base64": { "type": "string" },
+    "expected_base64": { "type": "string" },
+    "method": { "type": "string" },
+    "assert": { "type": "array" },
+    "source_account": { "type": "string" },
+    "contract_id": { "type": "string" },
+    "function": { "type": "string" },
+    "sequence_number": { "type": "integer" },
+    "args": { "type": "array" },
+    "expect": { "type": "object" }
   },
   "allOf": [
     {
@@ -69,7 +97,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["StellarValue", "ContractExecutable"],
+            "enum": ["StellarValue", "ContractExecutable", "ScVal", "TransactionEnvelope", "LedgerEntry"],
             "description": "The XDR type name canary-xdr should decode value_base64 as."
           },
           "kind": {
@@ -94,7 +122,22 @@
         "properties": {
           "method": {
             "type": "string",
-            "enum": ["get-network", "get-latest-ledger"]
+            "enum": [
+              "get-events",
+              "get-fee-stats",
+              "get-health",
+              "get-latest-ledger",
+              "get-ledger-entries",
+              "get-ledgers",
+              "get-network",
+              "get-transaction",
+              "get-transactions",
+              "get-version-info"
+            ]
+          },
+          "request": {
+            "type": "object",
+            "description": "Optional parameters for the RPC call, matching canary-rpc request builder (CA-01-K)."
           },
           "assert": {
             "type": "array",
@@ -102,18 +145,47 @@
             "items": {
               "type": "object",
               "required": ["kind", "field"],
+              "additionalProperties": false,
               "properties": {
                 "kind": {
                   "type": "string",
-                  "enum": ["field-exists", "field-type", "field-equals"]
+                  "enum": [
+                    "field-exists",
+                    "field-absent",
+                    "field-type",
+                    "field-equals",
+                    "field-number-range"
+                  ]
                 },
                 "field": { "type": "string", "minLength": 1 },
-                "value": {},
+                "value": {
+                  "description": "Required when kind = field-equals; compared for exact equality against the decoded JSON value of 'field' in the method's response. Its type is intentionally unconstrained (any JSON/TOML value is accepted) but in practice it must match the JSON type the targeted RPC field actually returns — e.g. protocolVersion is a number and passphrase is a string. An array or inline table only ever matches a field that itself returns an array or object. The JSON type names a field-type assertion may use are listed on expected_type below; there is no equivalent fixed list for value because it is compared to real response data, not to a type name."
+                },
                 "expected_type": {
                   "type": "string",
-                  "enum": ["string", "integer", "boolean", "array", "object"]
+                  "enum": ["string", "number", "bool", "object", "array", "null"],
+                  "description": "JSON type names accepted for an RPC field-type assertion. Keep this enum in sync with RPC_ASSERT_TYPES in tools/validate/validate.py."
+                },
+                "min": {
+                  "type": "number",
+                  "description": "Minimum value (inclusive) for kind = field-number-range. At least one of 'min' or 'max' is required; when both are present, min must not exceed max."
+                },
+                "max": {
+                  "type": "number",
+                  "description": "Maximum value (inclusive) for kind = field-number-range. At least one of 'min' or 'max' is required; when both are present, min must not exceed max."
                 }
-              }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "kind": { "const": "field-number-range" } } },
+                  "then": {
+                    "anyOf": [
+                      { "required": ["min"] },
+                      { "required": ["max"] }
+                    ]
+                  }
+                }
+              ]
             }
           }
         }
@@ -134,17 +206,134 @@
           "contract_id": { "type": "string", "minLength": 1 },
           "function": { "type": "string", "minLength": 1 },
           "sequence_number": { "type": "integer" },
-          "args": { "type": "array" },
+          "args": {
+            "type": "array",
+            "description": "Optional, ordered ScVal arguments. Each entry is a { kind, value } table parsed by canary-soroban's parse_arg_at; an empty array is valid.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "bool",
+                    "u32",
+                    "i32",
+                    "u64",
+                    "i64",
+                    "i128",
+                    "u128",
+                    "i256",
+                    "u256",
+                    "void",
+                    "duration",
+                    "timepoint",
+                    "symbol",
+                    "string",
+                    "bytes",
+                    "address",
+                    "vec",
+                    "map"
+                  ]
+                },
+                "value": {
+                  "description": "Payload for the declared kind. Required for every kind except void; ignored for void. Type and constraints per kind (mirrored by tools/validate/validate.py): bool = boolean; u32/i32/u64/i64/duration/timepoint = integer in the documented range; u128/i128/u256/i256 = decimal or 0x-prefixed hex string within the 128/256-bit range; symbol = 0-32 characters from [A-Za-z0-9_]; string = string; bytes = 0x-prefixed even-length hex or canonical padded base64; address = 56-character G.../C... strkey (secret seeds rejected); vec = array of { kind, value } tables; map = array of { key, value } tables whose key/value are themselves { kind, value } tables. Nested vec/map containers are limited to 8 levels."
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": { "kind": { "const": "void" } },
+                    "required": ["kind"]
+                  },
+                  "else": { "required": ["value"] }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "const": "bool" } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "type": "boolean" } } }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "kind": { "enum": ["u32", "i32", "u64", "i64"] }
+                    },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "type": "integer" } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "const": "u32" } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "minimum": 0, "maximum": 4294967295 } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "const": "i32" } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "minimum": -2147483648, "maximum": 2147483647 } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "enum": ["u64", "duration", "timepoint"] } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "minimum": 0, "maximum": 18446744073709551615 } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "const": "i64" } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "minimum": -9223372036854775808, "maximum": 9223372036854775807 } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "enum": ["u128", "i128", "u256", "i256"] } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "type": "string" } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "enum": ["symbol", "string", "bytes", "address"] } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "type": "string" } } }
+                },
+                {
+                  "if": {
+                    "properties": { "kind": { "enum": ["vec", "map"] } },
+                    "required": ["kind"]
+                  },
+                  "then": { "properties": { "value": { "type": "array" } } }
+                }
+              ],
+              "$comment": "Recursive vec/map payload shape and the MAX_ARG_DEPTH = 8 limit are enforced by tools/validate/validate.py; JSON Schema cannot express a nesting bound portably. tools/validate/schema_sync.py checks this item's closed key set and kind enum against SOROBAN_ARG_FIELDS and SOROBAN_ARG_KINDS."
+            }
+          },
           "expect": {
             "type": "object",
             "required": ["kind"],
+            "additionalProperties": false,
             "properties": {
               "kind": {
                 "type": "string",
                 "enum": ["simulation-success", "simulation-error"]
               },
-              "message_contains": { "type": "string" }
-            }
+              "message_contains": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional, and only meaningful with kind = simulation-error: a substring the simulation's error message must contain. Omit it to assert only that the simulation failed. It must be a non-empty string when present -- canary-soroban reads it as Option<String> via as_str, so a non-string is silently dropped and an empty string matches every message, either way weakening the assertion without any visible error."
+              }
+            },
+            "$comment": "additionalProperties mirrors canary-soroban's unknown_body_keys(expect, [\"kind\", \"message_contains\"]), which rejects any other key. The fixture's top level is closed the same way in this schema and in tools/validate/validate.py (F-031); unlike [expect], that closure is this repository's own rule rather than a loader limit."
           }
         }
       }

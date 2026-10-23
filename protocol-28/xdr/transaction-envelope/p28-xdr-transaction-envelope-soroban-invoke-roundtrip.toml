@@ -1,0 +1,119 @@
+# Protocol 28 / TransactionEnvelope: a v1 envelope with one InvokeHostFunction operation round-trips.
+#
+# `TransactionEnvelope` is the union every transaction reaches a network
+# in: the engine decodes it (canary-xdr's XdrTypeName::TransactionEnvelope)
+# and a signer signs it. The union has three arms, and this pack had no
+# evidence for any of them. This fixture covers the Soroban shape of the
+# ENVELOPE_TYPE_TX arm: a v1 envelope whose single operation is
+# INVOKE_HOST_FUNCTION and whose transaction extension carries the
+# Soroban resource data.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `union TransactionEnvelope` — Stellar-transaction.x lines 1001-1010
+#     (the union itself at 1002-1010);
+#   * `enum EnvelopeType` — Stellar-ledger-entries.x lines 653-669;
+#   * `struct TransactionV1Envelope` — Stellar-transaction.x lines 967-973;
+#   * `struct Transaction` — Stellar-transaction.x lines 932-965;
+#   * `struct InvokeHostFunctionOp` — Stellar-transaction.x lines 618-629;
+#   * `struct Operation` — Stellar-transaction.x lines 653-719;
+#   * `enum OperationType` (INVOKE_HOST_FUNCTION = 24) —
+#     Stellar-transaction.x lines 39-73;
+#   * `union HostFunction` — Stellar-transaction.x lines 521-531;
+#   * `struct InvokeContractArgs` — Stellar-transaction.x lines 515-519;
+#   * `struct SorobanTransactionData` — Stellar-transaction.x lines
+#     879-900;
+#   * `struct SorobanResources` — Stellar-transaction.x lines 856-869;
+#   * `struct LedgerFootprint` — Stellar-transaction.x lines 849-854;
+#   * `union SCAddress` — Stellar-contract.x lines 206-222;
+#   * `typedef string SCSymbol<SCSYMBOL_LIMIT>` — Stellar-contract.x
+#     line 12.
+#
+# Why it matters: a Soroban transaction is the one shape of a v1
+# envelope with a different extension (`TransactionExt::V1` carrying
+# resources) and a different operation body. A decoder that reads the
+# transaction extension as the v0-style extension, or that stops at the
+# contract id inside the host function, would read a Soroban transaction
+# wrongly while still decoding a plain payment correctly. This fixture
+# proves the shape round-trips: decoding the value and re-encoding it
+# must reproduce exactly these bytes.
+#
+# The payload was produced by a program that builds the typed value
+# with the official `stellar-xdr` 28.0.1 crate (features base64 and
+# alloc — the crate version Protocol-Canary's canary-xdr pins for
+# Protocol 28) and serialises it, never hand-assembled. Generation
+# expression, recorded verbatim (the crate's ReadXdr/WriteXdr impls
+# provide to_xdr_base64/from_xdr_base64 over Limits::none()):
+#
+#
+#   TransactionEnvelope::Tx(TransactionV1Envelope {
+#       tx: Transaction {
+#           source_account: MuxedAccount::Ed25519(Uint256([0x77; 32])),
+#           fee: 200_000,
+#           seq_num: SequenceNumber(3_456_789),
+#           cond: Preconditions::None,
+#           memo: Memo::None,
+#           operations: vec![Operation {
+#               source_account: None,
+#               body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+#                   host_function: HostFunction::InvokeContract(InvokeContractArgs {
+#                       contract_address: ScAddress::Contract(ContractId(Hash([0xab; 32]))),
+#                       function_name: ScSymbol::try_from("hello").unwrap(),
+#                       args: VecM::default(),
+#                   }),
+#                   auth: VecM::default(),
+#               }),
+#           }].try_into().unwrap(),
+#           ext: TransactionExt::V1(SorobanTransactionData {
+#               ext: SorobanTransactionDataExt::V0,
+#               resources: SorobanResources {
+#                   footprint: LedgerFootprint {
+#                       read_only: VecM::default(),
+#                       read_write: VecM::default(),
+#                   },
+#                   instructions: 1_000,
+#                   disk_read_bytes: 100,
+#                   write_bytes: 100,
+#               },
+#               resource_fee: 1_000,
+#           }),
+#       },
+#       signatures: vec![DecoratedSignature {
+#           hint: SignatureHint([0x88; 4]),
+#           signature: Signature(BytesM::try_from(vec![0x88; 64]).unwrap()),
+#       }].try_into().unwrap(),
+#   }).to_xdr_base64(Limits::none())
+#
+# The whole program — every arm and every decode-failure value of this
+# issue, in one `main` — is quoted in the pull request that adds these
+# fixtures.
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13);
+# generated 2026-10-22 (UTC). The same crate round-tripped the value:
+# TransactionEnvelope::from_xdr_base64 followed by to_xdr reproduced the
+# 244-byte encoding exactly, byte for byte.
+#
+# Every payload byte is a synthetic structural value, not a capture of a
+# real network object: the 0x77-filled source account is not a real
+# account, the 0xab-filled contract id is not a real contract, the
+# 0x88-filled signature hint and signature are not a signature made by any
+# key (no secret key is used anywhere), the function name 'hello' is an
+# arbitrary symbol, and the fee, the sequence number, the resource limits
+# and the resource fee are arbitrary fixed numbers. The footprint is empty
+# and the authorization list is empty, so the value invokes nothing.
+#
+# The signature does not sign anything: it is not a submitted transaction
+# and was never observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x
+
+id = "p28-xdr-transaction-envelope-soroban-invoke-roundtrip"
+protocol = 28
+surface = "xdr"
+category = "transaction-envelope"
+description = "A `TransactionEnvelope` whose single operation is `INVOKE_HOST_FUNCTION` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x"
+
+type = "TransactionEnvelope"
+kind = "roundtrip"
+value_base64 = "AAAAAgAAAAB3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3dwADDUAAAAAAADS/FQAAAAAAAAAAAAAAAQAAAAAAAAAYAAAAAAAAAAGrq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urqwAAAAVoZWxsbwAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAA+gAAABkAAAAZAAAAAAAAAPoAAAAAYiIiIgAAABAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiA=="

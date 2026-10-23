@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-scval-i128-max",
+  "fixtureSha256": "f1cef65a79baa794be1673200feff082d7a94aa63fa23c396ff776481dbb286f",
+  "method": "structural",
+  "checkedAt": "2026-10-22T07:52:29Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "89b05fdc479bcf482bbd9337024a5d45cac55544"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

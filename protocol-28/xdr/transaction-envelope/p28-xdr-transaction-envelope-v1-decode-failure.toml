@@ -1,0 +1,46 @@
+# Protocol 28 / TransactionEnvelope: an unknown envelope-type discriminant is rejected.
+#
+# Complements p28-xdr-transaction-envelope-v1-roundtrip.toml: a decoder
+# that accepts truncated input is as much of a compatibility break as one
+# that rejects valid input. The union's discriminant is the first thing
+# a decoder reads, and a decoder that maps an unknown discriminant onto
+# a default arm instead of refusing the value would read a value the
+# protocol cannot produce as if it were a transaction.
+#
+# Malformation rule (documented, deterministic): this value_base64 is
+# the 200-byte crate-produced encoding in
+# p28-xdr-transaction-envelope-v1-roundtrip.toml with exactly one field
+# changed — the 4-byte envelope-type discriminant at the front of the
+# envelope, from ENVELOPE_TYPE_TX (0x00000002) to 0x0000003f (63).
+# EnvelopeType defines 0 to 10 (Stellar-ledger-entries.x lines 656-669),
+# so 63 is an envelope type the union does not define. Every other byte
+# is unchanged, and the value is still a whole, well-formed 200-byte
+# envelope apart from that discriminant.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official
+# `stellar-xdr` 28.0.1 crate (features base64 and alloc, the crate
+# version Protocol-Canary's canary-xdr pins for Protocol 28; rustc 1.99.1
+# (58cf8f9c3 2026-10-13)): TransactionEnvelope::from_xdr_base64 returns
+# Err ("xdr value invalid") for this input, while the unmodified
+# 200-byte encoding it was derived from decodes and round-trips
+# successfully with the same crate. The rejection is the unrecognised
+# discriminant itself, not a truncation.
+#
+# The source value was built by a program using the pinned crate, with
+# the expression recorded in the roundtrip fixture's header; the
+# discriminant change above is the only mutation. Every byte is a
+# synthetic structural value, not a capture of a real network object.
+# Nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x
+
+id = "p28-xdr-transaction-envelope-v1-decode-failure"
+protocol = 28
+surface = "xdr"
+category = "transaction-envelope"
+description = "A `TransactionEnvelope` with an unknown envelope-type discriminant is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x"
+
+type = "TransactionEnvelope"
+kind = "decode-failure"
+value_base64 = "AAAAPwAAAABERERERERERERERERERERERERERERERERERERERERERAABhqAAAAAAACPKzgAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVAAAAAAAAAAAAAAfQAAAAAAAAAAFmZmZmAAAAQGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY="

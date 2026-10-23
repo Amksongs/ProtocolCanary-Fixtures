@@ -1,0 +1,84 @@
+{
+  "description": "The engine-vocabulary vector: the exact sets of names Protocol-Canary's parsers accept, read from the engine's own source at one pinned commit (engineCommit). tools/validate/validate.py's constants and schemas/fixture-v1.schema.json's enums must agree with this file, which tests/test_engine_vocabulary_parity.py checks; the point is that every fixture the validator accepts is one the engine can parse, and every name the engine can parse is one the validator accepts, so drift becomes a failing test instead of a fixture that is accepted by one side and rejected by the other. Each list holds only names the engine's parser accepts at that commit, sorted alphabetically. To update: read the engine source file named next to each list at the new Protocol-Canary commit, rewrite the affected list, set engineCommit to that commit's full 40-character SHA, and change the matching validator constant and schema enum in the same pull request so the parity test stays green. A name that a contract document describes but the parser does not accept does not belong in a list; it belongs in contractOnlyNotImplemented.",
+  "engineRepository": "https://github.com/StellarCanary/Protocol-Canary",
+  "engineCommit": "94d7c794780a7c87944c5177ff1f8eb3edec300e",
+  "xdrTypes": [
+    "ContractExecutable",
+    "LedgerEntry",
+    "ScVal",
+    "StellarValue",
+    "TransactionEnvelope"
+  ],
+  "xdrTypesSource": {
+    "file": "crates/canary-xdr/src/decoder.rs",
+    "symbol": "enum XdrTypeName (and its FromStr impl)"
+  },
+  "xdrKinds": [
+    "decode-failure",
+    "decode-success",
+    "encode-equals",
+    "roundtrip"
+  ],
+  "xdrKindsSource": {
+    "file": "crates/canary-xdr/src/runner.rs",
+    "symbol": "match kind in XdrFixture::from_loaded"
+  },
+  "rpcMethods": [
+    "get-events",
+    "get-fee-stats",
+    "get-health",
+    "get-latest-ledger",
+    "get-ledger-entries",
+    "get-ledgers",
+    "get-network",
+    "get-transaction",
+    "get-transactions",
+    "get-version-info"
+  ],
+  "rpcMethodsSource": {
+    "file": "crates/canary-rpc/src/request.rs",
+    "symbol": "fn parameters(method: &str)"
+  },
+  "rpcAssertKinds": [
+    "field-absent",
+    "field-equals",
+    "field-exists",
+    "field-number-range",
+    "field-type"
+  ],
+  "rpcAssertKindsSource": {
+    "file": "crates/canary-rpc/src/runner.rs",
+    "symbol": "match kind in parse_assertion"
+  },
+  "sorobanExpectKinds": [
+    "simulation-error",
+    "simulation-success"
+  ],
+  "sorobanExpectKindsSource": {
+    "file": "crates/canary-soroban/src/runner.rs",
+    "symbol": "match kind in SorobanFixture::from_loaded"
+  },
+  "surfaces": [
+    "rpc",
+    "soroban",
+    "xdr"
+  ],
+  "surfacesSource": {
+    "file": "crates/canary-core/src/model.rs",
+    "symbol": "enum Surface (and its FromStr impl)"
+  },
+  "contractOnlyNotImplemented": [
+    "field-one-of",
+    "field-range"
+  ],
+  "engineOnlyNotYetAccepted": {
+    "engineCommit": "bc1330660c36eb67a87747513c7d14ba04d39238",
+    "note": "Names the engine's parser accepts at a later Protocol-Canary commit than engineCommit, which this repository's validator and schema do not accept yet. They are listed here for documentation only and are not compared with the validator: the vector stays pinned at engineCommit until the validator catches up, and moving the pin is a deliberate change that has to update the lists, the validator and the schema together.",
+    "xdrKinds": [
+      "decode-json-equals"
+    ],
+    "rpcAssertKinds": [
+      "event-topics"
+    ]
+  }
+}

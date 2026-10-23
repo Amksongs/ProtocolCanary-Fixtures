@@ -1,0 +1,66 @@
+# Protocol 28 / LedgerEntry: an `ACCOUNT` entry round-trips.
+#
+# What this tests:
+# an `ACCOUNT` ledger entry: `lastModifiedLedgerSeq` 1_234_567, the `ACCOUNT`
+# discriminant (0), and an `AccountEntry` whose account id is a 32-byte
+# synthetic ed25519 key, with balance 100_000_000 stroops, sequence number 42,
+# no sub-entries, no inflation destination, flags 0, home domain
+# `example.test`, thresholds `[1, 0, 0, 0]`, no signers and the V0 ext arm.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `struct AccountEntry` — Stellar-ledger-entries.x lines 190-217, with its
+#     inline ext union lines 206-216; `struct Signer` — lines 106-110; `typedef
+#     string string32<32>` — line 13; `typedef opaque Thresholds[4]` — line 12;
+#     `typedef PublicKey AccountID` — Stellar-types.x line 85.
+#   * `enum LedgerEntryType` — Stellar-ledger-entries.x lines 92-104;
+#   * `struct LedgerEntry` (lastModifiedLedgerSeq, the data union and the ext
+#     union) — lines 548-586.
+#
+# Why it matters:
+# The account entry is the oldest and most widely stored ledger entry, and it
+# is the one most likely to grow an extension. A decoder that mis-reads the
+# optional inflation destination, the `string32` home domain, the four
+# threshold bytes or the signer vector would corrupt every account it touched
+# while still passing simpler fixtures.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this entry and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   LedgerEntry { last_modified_ledger_seq: 1_234_567, data: LedgerEntryData::Account(AccountEntry { account_id: AccountId(PublicKey::PublicKeyTypeEd25519(Uint256([0x11; 32]))), balance: 100_000_000, seq_num: SequenceNumber(42), num_sub_entries: 0, inflation_dest: None, flags: 0, home_domain: String32::try_from(b"example.test".to_vec()).unwrap(), thresholds: Thresholds([1, 0, 0, 0]), signers: VecM::try_from(Vec::<Signer>::new()).unwrap(), ext: AccountEntryExt::V0 }), ext: LedgerEntryExt::V0 }
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# ledger entry and not an account, trustline, contract or balance that exists
+# on any network: the 0x11/0x33-filled account ids, the 0x44-filled issuer,
+# the 0x22-filled contract id, the 0x55-filled code hash and the 0x66-filled
+# TTL key hash are fixed placeholders, no secret key is used or represented
+# anywhere, and the balances, sequence numbers and ledger numbers are
+# arbitrary constants. The contract-code bytes are opaque synthetic bytes, not
+# a real WASM module. Nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x
+
+id = "p28-xdr-ledger-entry-account"
+protocol = 28
+surface = "xdr"
+category = "ledger-entry"
+description = "An `ACCOUNT` `LedgerEntry` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x"
+
+type = "LedgerEntry"
+kind = "roundtrip"
+value_base64 = "ABLWhwAAAAAAAAAAEREREREREREREREREREREREREREREREREREREREREREAAAAABfXhAAAAAAAAAAAqAAAAAAAAAAAAAAAAAAAADGV4YW1wbGUudGVzdAEAAAAAAAAAAAAAAAAAAAA="

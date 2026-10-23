@@ -1,0 +1,48 @@
+# Protocol 28 / TransactionEnvelope: a Soroban envelope truncated inside its contract id is rejected.
+#
+# Complements p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml:
+# a decoder that accepts truncated input is as much of a compatibility
+# break as one that rejects valid input. The host function's contract
+# address is a 32-byte contract id, and a decoder that read a short
+# contract id as a complete one would decode a value the protocol cannot
+# produce.
+#
+# Malformation rule (documented, deterministic): this value_base64 is
+# the first 100 bytes of the 244-byte crate-produced encoding in
+# p28-xdr-transaction-envelope-soroban-invoke-roundtrip.toml — the
+# envelope discriminant, the source account, the fee, the sequence
+# number, the preconditions, the memo, the operation list, the operation
+# body's INVOKE_HOST_FUNCTION discriminant, the host function's
+# HOST_FUNCTION_TYPE_INVOKE_CONTRACT discriminant, the contract address's
+# SC_ADDRESS_TYPE_CONTRACT discriminant, and the first 20 bytes of the
+# 32-byte contract id. The remaining 12 bytes of the contract id, the
+# function name, the arguments, the authorization list, the Soroban
+# transaction extension and the signature list are all missing.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official
+# `stellar-xdr` 28.0.1 crate (features base64 and alloc, the crate
+# version Protocol-Canary's canary-xdr pins for Protocol 28; rustc 1.99.1
+# (58cf8f9c3 2026-10-13)): TransactionEnvelope::from_xdr_base64 returns
+# Err ("failed to fill whole buffer") for this input, while the
+# unmodified 244-byte encoding it was cut from decodes and round-trips
+# successfully with the same crate. The rejection is the truncation
+# itself; nothing here is an unrecognised discriminant.
+#
+# The source value was built by a program using the pinned crate, with
+# the expression recorded in the roundtrip fixture's header; the
+# truncation above is the only mutation. Every byte is a synthetic
+# structural value, not a capture of a real network object. Nothing here
+# was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x
+
+id = "p28-xdr-transaction-envelope-soroban-invoke-decode-failure"
+protocol = 28
+surface = "xdr"
+category = "transaction-envelope"
+description = "A Soroban `TransactionEnvelope` truncated inside its contract id is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x"
+
+type = "TransactionEnvelope"
+kind = "decode-failure"
+value_base64 = "AAAAAgAAAAB3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3dwADDUAAAAAAADS/FQAAAAAAAAAAAAAAAQAAAAAAAAAYAAAAAAAAAAGrq6urq6urq6urq6urq6urq6urqw=="

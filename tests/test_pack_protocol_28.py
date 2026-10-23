@@ -33,9 +33,94 @@ EXPECTED_IDS_BY_SURFACE = {
         "p28-xdr-cap83-empty-tx-set-malformed",
         "p28-xdr-cap85-external-ref-roundtrip",
         "p28-xdr-cap85-external-ref-malformed",
+        "p28-xdr-contract-executable-wasm-roundtrip",
+        "p28-xdr-contract-executable-wasm-decode-success",
+        "p28-xdr-contract-executable-wasm-decode-failure",
+        "p28-xdr-contract-executable-stellar-asset-roundtrip",
+        "p28-xdr-contract-executable-stellar-asset-decode-success",
+        "p28-xdr-contract-executable-stellar-asset-decode-failure",
+        "p28-xdr-stellar-value-basic-roundtrip",
+        "p28-xdr-stellar-value-basic-decode-success",
+        "p28-xdr-stellar-value-basic-decode-failure",
+        "p28-xdr-stellar-value-signed-roundtrip",
+        "p28-xdr-stellar-value-signed-decode-success",
+        "p28-xdr-stellar-value-signed-decode-failure",
+        "p28-xdr-transaction-envelope-v0-roundtrip",
+        "p28-xdr-transaction-envelope-v0-decode-failure",
+        "p28-xdr-transaction-envelope-v1-roundtrip",
+        "p28-xdr-transaction-envelope-v1-decode-failure",
+        "p28-xdr-transaction-envelope-soroban-invoke-roundtrip",
+        "p28-xdr-transaction-envelope-soroban-invoke-decode-failure",
+        "p28-xdr-transaction-envelope-fee-bump-roundtrip",
+        "p28-xdr-transaction-envelope-fee-bump-decode-failure",
+        "p28-xdr-ledger-entry-account",
+        "p28-xdr-ledger-entry-account-truncated",
+        "p28-xdr-ledger-entry-contract-code",
+        "p28-xdr-ledger-entry-contract-code-truncated",
+        "p28-xdr-ledger-entry-contract-data",
+        "p28-xdr-ledger-entry-contract-data-key-truncated",
+        "p28-xdr-ledger-entry-trustline",
+        "p28-xdr-ledger-entry-trustline-truncated",
+        "p28-xdr-ledger-entry-trustline-unknown-asset-type",
+        "p28-xdr-ledger-entry-ttl",
+        "p28-xdr-ledger-entry-ttl-missing-live-until",
+        "p28-xdr-scval-address-account",
+        "p28-xdr-scval-address-contract",
+        "p28-xdr-scval-address-unknown-discriminant",
+        "p28-xdr-scval-map-empty",
+        "p28-xdr-scval-map-multi",
+        "p28-xdr-scval-map-nested",
+        "p28-xdr-scval-map-one",
+        "p28-xdr-scval-map-truncated-after-key",
+        "p28-xdr-scval-map-unsorted-keys",
+        "p28-xdr-scval-vec-count-exceeds-data",
+        "p28-xdr-scval-vec-empty",
+        "p28-xdr-scval-vec-multi",
+        "p28-xdr-scval-vec-null",
+        "p28-xdr-scval-vec-one",
+        "p28-xdr-scval-bool-false",
+        "p28-xdr-scval-bool-true",
+        "p28-xdr-scval-bytes-empty",
+        "p28-xdr-scval-bytes-small",
+        "p28-xdr-scval-bytes-truncated",
+        "p28-xdr-scval-duration",
+        "p28-xdr-scval-i128-max",
+        "p28-xdr-scval-i128-min",
+        "p28-xdr-scval-i128-truncated",
+        "p28-xdr-scval-i128-zero",
+        "p28-xdr-scval-i256-max",
+        "p28-xdr-scval-i256-min",
+        "p28-xdr-scval-i256-zero",
+        "p28-xdr-scval-i32-min",
+        "p28-xdr-scval-i64-min",
+        "p28-xdr-scval-string-empty",
+        "p28-xdr-scval-string-small",
+        "p28-xdr-scval-string-truncated",
+        "p28-xdr-scval-symbol-32-boundary",
+        "p28-xdr-scval-symbol-33-invalid",
+        "p28-xdr-scval-symbol-empty",
+        "p28-xdr-scval-symbol-small",
+        "p28-xdr-scval-timepoint",
+        "p28-xdr-scval-u128-high-bit",
+        "p28-xdr-scval-u128-max",
+        "p28-xdr-scval-u128-zero",
+        "p28-xdr-scval-u256-max",
+        "p28-xdr-scval-u256-truncated",
+        "p28-xdr-scval-u256-zero",
+        "p28-xdr-scval-u32-max",
+        "p28-xdr-scval-u32-truncated",
+        "p28-xdr-scval-u64-max",
+        "p28-xdr-scval-u64-truncated",
+        "p28-xdr-scval-void",
     },
-    "rpc": {"p28-rpc-network"},
-    "soroban": {"p28-soroban-native-asset-name"},
+    "rpc": {"p28-rpc-network", "p28-rpc-latest-ledger"},
+    "soroban": {
+        "p28-soroban-native-asset-name",
+        "p28-soroban-sim-error-unknown-function",
+        "p28-soroban-sim-error-missing-contract",
+        "p28-soroban-sim-error-arg-count",
+        "p28-soroban-sim-error-arg-type",
+    },
 }
 
 
@@ -55,9 +140,33 @@ class Protocol28PackTests(unittest.TestCase):
         for fx in self.fixtures:
             self.assertEqual(fx.data.get("protocol"), 28, fx.path)
 
+    def test_fixture_paths_match_declared_surface(self) -> None:
+        for fx in self.fixtures:
+            relative_path = fx.path.relative_to(PACK)
+            self.assertEqual(relative_path.parts[0], fx.data.get("surface"), fx.path)
+
+    def test_fixture_ids_follow_the_p_protocol_surface_convention(self) -> None:
+        # CONTRIBUTING.md documents `p<protocol>-<surface>-<slug>` for fixture
+        # IDs, and the schema's pattern only requires lowercase/non-empty. This
+        # per-pack check enforces the documented prefix for protocol-28.
+        for fx in self.fixtures:
+            expected_prefix = f"p{fx.data.get('protocol')}-{fx.data.get('surface')}-"
+            self.assertTrue(
+                str(fx.data.get("id", "")).startswith(expected_prefix),
+                f"{fx.path}: id {fx.data.get('id')!r} does not start with {expected_prefix!r}",
+            )
+
     def test_every_fixture_has_a_source_reference(self) -> None:
         for fx in self.fixtures:
             self.assertTrue(fx.data.get("source_reference"), fx.path)
+
+    def test_every_fixture_starts_with_a_header_comment(self) -> None:
+        for path in validate.find_fixture_files(PACK):
+            first_non_empty = next(
+                (line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()),
+                "",
+            )
+            self.assertTrue(first_non_empty.lstrip().startswith("#"), path)
 
     def test_expected_fixture_ids_are_present_per_surface(self) -> None:
         by_surface: dict[str, set[str]] = {"xdr": set(), "rpc": set(), "soroban": set()}
@@ -107,5 +216,17 @@ class Protocol28PackTests(unittest.TestCase):
         self.assertEqual(non_empty_dirs, [])
 
 
+    def test_no_fixture_files_outside_allowed_subdirectories(self) -> None:
+        allowed_dirs = {"xdr", "rpc", "soroban"}
+        for toml_path in PACK.rglob("*.toml"):
+            relative_path = toml_path.relative_to(PACK)
+            self.assertIn(
+                relative_path.parts[0],
+                allowed_dirs,
+                f"Fixture file {relative_path} is located outside allowed subdirectories ({allowed_dirs})",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
+
