@@ -1,12 +1,31 @@
 # ProtocolCanary-Fixtures
 
+
 ![ProtocolCanary-Fixtures](assets/ProtocolCanary-Fixtures-banner.svg)
 
-[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+[![Validate](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml/badge.svg)](https://github.com/StellarCanary/ProtocolCanary-Fixtures/actions/workflows/validate.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) <!-- fixtures-badge:start -->[![Fixtures: 91](https://img.shields.io/badge/fixtures-91-blue.svg)](#protocol-packs)<!-- fixtures-badge:end -->
 
 Canonical compatibility fixtures for Stellar Protocol Canary.
 
 [Documentation](https://stellarcanary.github.io/Protocol-Canary/) | [Protocol-Canary](https://github.com/StellarCanary/Protocol-Canary) | [Action](https://github.com/StellarCanary/ProtocolCanary-Action)
+
+## Quick start
+
+The validator requires **Python 3.11 or newer** — it imports `tomllib`,
+which only became part of the standard library in Python 3.11. On an
+older interpreter it fails immediately with
+`ModuleNotFoundError: No module named 'tomllib'`. Nothing else needs to
+be installed.
+
+```bash
+python3 tools/validate/validate.py    # structural fixture validation
+python3 -m unittest discover tests    # repository test suite
+```
+
+See [Validation](#validation) below (and
+[`CONTRIBUTING.md`](CONTRIBUTING.md#development-setup)) for details,
+including the equivalent `make` targets.
 
 ## Purpose
 
@@ -47,7 +66,7 @@ data.
 exposed via:
 
 ```bash
-stellar-canary check --fixtures-dir <path-to-a-checkout-of-this-repo> --json
+stellar-canary check --fixtures-dir <path-to-a-protocol-NN-directory> --json
 ```
 
 The loader recursively walks the given directory and parses **every**
@@ -68,9 +87,32 @@ layout:
   and `category` fields — not its file path — are what the loader and the
   planner act on.
 
-You can point `--fixtures-dir` at this repository's root, or at a single
-`protocol-NN/` directory to scope one pack; the loader's protocol filtering
-makes a mixed-protocol directory safe either way.
+**The `--fixtures-dir` argument must point at a `protocol-NN/` pack directory
+(e.g. `protocol-28/`), not at the repository root.** The repository root
+contains test vectors under `tests/vectors/` (some deliberately invalid) that
+the loader would attempt to parse as fixtures, causing the run to fail.
+Pointing at a pack directory avoids this because only that pack's fixtures
+are discovered. If you need to test multiple protocol packs together, create
+a staging directory containing only the desired `protocol-NN/` directories;
+the loader's protocol filtering (`--protocol`) then selects which to run.
+
+Interfaces shared with the other two repositories (registry and digest,
+verification evidence, fixture releases) are specified in
+[`docs/contracts.md`](docs/contracts.md).
+
+Which upstream releases each protocol's fixtures were written against (Stellar
+Core, Stellar RPC, Stellar Horizon and the Soroban host environment, with their
+release tags, commits and the network passphrases) is in
+[`docs/upstream-matrix.md`](docs/upstream-matrix.md); the same information as
+data is in [`upstream-matrix.json`](upstream-matrix.json).
+
+The command-line behavior, exit codes, and output streams of repository tools
+are documented in [`docs/tools.md`](docs/tools.md).
+
+The scheduled job that keeps the live read-only RPC evidence fresh -- its
+schedule, the endpoints it calls, the captures and verification records it
+writes, and how it fails -- is described in
+[`docs/live-verification.md`](docs/live-verification.md).
 
 ## Protocol packs
 
@@ -78,6 +120,18 @@ makes a mixed-protocol directory safe either way.
 |---|---|---|
 | [`protocol-28/`](protocol-28/) | Active | CAP-0083, CAP-0085 (XDR); Protocol 28 RPC identity; a Soroban simulation smoke fixture. Fixture counts by surface: **4 xdr, 1 rpc, 1 soroban** (6 total). See [`docs/protocol-28.md`](docs/protocol-28.md). |
 | [`protocol-27/`](protocol-27/) | Not yet populated | **0 fixtures.** See [`protocol-27/README.md`](protocol-27/README.md) — fixtures are added only after their upstream behavior is independently verified, never as placeholders. |
+
+Pack directories are named **`protocol-<N>`**, where `<N>` is the Stellar
+protocol version the pack targets: a pack for Protocol 28 is
+`protocol-28/`, and the pack for a future Protocol 29 would be
+`protocol-29/`, with every fixture in it setting `protocol = 29` and a
+`docs/protocol-29.md` plus a pack `README.md` alongside it. A pack is
+created only when there is verified upstream behavior to record — the
+same rule that leaves `protocol-27/` empty — not as a placeholder. Only
+the leading `protocol-` pack directories are named this way: the
+directories *inside* a pack (`xdr/`, `rpc/`, `soroban/`, `cap-0083/`) are
+for human navigation only, and are ignored by the loader (see
+[Repository relationship](#repository-relationship)).
 
 ## Fixture format
 
@@ -90,13 +144,46 @@ protocol = 28                          # required
 surface = "xdr"                        # required: "xdr" | "rpc" | "soroban"
 category = "cap-0083"                  # required, free-text
 description = "..."                    # required
-source_reference = "CAP-0083"          # optional, should be authoritative
+source_reference = "CAP-0083"          # required for protocol-specific fixtures
+required_capabilities = []             # optional, see below
+input_file = "..."                     # optional, see below
+# expected_file = "..."                # optional, see below
 
 # surface-specific fields follow — see docs/protocol-28.md and
 # Protocol-Canary's docs/fixture-contract.md for the exact per-surface
 # schema (xdr: type/kind/value_base64; rpc: method/[[assert]]; soroban:
 # source_account/contract_id/function/[expect]).
 ```
+
+The three optional fields above and what they mean:
+
+- **`required_capabilities`** — an array of kebab-case capability strings
+  (e.g. `soroban-contract`, `rpc-client`) a fixture needs; a target project
+  lacking one skips the fixture rather than failing it.
+- **`input_file`** — a path, relative to the fixture file, to externally
+  stored input; the validator checks the file exists.
+- **`expected_file`** — a path, relative to the fixture file, to externally
+  stored expected output; likewise existence-checked.
+
+Neither `input_file` nor `expected_file` is used by any fixture in this
+repository yet (values are inlined via `value_base64`/`expected_base64`),
+but the format supports them. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the fuller field
+table.
+
+**Currently supported RPC methods.** The `rpc` surface accepts the ten
+methods the engine's `canary-rpc` crate parses — `get-network`,
+`get-latest-ledger`, `get-health`, `get-version-info`, `get-fee-stats`,
+`get-ledger-entries`, `get-transaction`, `get-ledgers`, `get-transactions`
+and `get-events` — the same set listed in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema)'s per-surface table, and
+pinned together with the engine commit it was read from in
+[`tests/fixtures/engine-vocabulary.json`](tests/fixtures/engine-vocabulary.json).
+Stellar RPC exposes many more (for example `getTransaction`); a fixture
+naming any other method is rejected by the validator. Adding support for
+another method is a `Protocol-Canary` change first (its `canary-rpc` crate),
+not something to work around here — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md#fixture-schema) for the process.
 
 ### Assertion vocabulary
 
@@ -117,6 +204,7 @@ table.
 | `rpc` | `[[assert]].kind` | `field-absent` | The response does not contain the named `field`. |
 | `rpc` | `[[assert]].kind` | `field-equals` | The named `field` equals `value` exactly. |
 | `rpc` | `[[assert]].kind` | `field-type` | The named `field` has the JSON type named by `expected_type`. |
+| `rpc` | `[[assert]].kind` | `field-number-range` | The named `field` is a numeric value within `min` and/or `max` (engine commit `4418690`, contract `ca-01-rpc-requests-and-assertions.md`). |
 | `soroban` | `[expect].kind` | `simulation-success` | `simulateTransaction` succeeds with no error. |
 | `soroban` | `[expect].kind` | `simulation-error` | `simulateTransaction` fails — optionally requiring `message_contains` to appear in the error message. |
 
@@ -136,9 +224,18 @@ an upstream XDR definition, or an official release/API reference — and
 carries a header comment explaining what was verified, how, and (for
 anything involving a live network call) when and against which endpoint.
 No fixture asserts a value that isn't traceable to an authoritative
-upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+upstream source; see [`CONTRIBUTING.md`](CONTRIBUTING.md). The full procedure
+for packaging, verifying, attesting, and publishing a pack release is documented
+in [`docs/releasing.md`](docs/releasing.md).
+
+Published pack release archives and manifests also carry cryptographically
+signed build provenance attestations; see [`SECURITY.md`](SECURITY.md#build-provenance-and-attestation)
+for verification instructions.
 
 ## Validation
+
+Requires **Python 3.11+** (the validator uses the stdlib `tomllib`
+module, unavailable before 3.11); CI pins `3.11.16`.
 
 ```bash
 python3 tools/validate/validate.py
@@ -148,7 +245,90 @@ Validates schema conformance, unique IDs, protocol/surface enums, source
 references, and referenced-file existence for every fixture in the repo.
 This is structural validation only — it never executes a compatibility
 check itself. CI (`.github/workflows/validate.yml`) runs it, plus
-`python3 -m unittest discover tests`, on every push and pull request.
+`python3 -m unittest discover tests` and a fixtures-badge freshness check,
+on every push and pull request.
+
+Pass `--format json` to get the same run as one machine-readable document on
+stdout, with nothing on stderr, so CI and other tooling can ingest it
+directly; the exit code is unchanged (0 if every fixture is valid, 1
+otherwise) and `valid` mirrors it. `--quiet` affects only the default text
+format.
+
+```bash
+python3 tools/validate/validate.py --format json | jq '.summary'
+```
+
+The document is `{"valid": bool, "errors": [...], "warnings": [...],
+"summary": {...}}`, where each diagnostic is `{"path", "id", "line",
+"message"}`. `line` is the fixture's 1-based line number when the validator
+can attribute one (a TOML syntax error, or a located top-level field) and
+`null` otherwise — it is never guessed.
+
+[`schemas/fixture-v1.schema.json`](schemas/fixture-v1.schema.json) is this
+repository's editor-facing mirror of the validator's rules. It is kept
+honest by [`tools/validate/schema_sync.py`](tools/validate/schema_sync.py),
+a standard-library-only check that compares the schema's enums and required
+fields against `tools/validate/validate.py`'s constants. The repository test
+suite runs it (`tests/test_validate.py`), so a validator rule change — for
+example adding a new XDR type or RPC method — that is not mirrored in the
+schema fails CI rather than leaving the schema silently stale.
+
+**Structural validation is not live-network verification.** A green CI run
+means every fixture is well-formed and internally consistent; it does not
+mean any fixture's live-network assertion was just re-checked against the
+real network. The RPC and Soroban fixtures in `protocol-28/` were each
+manually verified against a live `soroban-testnet.stellar.org` endpoint on
+a specific date, and that point-in-time observation is recorded only in
+each fixture's header comment and in [`docs/protocol-28.md`](docs/protocol-28.md)
+— neither `tools/validate/validate.py` nor CI re-runs it. A fixture can
+therefore keep passing CI long after the live behavior it asserts has
+changed; the date recorded in its header comment is what lets a reader
+judge how stale that observation may be (see the date convention in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#recording-verification-dates)).
+
+**Not every `.toml` in this repository is a fixture.** Discovery is scoped to
+the `protocol-*/` packs, so material deliberately kept out of the consumable
+corpus lives elsewhere and is checked only by the test suite. Today that means
+[`tests/vectors/resource_estimation/`](tests/vectors/resource_estimation/):
+three complete resource-estimation fixtures staged ahead of the `canary-soroban`
+support they need, which the loader would reject (and, in doing so, abort a run)
+if they sat inside a pack. See
+[`docs/protocol-28.md`](docs/protocol-28.md#the-staged-resource-estimation-corpus)
+for what they assert and what would promote them.
+
+Also outside the packs, for the opposite reason, are
+[`tests/vectors/cf-02/`](tests/vectors/cf-02/): the shared conformance vectors
+for the registry and pack digest contract (CF-02-A). Those packs are ones the
+loader *accepts* — they are kept out of `protocol-*/` because they are contract
+test data rather than protocol fixtures. Three small packs with verified file
+hashes and pack digests, checked offline by
+[`tests/test_cf02_vectors.py`](tests/test_cf02_vectors.py).
+
+The same arrangement covers
+[`tests/vectors/conformance/`](tests/vectors/conformance/): the cross-language
+fixture-parser conformance corpus (24 accept/reject vectors, one of which is deliberately
+unparseable TOML), which is parser input rather than protocol behavior. It is
+checked by [`tests/test_conformance_vectors.py`](tests/test_conformance_vectors.py),
+and is likewise outside every `protocol-*/` scan root.
+
+### Fixtures badge
+
+The badge at the top of this file reports the repository's current total
+fixture count. Its number is **generated, not hand-maintained**:
+
+```bash
+python3 tools/badge/badge.py            # regenerate README.md in place
+python3 tools/badge/badge.py --check    # exit non-zero if the badge is stale
+```
+
+[`tools/badge/badge.py`](tools/badge/badge.py) counts every `*.toml` file
+under the `protocol-*/` packs using the same discovery rule as
+`tools/validate/validate.py`, then rewrites only the region of README.md
+between its `<!-- fixtures-badge:start -->` / `<!-- fixtures-badge:end -->`
+markers (`make badge` / `make badge-check` are the equivalent shortcuts).
+CI runs the `--check` form on every push and pull request, so adding or
+removing a fixture without regenerating the badge fails the build rather
+than silently leaving a stale number at the top of the README.
 
 ## Contributing
 

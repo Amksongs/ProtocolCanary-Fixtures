@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+r"""Generate the release manifest for a fixture-pack archive (CF-06 section 3).
+
+Reads a ``protocolcanary-fixtures-<version>.tar.gz`` built by
+``tools/pack/pack.py`` and writes ``protocolcanary-fixtures-<version>.manifest.json``
+next to it (or to ``--output``). The manifest is described by
+``schemas/release-manifest-v1.schema.json``.
+
+What is recorded, and where it comes from:
+
+* ``archive.sha256`` and ``archive.bytes``: the compressed file itself;
+* ``archive.entries`` and ``archive.uncompressedBytes``: counted from the tar
+  stream (every entry, and the bytes of the regular files);
+* ``packDigest``, ``registryVersion`` and ``protocols``: read from the archive's
+  ``registry.json`` after the digest is recomputed from the archived files, so
+  a registry that does not describe its own archive is refused;
+* ``revision``: the full git commit of the pack source, given by the caller.
+  It is provenance only (CF-06 section 3);
+* ``compatibleEngines``: exact engine versions given by the caller. An engine
+  is marked ``verified: false`` unless a run record says that exact engine
+  version was run against this exact pack (issue #367): the records are read
+  from the directory given with ``--runs``, never written by this tool.
+
+Nothing is executed or extracted to disk. A missing, truncated or malformed
+archive fails with a message and writes nothing.
+
+Usage:
+    python3 tools/release/manifest.py ARCHIVE --revision COMMIT [--engine 0.2.0]
+        [--runs DIR] [--output PATH]
+
+Requires Python 3.11+ and nothing outside the standard library.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import re
+import sys
+import tarfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load(name: str, relative: str):
+    path = REPO_ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules.setdefault(name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Atomic writes (F-081): a release artifact is published under its final name
+# only once it is complete.
+atomic_write = _load("canary_atomic_write", "tools/common/atomic_write.py")
+write_bytes_atomic = atomic_write.write_bytes_atomic
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.release import run_records
+from tools.common.json_strict import JSONInputError, load_json
+from tools.common import paths
+
+NAME = "protocolcanary-fixtures"
+MANIFEST_VERSION = 1
+REGISTRY_NAME = "registry.json"
+# One 128 MiB cap on what is read while counting, well above the 16 MiB
+# archive limit (D-06), so a decompression bomb cannot exhaust memory here.
+_READ_CAP = 128 * 1024 * 1024
+
+_ARCHIVE_RE = re.compile(rf"{NAME}-((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\.tar\.gz")
+_REVISION_RE = re.compile(r"[0-9a-f]{40}")
+_ENGINE_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+class ManifestError(Exception):
+    """The manifest cannot be produced. The message says why."""
+
+
+def _utf8_key(text: str) -> bytes:
+    return text.encode("utf-8")
+
+
+def archive_version(name: str) -> str | None:
+    """The version embedded in a pack archive's file name, if it has one.
+
+    ``protocolcanary-fixtures-1.2.3.tar.gz`` gives ``1.2.3``; any other name
+    gives ``None``. The consumer side reads the version of an archive from
+    the same helper, so the two tools cannot disagree about what the name
+    says.
+    """
+    match = _ARCHIVE_RE.fullmatch(name)
+    return match.group(1) if match else None
+
+
+def _pack_digest(files: dict[str, bytes]) -> str:
+    """CF-02 section 5 over the archived pack files (all but registry.json)."""
+    lines = ["canary-pack-v1\n"]
+    for path in sorted(files, key=_utf8_key):
+        data = files[path]
+        lines.append(f"{hashlib.sha256(data).hexdigest()} {len(data)} {path}\n")
+    return "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def inspect_archive(path: Path) -> dict:
+    """Count entries and bytes, and read the registry, without extracting."""
+    entries = 0
+    uncompressed = 0
+    files: dict[str, bytes] = {}
+    read_total = 0
+    try:
+        with tarfile.open(path, mode="r:gz") as archive:
+            for member in archive:
+                entries += 1
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    raise ManifestError(
+                        f"{member.name!r} is not a regular file or directory; "
+                        "this is not a pack archive"
+                    )
+                read_total += member.size
+                if read_total > _READ_CAP:
+                    raise ManifestError("the archive is far larger than any valid pack")
+                stream = archive.extractfile(member)
+                data = stream.read() if stream is not None else b""
+                files[member.name] = data
+                uncompressed += len(data)
+    except (tarfile.TarError, EOFError, OSError, UnicodeError) as error:
+        raise ManifestError(f"{path} is not a readable .tar.gz archive: {error}") from None
+    return {"entries": entries, "uncompressed": uncompressed, "files": files}
+
+
+def build_manifest(
+    archive: Path,
+    *,
+    revision: str,
+    engines: list[str],
+    version: str | None = None,
+    records: list[dict] | None = None,
+) -> dict:
+    """The manifest mapping, in the key order the contract shows.
+
+    ``records`` are the run records read by the caller (see
+    ``--runs``). An engine is marked verified only when a record names that
+    exact engine version, that exact pack digest and a passed run. Without a
+    record the engine stays unverified, and this tool never writes a record
+    itself.
+    """
+    if not archive.is_file():
+        raise ManifestError(f"archive not found: {archive}")
+    if version is None:
+        version = archive_version(archive.name)
+        if version is None:
+            raise ManifestError(
+                f"cannot read the version from {archive.name!r}; expected "
+                f"{NAME}-MAJOR.MINOR.PATCH.tar.gz"
+            )
+    elif not re.fullmatch(_ENGINE_RE.pattern, version):
+        raise ManifestError(f"version {version!r} is not MAJOR.MINOR.PATCH")
+    if not _REVISION_RE.fullmatch(revision):
+        raise ManifestError(
+            "revision must be a full 40-character lowercase git commit hash"
+        )
+    for engine in engines:
+        if not _ENGINE_RE.fullmatch(engine):
+            raise ManifestError(
+                f"engine version {engine!r} must be an exact MAJOR.MINOR.PATCH; "
+                "a range is never a verified combination"
+            )
+
+    data = archive.read_bytes()
+    content = inspect_archive(archive)
+    files: dict[str, bytes] = content["files"]
+    registry_bytes = files.get(REGISTRY_NAME)
+    if registry_bytes is None:
+        raise ManifestError(f"the archive has no {REGISTRY_NAME} at its root")
+    try:
+        registry = load_json(registry_bytes.decode("utf-8"), REGISTRY_NAME)
+    except (UnicodeDecodeError, JSONInputError) as error:
+        if isinstance(error, JSONInputError) and error.json_error is not None:
+            raise ManifestError(
+                f"{REGISTRY_NAME} is not valid JSON: {error.json_error}"
+            ) from None
+        raise ManifestError(f"{REGISTRY_NAME} is not valid JSON: {error}") from None
+    if not isinstance(registry, dict):
+        raise ManifestError(f"{REGISTRY_NAME} must be a JSON object")
+
+    registry_version = registry.get("registryVersion")
+    protocol = registry.get("protocol")
+    declared = registry.get("packDigest")
+    if not isinstance(registry_version, int) or isinstance(registry_version, bool):
+        raise ManifestError(f"{REGISTRY_NAME} has no integer registryVersion")
+    if not isinstance(protocol, int) or isinstance(protocol, bool):
+        raise ManifestError(f"{REGISTRY_NAME} has no integer protocol")
+    if not isinstance(declared, str) or not _DIGEST_RE.fullmatch(declared):
+        raise ManifestError(f"{REGISTRY_NAME} has no valid packDigest")
+
+    pack_files = {p: b for p, b in files.items() if p != REGISTRY_NAME}
+    actual = _pack_digest(pack_files)
+    if actual != declared:
+        raise ManifestError(
+            f"{REGISTRY_NAME} declares packDigest {declared} but the archived files "
+            f"hash to {actual}; the archive is not the pack its registry describes"
+        )
+
+    return {
+        "manifestVersion": MANIFEST_VERSION,
+        "name": NAME,
+        "version": version,
+        "protocols": [protocol],
+        "revision": revision,
+        "packDigest": declared,
+        "registryVersion": registry_version,
+        "archive": {
+            "file": archive.name,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+            "entries": content["entries"],
+            "uncompressedBytes": content["uncompressed"],
+        },
+        "compatibleEngines": [
+            {"version": engine, "verified": _is_verified(engine, declared, records)}
+            for engine in sorted(set(engines))
+        ],
+    }
+
+
+def _is_verified(engine: str, pack_digest: str, records: list[dict] | None) -> bool:
+    """Whether a run record says this exact engine ran against this pack.
+
+    Without records nothing is verified. With records, the engine is verified
+    only when a record names that exact engine version, that exact pack
+    digest, and a run that passed.
+
+    A record for the same engine but a different pack is an inconsistency the
+    caller has to resolve, not something to guess about: the manifest is
+    refused with a message, because writing "verified: false" there would
+    hide that the record offered for this engine describes another pack.
+    """
+    if not records:
+        return False
+    record = run_records.find_record(records, engine, pack_digest)
+    if record is not None:
+        return record.get("outcome") == "passed"
+    others = run_records.records_for_engine(records, engine)
+    if others:
+        described = ", ".join(sorted(str(other.get("packDigest")) for other in others))
+        raise ManifestError(
+            f"the run record for engine {engine} describes pack {described}, not "
+            f"this archive ({pack_digest}); the engine stays unverified until a "
+            "record of this engine against this pack exists"
+        )
+    return False
+
+
+def render_manifest(manifest: dict) -> str:
+    """UTF-8, LF, two-space indent, one trailing newline."""
+    return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+
+
+def sha256_line(manifest: dict) -> str:
+    """The ``sha256sum``-format line for the archive (CF-06 section 2)."""
+    archive = manifest["archive"]
+    return f"{archive['sha256']}  {archive['file']}\n"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="manifest.py",
+        description="Generate the CF-06 release manifest for a fixture-pack archive.",
+    )
+    parser.add_argument("archive", type=Path, help="the .tar.gz built by tools/pack/pack.py")
+    parser.add_argument(
+        "--revision",
+        required=True,
+        help="full 40-character git commit hash of the pack source",
+    )
+    parser.add_argument(
+        "--engine",
+        action="append",
+        default=[],
+        metavar="VERSION",
+        help=(
+            "an exact engine version to list as a compatible engine; it is "
+            "recorded as unverified unless a run record (--runs) says that "
+            "exact engine ran against this exact pack; may be given more than once"
+        ),
+    )
+    parser.add_argument(
+        "--runs",
+        type=Path,
+        metavar="DIR",
+        help=(
+            "directory of pack-by-engine run records (issue #367); an engine is "
+            "marked verified only when a record there names that exact engine "
+            "version, this exact pack digest and a passed run. Without this "
+            "option every engine stays unverified, as before"
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        metavar="PATH",
+        help="write the manifest here (default: next to the archive, .manifest.json)",
+    )
+    parser.add_argument(
+        "--sha256-file",
+        type=Path,
+        metavar="PATH",
+        help="also write the sha256sum-format checksum line here",
+    )
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    records: list[dict] | None = None
+    output = args.output or args.archive.with_name(
+        args.archive.name.removesuffix(".tar.gz") + ".manifest.json"
+    )
+    try:
+        paths.check_target_safety(output, [(args.archive, "the release archive")])
+        if args.sha256_file is not None:
+            paths.check_target_safety(args.sha256_file, [(args.archive, "the release archive")])
+            if paths.is_same_file(output, args.sha256_file):
+                raise ValueError(
+                    f"refusing to write {output}: --output and --sha256-file name the same file"
+                )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+
+    try:
+        if args.runs is not None:
+            records = run_records.load_run_records(args.runs)
+        manifest = build_manifest(
+            args.archive,
+            revision=args.revision,
+            engines=args.engine,
+            records=records,
+        )
+    except ManifestError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+    except run_records.RunRecordError as error:
+        print(f"error: {error}", file=sys.stderr)
+        print("FAILED: no manifest written", file=sys.stderr)
+        return 1
+    output = args.output or args.archive.with_name(
+        args.archive.name.removesuffix(".tar.gz") + ".manifest.json"
+    )
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_bytes_atomic(output, render_manifest(manifest).encode("utf-8"))
+        if args.sha256_file is not None:
+            args.sha256_file.parent.mkdir(parents=True, exist_ok=True)
+            write_bytes_atomic(args.sha256_file, sha256_line(manifest).encode("utf-8"))
+    except OSError as error:
+        print(f"error: could not write the manifest: {error}", file=sys.stderr)
+        return 1
+    print(f"OK: wrote {output}")
+    for entry in manifest["compatibleEngines"]:
+        if entry["verified"]:
+            record = run_records.find_record(
+                records or [], entry["version"], manifest["packDigest"]
+            )
+            checked_at = record.get("checkedAt") if record else "?"
+            print(f"verified: {entry['version']} (run recorded at {checked_at})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

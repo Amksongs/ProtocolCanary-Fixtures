@@ -5,11 +5,20 @@ Run with: python3 -m unittest discover tests
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import importlib.util
+import io
+import json
+import os
+import runpy
 import sys
 import tempfile
+import tomllib
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_PATH = REPO_ROOT / "tools" / "validate" / "validate.py"
@@ -19,6 +28,34 @@ validate = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
 sys.modules["validate"] = validate
 _spec.loader.exec_module(validate)
+
+SCHEMA_SYNC_PATH = REPO_ROOT / "tools" / "validate" / "schema_sync.py"
+
+_sync_spec = importlib.util.spec_from_file_location("schema_sync", SCHEMA_SYNC_PATH)
+schema_sync = importlib.util.module_from_spec(_sync_spec)
+assert _sync_spec.loader is not None
+sys.modules["schema_sync"] = schema_sync
+_sync_spec.loader.exec_module(schema_sync)
+
+# F-032: the published capability vector. tests/fixtures/capabilities.json
+# is the one source of truth that the validator's CAPABILITIES set, the
+# schema's required_capabilities enum and upstream canary_core::Capability
+# (parity tracked in StellarCanary/Protocol-Canary#512) must agree on, so
+# the tests below pin all three to it instead of to each other.
+CAPABILITIES_VECTOR_PATH = REPO_ROOT / "tests" / "fixtures" / "capabilities.json"
+CAPABILITIES_VECTOR = json.loads(CAPABILITIES_VECTOR_PATH.read_text(encoding="utf-8"))
+
+# jsonschema_lite stands in for the third-party `jsonschema` package, which
+# CI does not install (same approach as tests/test_jsonschema_lite.py); used
+# here to check the schema side of the capability vocabulary.
+CAPABILITIES_LITE_PATH = REPO_ROOT / "tools" / "validate" / "jsonschema_lite.py"
+_lite_spec = importlib.util.spec_from_file_location(
+    "validate_jsonschema_lite", CAPABILITIES_LITE_PATH
+)
+jsonschema_lite = importlib.util.module_from_spec(_lite_spec)
+assert _lite_spec.loader is not None
+sys.modules["validate_jsonschema_lite"] = jsonschema_lite
+_lite_spec.loader.exec_module(jsonschema_lite)
 
 
 VALID_XDR = """
@@ -34,7 +71,7 @@ kind = "decode-success"
 value_base64 = "AAAAAA=="
 """
 
-VALID_RPC = """
+RPC_HEADER = """
 id = "p28-rpc-example"
 protocol = 28
 surface = "rpc"
@@ -43,12 +80,16 @@ description = "example"
 source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
 
 method = "get-network"
+"""
 
+RPC_ASSERT_TABLE = """
 [[assert]]
 kind = "field-equals"
 field = "protocolVersion"
 value = 28
 """
+
+VALID_RPC = RPC_HEADER + RPC_ASSERT_TABLE
 
 VALID_SOROBAN = """
 id = "p28-soroban-example"
@@ -75,6 +116,21 @@ def write(dir_path: Path, name: str, contents: str) -> Path:
     return path
 
 
+def run_main(argv: list[str]) -> tuple[int, str, str]:
+    """Invoke ``validate.main`` capturing its (stdout, stderr).
+
+    ``main`` is the actual entry point CI runs (``python3
+    tools/validate/validate.py``): it parses argv, prints its report to
+    stdout/stderr and returns an exit code. It does not return its
+    ``Report``, so tests exercise it the way CI does rather than only
+    through the lower-level ``validate_directory`` helper.
+    """
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        exit_code = validate.main(argv)
+    return exit_code, stdout.getvalue(), stderr.getvalue()
+
+
 class ValidatorTests(unittest.TestCase):
     def run_validation(self, files: dict[str, str]) -> validate.Report:
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,6 +138,12 @@ class ValidatorTests(unittest.TestCase):
             for name, contents in files.items():
                 write(root, name, contents)
             return validate.validate_directory(root)
+
+    def test_empty_directory_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = validate.validate_directory(Path(tmp))
+        self.assertEqual(report.errors, [])
+        self.assertTrue(report.ok)
 
     def test_accepts_a_valid_xdr_fixture(self) -> None:
         report = self.run_validation({"a.toml": VALID_XDR})
@@ -91,8 +153,28 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": VALID_RPC})
         self.assertEqual(report.errors, [])
 
+    def test_accepts_rpc_fixture_with_field_exists_assert(self) -> None:
+        good = VALID_RPC.replace('kind = "field-equals"', 'kind = "field-exists"').replace(
+            "\nvalue = 28\n", "\n"
+        )
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [])
+
     def test_accepts_a_valid_soroban_fixture(self) -> None:
         report = self.run_validation({"a.toml": VALID_SOROBAN})
+        self.assertEqual(report.errors, [])
+
+    def test_discovers_fixtures_in_nested_subdirectories(self) -> None:
+        files = {
+            "flat.toml": VALID_XDR,
+            "xdr/cap-0083/nested.toml": VALID_RPC,
+            "xdr/cap-0085/deeper/deepest.toml": VALID_SOROBAN,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            written = {write(root, name, contents) for name, contents in files.items()}
+            self.assertEqual(set(validate.find_fixture_files(root)), written)
+            report = validate.validate_directory(root)
         self.assertEqual(report.errors, [])
 
     def test_rejects_duplicate_ids(self) -> None:
@@ -100,20 +182,394 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": VALID_XDR, "b.toml": other})
         self.assertTrue(any("duplicate fixture id" in e for e in report.errors))
 
+    # os.chmod() does not restrict access on Windows, and root ignores the
+    # permission bits entirely on POSIX, so on both the file stays readable and
+    # this error path cannot be provoked.
+    @unittest.skipIf(
+        os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        "os.chmod is not effective on this platform/user",
+    )
+    def test_unreadable_file_reports_a_read_error(self) -> None:
+        """A fixture file that cannot be read yields a 'failed to read file' error.
+
+        Covers the ``except OSError`` branch in ``validate.load_fixture()``.
+        Every other test uses ``TemporaryDirectory()``, where files are always
+        readable, so this error path would otherwise go untested.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = write(root, "a.toml", VALID_XDR)
+            try:
+                os.chmod(path, 0o000)
+                try:
+                    path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+                else:
+                    self.skipTest("a 0o000 file is still readable here")
+
+                report = validate.validate_directory(root)
+            finally:
+                # Restore permissions before the directory is removed, so
+                # cleanup never depends on the filesystem tolerating 0o000.
+                os.chmod(path, 0o644)
+
+        self.assertFalse(report.ok)
+        matching = [e for e in report.errors if "failed to read file" in e]
+        self.assertTrue(matching, f"expected a read error, got: {report.errors}")
+        self.assertIn("a.toml", matching[0])
+
+    def test_rejects_duplicate_ids_across_nested_directories(self) -> None:
+        # The repository stores fixtures in nested per-surface/per-CAP
+        # directories (e.g. protocol-28/xdr/cap-0083/a.toml vs.
+        # protocol-28/soroban/b.toml), so duplicate detection must recurse
+        # through the whole subtree rather than only compare files that sit
+        # directly in the root. This guards against a regression that keeps
+        # flat-directory detection working while breaking the recursive case.
+        other = VALID_XDR.replace(
+            'category = "cap-0083"', 'category = "cap-0083-2"'
+        )
+        report = self.run_validation(
+            {
+                "xdr/cap-0083/a.toml": VALID_XDR,
+                "soroban/b.toml": other,
+            }
+        )
+        duplicates = [e for e in report.errors if "duplicate fixture id" in e]
+        self.assertTrue(duplicates, report.errors)
+        # The error should point at one of the nested files, confirming the
+        # nested fixture was actually discovered by the recursive walk.
+        nested_paths = (
+            str(Path("soroban") / "b.toml"),
+            str(Path("xdr") / "cap-0083" / "a.toml"),
+        )
+        self.assertTrue(
+            any(nested_path in error for nested_path in nested_paths for error in duplicates)
+        )
+
+    def test_unique_fixture_ids_across_multiple_roots(self) -> None:
+        # F-105 (issue #387): duplicate fixture ids across distinct roots must be detected.
+        with tempfile.TemporaryDirectory() as tmp:
+            root1 = Path(tmp) / "root1"
+            root2 = Path(tmp) / "root2"
+            write(root1, "a.toml", VALID_XDR)
+            write(root2, "b.toml", VALID_XDR)
+            code, out, err = run_main([str(root1), str(root2)])
+            self.assertEqual(code, 1)
+            self.assertIn("duplicate fixture id", err)
+            self.assertIn("a.toml", err)
+            self.assertIn("b.toml", err)
+
+            code_json, out_json, err_json = run_main(
+                ["--format", "json", str(root1), str(root2)]
+            )
+            self.assertEqual(code_json, 1)
+            doc_parsed = json.loads(out_json)
+            self.assertIs(doc_parsed["valid"], False)
+            dup_errors = [
+                e for e in doc_parsed["errors"] if "duplicate fixture id" in e["message"]
+            ]
+            self.assertEqual(len(dup_errors), 1)
+            self.assertIn("a.toml", dup_errors[0]["message"])
+
+    def test_same_root_listed_twice_is_not_reported_as_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            write(root, "a.toml", VALID_XDR)
+            code, out, err = run_main([str(root), str(root)])
+            self.assertEqual(code, 0, f"Expected 0, got {code}. stderr: {err}")
+            self.assertNotIn("duplicate fixture id", err)
+
+    def test_distinct_fixture_ids_across_roots_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root1 = Path(tmp) / "root1"
+            root2 = Path(tmp) / "root2"
+            write(root1, "a.toml", VALID_XDR)
+            write(root2, "b.toml", VALID_RPC)
+            code, out, err = run_main([str(root1), str(root2)])
+            self.assertEqual(code, 0, f"Expected 0, got {code}. stderr: {err}")
+            self.assertNotIn("duplicate fixture id", err)
+
+    def test_unhashable_enum_values_report_errors(self) -> None:
+        # F-100 (issue #382): list and table values for enum fields must report
+        # errors naming the field and the offending type rather than crashing with
+        # TypeError: unhashable type.
+        cases = [
+            (VALID_XDR.replace('surface = "xdr"', 'surface = []'), "surface", "list"),
+            (VALID_XDR.replace('surface = "xdr"', 'surface = {}'), "surface", "dict"),
+            (VALID_RPC.replace('kind = "field-equals"', 'kind = []'), "assert[0].kind", "list"),
+            (VALID_RPC.replace('kind = "field-equals"', 'kind = {}'), "assert[0].kind", "dict"),
+            (
+                RPC_HEADER
+                + '[[assert]]\nkind = "field-type"\nfield = "version"\nexpected_type = []\n',
+                "assert[0].expected_type",
+                "list",
+            ),
+            (
+                RPC_HEADER
+                + '[[assert]]\nkind = "field-type"\nfield = "version"\nexpected_type = {}\n',
+                "assert[0].expected_type",
+                "dict",
+            ),
+            (
+                VALID_SOROBAN.replace('kind = "simulation-success"', 'kind = []'),
+                "expect.kind",
+                "list",
+            ),
+            (
+                VALID_SOROBAN.replace('kind = "simulation-success"', 'kind = {}'),
+                "expect.kind",
+                "dict",
+            ),
+        ]
+        for toml_text, field_name, offending_type in cases:
+            with self.subTest(field=field_name, type=offending_type):
+                with tempfile.TemporaryDirectory() as tmp:
+                    write(Path(tmp), "a.toml", toml_text)
+                    code, out, err = run_main([tmp])
+                    self.assertEqual(code, 1)
+                    self.assertNotIn("Traceback", err)
+                    self.assertTrue(
+                        field_name in err and offending_type in err,
+                        f"Expected {field_name} and {offending_type} in stderr: {err}",
+                    )
+                    code_json, out_json, err_json = run_main(
+                        ["--format", "json", tmp]
+                    )
+                    self.assertEqual(code_json, 1)
+                    self.assertNotIn("Traceback", err_json)
+                    doc_parsed = json.loads(out_json)
+                    self.assertIs(doc_parsed["valid"], False)
+                    self.assertTrue(
+                        any(
+                            field_name in e["message"] and offending_type in e["message"]
+                            for e in doc_parsed["errors"]
+                        ),
+                        doc_parsed["errors"],
+                    )
+
+    def test_rejects_boolean_protocol(self) -> None:
+        # F-101 (issue #383): boolean protocol values must be rejected with type bool.
+        for bool_val in ("true", "false"):
+            with self.subTest(val=bool_val):
+                bad = VALID_XDR.replace("protocol = 28", f"protocol = {bool_val}")
+                report = self.run_validation({"a.toml": bad})
+                self.assertFalse(report.ok)
+                self.assertTrue(
+                    any(
+                        "field 'protocol' must be of type int, got bool" in e
+                        for e in report.errors
+                    ),
+                    report.errors,
+                )
+
+    def test_rejects_boolean_sequence_number(self) -> None:
+        # F-101 (issue #383): boolean sequence_number in soroban fixture must be rejected.
+        bad = VALID_SOROBAN.replace("sequence_number = 1", "sequence_number = true")
+        report = self.run_validation({"a.toml": bad})
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any(
+                "field 'sequence_number' must be of type int, got bool" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_rejects_non_canonical_base64_in_value_and_expected(self) -> None:
+        # F-103 (issue #385): non-canonical base64 with non-zero trailing bits must be rejected.
+        bad_val = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "AAAAAR=="')
+        report = self.run_validation({"a.toml": bad_val})
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any("field 'value_base64' is not canonical base64" in e for e in report.errors),
+            report.errors,
+        )
+
+        bad_exp = (
+            VALID_XDR.replace('kind = "decode-success"', 'kind = "encode-equals"')
+            + 'expected_base64 = "AAAAAR=="\n'
+        )
+        report_exp = self.run_validation({"a.toml": bad_exp})
+        self.assertFalse(report_exp.ok)
+        self.assertTrue(
+            any(
+                "field 'expected_base64' is not canonical base64" in e
+                for e in report_exp.errors
+            ),
+            report_exp.errors,
+        )
+
+    def test_whitespace_in_base64_is_rejected(self) -> None:
+        bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "AAAA AA=="')
+        report = self.run_validation({"a.toml": bad})
+        self.assertFalse(report.ok)
+        self.assertTrue(any("not valid base64" in e for e in report.errors), report.errors)
+
     def test_rejects_invalid_surface(self) -> None:
         bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'surface'" in e for e in report.errors))
+
+    def test_error_message_includes_fixture_id(self) -> None:
+        # A fixture whose id has been parsed and is valid should be nameable
+        # from the reported error alone, so a failing CI run does not require
+        # cross-referencing the path against the file's contents.
+        bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
+        report = self.run_validation({"a.toml": bad})
+        matching = [e for e in report.errors if "'surface'" in e]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(
+            all("p28-xdr-cap83-example" in e for e in matching), matching
+        )
+        # The id must be an annotation on the message, not a replacement for
+        # the path that locates the offending file.
+        self.assertTrue(all("a.toml" in e for e in matching), matching)
+
+    def test_error_message_omits_id_when_id_is_invalid(self) -> None:
+        # When id itself fails validation (here: it is not lowercase), it is
+        # not yet known to be valid, so messages for that fixture fall back to
+        # the path-only format rather than echoing an invalid id.
+        bad = VALID_XDR.replace(
+            'id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"'
+        ).replace('surface = "xdr"', 'surface = "wallet"')
+        report = self.run_validation({"a.toml": bad})
+        matching = [e for e in report.errors if "'surface'" in e]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(
+            all("P28-XDR-CAP83-EXAMPLE" not in e for e in matching), matching
+        )
+
+    def test_warning_message_includes_fixture_id(self) -> None:
+        # Report.warning shares Report.error's formatting, so a warning about a
+        # fixture with a known id is annotated the same way.
+        report = validate.Report()
+        path = Path("a.toml")
+        report.register_fixture_id(path, "p28-xdr-cap83-example")
+        report.warning(path, "an advisory")
+        self.assertEqual(
+            report.warnings, ["a.toml [p28-xdr-cap83-example]: an advisory"]
+        )
 
     def test_rejects_invalid_protocol_type(self) -> None:
         bad = VALID_XDR.replace("protocol = 28", 'protocol = "28"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'protocol'" in e for e in report.errors))
 
+    def test_rejects_non_positive_protocol(self) -> None:
+        bad = VALID_XDR.replace("protocol = 28", "protocol = 0")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("positive integer" in e for e in report.errors))
+
+    def test_rejects_negative_protocol(self) -> None:
+        bad = VALID_XDR.replace("protocol = 28", "protocol = -1")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("positive integer" in e for e in report.errors))
+
+    def test_rejects_unknown_capability(self) -> None:
+        bad = VALID_XDR + '\nrequired_capabilities = ["not-a-real-capability"]\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("unknown capability" in e for e in report.errors))
+
+    def test_accepts_known_required_capabilities(self) -> None:
+        good = VALID_XDR + '\nrequired_capabilities = ["soroban-contract"]\n'
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [])
+
+    # --- F-032: capability vector parity (tests/fixtures/capabilities.json)
+
+    APPROVED_CAPABILITIES = [
+        "soroban-contract",
+        "rpc-client",
+        "stellar-sdk-dependency",
+        "wasm-artifact",
+        "raw-ledger-access",
+    ]
+
+    def _capabilities_schema_property(self) -> dict:
+        return schema_sync.load_schema()["properties"]["required_capabilities"]
+
+    def test_capability_vector_lists_exactly_the_approved_five(self) -> None:
+        vector = CAPABILITIES_VECTOR["required_capabilities"]
+        self.assertEqual(vector, self.APPROVED_CAPABILITIES)
+        self.assertEqual(len(vector), len(set(vector)), "duplicates in the vector")
+
+    def test_validator_capabilities_match_the_published_vector(self) -> None:
+        self.assertEqual(set(validate.CAPABILITIES), set(self.APPROVED_CAPABILITIES))
+        self.assertEqual(len(validate.CAPABILITIES), 5)
+
+    def test_schema_enum_matches_the_published_vector(self) -> None:
+        enum = self._capabilities_schema_property()["items"]["enum"]
+        self.assertEqual(enum, self.APPROVED_CAPABILITIES)
+
+    def test_each_approved_capability_passes_schema_and_validator(self) -> None:
+        property_schema = self._capabilities_schema_property()
+        for cap in self.APPROVED_CAPABILITIES:
+            with self.subTest(capability=cap):
+                good = VALID_XDR + f'\nrequired_capabilities = ["{cap}"]\n'
+                report = self.run_validation({"a.toml": good})
+                self.assertEqual(report.errors, [])
+                self.assertEqual(jsonschema_lite.validate([cap], property_schema), [])
+
+    def test_unapproved_capability_is_rejected_with_the_allowed_list(self) -> None:
+        bad = VALID_XDR + '\nrequired_capabilities = ["fake-cap"]\n'
+        report = self.run_validation({"a.toml": bad})
+        matching = [e for e in report.errors if "unknown capability 'fake-cap'" in e]
+        self.assertTrue(matching, report.errors)
+        for cap in self.APPROVED_CAPABILITIES:
+            self.assertIn(cap, matching[0])
+
+    def test_schema_rejects_an_unapproved_capability(self) -> None:
+        problems = jsonschema_lite.validate(["fake-cap"], self._capabilities_schema_property())
+        self.assertTrue(problems, "schema accepted an unapproved capability")
+        self.assertIn("fake-cap", problems[0])
+
+    def test_rejects_non_array_required_capabilities(self) -> None:
+        bad = VALID_XDR + '\nrequired_capabilities = "rpc-client"\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("must be an array" in e for e in report.errors))
+
+    def test_rejects_duplicate_required_capabilities(self) -> None:
+        bad = VALID_XDR + '\nrequired_capabilities = ["rpc-client", "rpc-client"]\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("duplicate entry" in e for e in report.errors))
+
     def test_rejects_missing_input_file(self) -> None:
         bad = VALID_XDR + '\ninput_file = "does-not-exist.xdr.b64"\n'
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("does not resolve to an existing file" in e for e in report.errors))
+
+    def test_rejects_missing_expected_file(self) -> None:
+        bad = VALID_XDR + '\nexpected_file = "does-not-exist.xdr.b64"\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("does not resolve to an existing file" in e for e in report.errors)
+        )
+
+    def test_rejects_empty_input_file(self) -> None:
+        bad = VALID_XDR + '\ninput_file = ""\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("field 'input_file', if present, must be a non-empty string" in e for e in report.errors)
+        )
+
+    def test_rejects_non_string_input_file(self) -> None:
+        # input_file is read from TOML, so an unquoted value can be parsed as
+        # an int (or any other non-string) instead of the path the contributor
+        # meant. The same guard that rejects an empty input_file must reject a
+        # non-string one rather than attempting to resolve it as a path.
+        bad = VALID_XDR + "\ninput_file = 42\n"
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("field 'input_file', if present, must be a non-empty string" in e for e in report.errors)
+        )
+
+    def test_rejects_non_string_expected_file(self) -> None:
+        bad = VALID_XDR + '\nexpected_file = 123\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("field 'expected_file', if present, must be a non-empty string" in e for e in report.errors)
+        )
 
     def test_accepts_an_existing_input_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,40 +579,461 @@ class ValidatorTests(unittest.TestCase):
             report = validate.validate_directory(root)
         self.assertEqual(report.errors, [])
 
+    def test_rejects_missing_expected_file(self) -> None:
+        bad = VALID_XDR + '\nexpected_file = "does-not-exist.expected.b64"\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("does not resolve to an existing file" in e for e in report.errors))
+
+    def test_accepts_an_existing_expected_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "expected.xdr.b64", "AAAAAA==")
+            write(root, "a.toml", VALID_XDR + '\nexpected_file = "expected.xdr.b64"\n')
+            report = validate.validate_directory(root)
+        self.assertEqual(report.errors, [])
+
     def test_rejects_invalid_expectation_kind(self) -> None:
         bad = VALID_XDR.replace('kind = "decode-success"', 'kind = "not-a-real-kind"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'kind'" in e for e in report.errors))
+
+    def test_rejects_xdr_type_not_in_xdr_types(self) -> None:
+        bad = VALID_XDR.replace(
+            'type = "StellarValue"', 'type = "TransactionEnvelopeV2"'
+        )
+        report = self.run_validation({"a.toml": bad})
+        matching = [e for e in report.errors if "TransactionEnvelopeV2" in e]
+        self.assertTrue(matching, report.errors)
+        for supported in validate.XDR_TYPES:
+            self.assertIn(supported, matching[0])
+
+    def test_accepts_each_new_xdr_type_for_every_kind(self) -> None:
+        # F-050 (issue #324): canary-xdr decodes TransactionEnvelope and
+        # LedgerEntry, so every XDR assertion kind must be accepted for both.
+        for type_name in ("TransactionEnvelope", "LedgerEntry"):
+            for kind in sorted(validate.XDR_KINDS):
+                with self.subTest(type=type_name, kind=kind):
+                    fixture = VALID_XDR.replace(
+                        'type = "StellarValue"', f'type = "{type_name}"'
+                    ).replace('kind = "decode-success"', f'kind = "{kind}"')
+                    if kind == "encode-equals":
+                        fixture += 'expected_base64 = "AAAAAA=="\n'
+                    report = self.run_validation({"a.toml": fixture})
+                    self.assertEqual(report.errors, [])
+
+    def test_rejects_misspelled_lowercase_and_empty_xdr_type(self) -> None:
+        # F-050 negative testing: the type is matched exactly, so a
+        # misspelling, a lower-case name and an empty string all fail with the
+        # list of allowed types in the message.
+        for bad_type in ("TransactionEnvelopeV2", "transactionenvelope", ""):
+            with self.subTest(type=bad_type):
+                bad = VALID_XDR.replace(
+                    'type = "StellarValue"', f'type = "{bad_type}"'
+                )
+                report = self.run_validation({"a.toml": bad})
+                matching = [e for e in report.errors if "field 'type' must be one of" in e]
+                self.assertTrue(matching, report.errors)
+                for supported in validate.XDR_TYPES:
+                    self.assertIn(supported, matching[0])
+
+    def test_accepts_scval_xdr_type(self) -> None:
+        # F-016 (issue #281): canary-xdr supports ScVal, so the validator
+        # must accept it. AAAA...AAAD is the XDR encoding of ScVal u32 0:
+        # discriminant SCV_U32 (3) followed by a zero word.
+        good = VALID_XDR.replace(
+            'type = "StellarValue"', 'type = "ScVal"'
+        ).replace('value_base64 = "AAAAAA=="', 'value_base64 = "AAAAAwAAAAA="')
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [])
+
+    def test_rejects_invalid_base64_scval_payload(self) -> None:
+        # F-016 (issue #281): a ScVal fixture with a malformed base64
+        # payload must fail validation with a base64 error.
+        bad = VALID_XDR.replace(
+            'type = "StellarValue"', 'type = "ScVal"'
+        ).replace('value_base64 = "AAAAAA=="', 'value_base64 = "!!!not-base64!!!"')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "value_base64" in e and "not valid base64" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_xdr_fixture_rejects_missing_type(self) -> None:
+        bad = VALID_XDR.replace('type = "StellarValue"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'type'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_xdr_fixture_rejects_missing_kind(self) -> None:
+        bad = VALID_XDR.replace('kind = "decode-success"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'kind'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_xdr_fixture_rejects_missing_value_base64(self) -> None:
+        bad = VALID_XDR.replace('value_base64 = "AAAAAA=="\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "missing required field 'value_base64'" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
 
     def test_encode_equals_requires_expected_base64(self) -> None:
         bad = VALID_XDR.replace('kind = "decode-success"', 'kind = "encode-equals"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("expected_base64" in e for e in report.errors))
 
+    def test_rejects_empty_min_length_fields(self) -> None:
+        cases = {
+            "value_base64": VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = ""'),
+            "expected_base64": (
+                VALID_XDR.replace('kind = "decode-success"', 'kind = "encode-equals"')
+                + 'expected_base64 = ""\n'
+            ),
+            "source_account": VALID_SOROBAN.replace(
+                'source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"',
+                'source_account = ""',
+            ),
+            "contract_id": VALID_SOROBAN.replace(
+                'contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"',
+                'contract_id = ""',
+            ),
+            "function": VALID_SOROBAN.replace('function = "name"', 'function = ""'),
+        }
+        for field, fixture in cases.items():
+            with self.subTest(field=field):
+                report = self.run_validation({"a.toml": fixture})
+                self.assertTrue(
+                    any(f"field '{field}' must not be empty" in error for error in report.errors),
+                    report.errors,
+                )
+
+    def test_rejects_non_string_source_reference(self) -> None:
+        bad = VALID_XDR.replace('source_reference = "CAP-0083"', 'source_reference = 83')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("source_reference" in e for e in report.errors))
+
     def test_rejects_empty_source_reference(self) -> None:
         bad = VALID_XDR.replace('source_reference = "CAP-0083"', 'source_reference = ""')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("source_reference" in e for e in report.errors))
 
-    def test_warns_on_missing_source_reference(self) -> None:
+    def test_errors_on_missing_source_reference(self) -> None:
+        # Every fixture must cite an authoritative upstream source (see
+        # CONTRIBUTING.md and SECURITY.md). A missing source_reference is a
+        # hard validation error, not a warning, so it must fail the build
+        # rather than pass with a printed advisory.
         bad = VALID_XDR.replace('source_reference = "CAP-0083"\n', "")
         report = self.run_validation({"a.toml": bad})
-        self.assertEqual(report.errors, [])
-        self.assertTrue(any("source_reference" in w for w in report.warnings))
+        self.assertTrue(
+            any(
+                "source_reference" in e
+                and "authoritative upstream source" in e
+                and "CAP-0083" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+        # It must be reported as an error only, never downgraded to a warning.
+        self.assertFalse(
+            any("source_reference" in w for w in report.warnings),
+            report.warnings,
+        )
+
+    def test_accepts_a_present_source_reference(self) -> None:
+        # The pass case for the rule above: a fixture that cites an
+        # authoritative source produces no source_reference error.
+        report = self.run_validation({"a.toml": VALID_XDR})
+        self.assertFalse(
+            any("source_reference" in e for e in report.errors), report.errors
+        )
 
     def test_rejects_malformed_toml(self) -> None:
         report = self.run_validation({"a.toml": "not valid [[[ toml"})
         self.assertTrue(any("invalid TOML" in e for e in report.errors))
 
-    def test_rejects_vague_category(self) -> None:
-        bad = VALID_XDR.replace('category = "cap-0083"', 'category = "misc"')
+    def test_toml_error_line_uses_legacy_message_fallback(self) -> None:
+        error = Exception("parse failed (at line 8, column 3)")
+        self.assertEqual(validate._toml_error_line(error), 8)
+
+    def test_load_fixture_handles_unreadable_file_oserror(self) -> None:
+        report = validate.Report()
+        path = Path("unreadable.toml")
+        # load_fixture reads bytes (F-112), so the read error must come from
+        # read_bytes and still be reported as "failed to read file".
+        with mock.patch.object(Path, "read_bytes", side_effect=OSError("Permission denied")):
+            result = validate.load_fixture(path, report)
+        self.assertIsNone(result)
+        self.assertEqual(len(report.errors), 1)
+        self.assertIn("failed to read file: Permission denied", report.errors[0])
+
+    def test_rejects_missing_id(self) -> None:
+        data = {
+            "protocol": 28,
+            "surface": "xdr",
+            "category": "cap-0083",
+            "description": "example",
+            "source_reference": "CAP-0083",
+        }
+        fixture = validate.Fixture(Path("missing-id.toml"), data)
+        report = validate.Report()
+
+        validate.validate_common_fields(fixture, report)
+
+        self.assertTrue(
+            any("missing required field 'id'" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_non_string_id(self) -> None:
+        data = {
+            "id": 12345,
+            "protocol": 28,
+            "surface": "xdr",
+            "category": "cap-0083",
+            "description": "example",
+            "source_reference": "CAP-0083",
+        }
+        fixture = validate.Fixture(Path("non-string-id.toml"), data)
+        report = validate.Report()
+
+        validate.validate_common_fields(fixture, report)
+
+        self.assertTrue(
+            any("field 'id' must be of type str" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_run_validation_rejects_non_string_id(self) -> None:
+        bad = VALID_XDR.replace('id = "p28-xdr-cap83-example"', "id = 12345")
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("too vague" in e for e in report.errors))
+        self.assertTrue(
+            any("field 'id' must be of type str" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_known_fixture_id_returns_none_for_non_string_id(self) -> None:
+        fx = validate.Fixture(Path("test.toml"), {"id": 12345})
+        self.assertIsNone(validate.known_fixture_id(fx))
+
+    def test_rejects_missing_surface(self) -> None:
+        data = {
+            "id": "p28-xdr-cap83-missing-surface",
+            "protocol": 28,
+            "category": "cap-0083",
+            "description": "example",
+            "source_reference": "CAP-0083",
+        }
+        fixture = validate.Fixture(Path("missing-surface.toml"), data)
+        report = validate.Report()
+
+        validate.validate_common_fields(fixture, report)
+
+        self.assertTrue(
+            any("missing required field 'surface'" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_missing_category(self) -> None:
+        data = {
+            "id": "p28-xdr-cap83-missing-category",
+            "protocol": 28,
+            "surface": "xdr",
+            "description": "example",
+            "source_reference": "CAP-0083",
+        }
+        fixture = validate.Fixture(Path("missing-category.toml"), data)
+        report = validate.Report()
+
+        validate.validate_common_fields(fixture, report)
+
+        self.assertTrue(
+            any("missing required field 'category'" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_non_string_category(self) -> None:
+        data = {
+            "id": "p28-xdr-cap83-non-string-category",
+            "protocol": 28,
+            "surface": "xdr",
+            "category": 123,
+            "description": "example",
+            "source_reference": "CAP-0083",
+        }
+        fixture = validate.Fixture(Path("non-string-category.toml"), data)
+        report = validate.Report()
+
+        validate.validate_common_fields(fixture, report)
+
+        self.assertTrue(
+            any("field 'category' must be of type str" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_empty_category(self) -> None:
+        bad = VALID_XDR.replace('category = "cap-0083"', 'category = ""')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("must not be empty" in e and "'category'" in e for e in report.errors))
+
+    def test_rejects_vague_category(self) -> None:
+        for vague in ("misc", "other", "test", "general"):
+            with self.subTest(category=vague):
+                bad = VALID_XDR.replace('category = "cap-0083"', f'category = "{vague}"')
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(any("too vague" in e for e in report.errors))
+
+    def test_rejects_vague_category_in_any_letter_case(self) -> None:
+        for vague in ("Misc", "OTHER", "Test", "GENERAL"):
+            with self.subTest(category=vague):
+                bad = VALID_XDR.replace('category = "cap-0083"', f'category = "{vague}"')
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(any("too vague" in e for e in report.errors), report.errors)
+
+    def test_rejects_missing_description(self) -> None:
+        bad = VALID_XDR.replace('description = "example"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("description" in e for e in report.errors))
+
+    def test_rejects_non_string_description(self) -> None:
+        data = {
+            "id": "p28-xdr-cap83-non-string-description",
+            "protocol": 28,
+            "surface": "xdr",
+            "category": "cap-0083",
+            "description": 123,
+            "source_reference": "CAP-0083",
+        }
+        fixture = validate.Fixture(Path("non-string-description.toml"), data)
+        report = validate.Report()
+
+        validate.validate_common_fields(fixture, report)
+
+        self.assertTrue(
+            any("field 'description' must be of type str" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_empty_description(self) -> None:
+        # schemas/fixture-v1.schema.json declares description with
+        # minLength 1, so an empty string must fail validation the same way
+        # an empty id or category does, rather than passing structurally.
+        bad = VALID_XDR.replace('description = "example"', 'description = ""')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("field 'description' must not be empty" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_empty_id(self) -> None:
+        bad = VALID_XDR.replace(
+            'id = "p28-xdr-cap83-example"', 'id = ""'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("must not be empty" in e and "'id'" in e for e in report.errors))
+
+    def test_rejects_missing_description(self) -> None:
+        bad = VALID_XDR.replace('description = "example"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("description" in e for e in report.errors))
 
     def test_rejects_uppercase_id(self) -> None:
         bad = VALID_XDR.replace('id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
+
+    def test_rejects_empty_id(self) -> None:
+        bad = VALID_XDR.replace(
+            'id = "p28-xdr-cap83-example"', 'id = ""'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("field 'id' must not be empty" in e for e in report.errors))
+
+    def test_rejects_non_table_assert_entry(self) -> None:
+        # TOML permits an array element to be a non-table value; validate_rpc_body
+        # has an explicit branch for that case. Mix a well-formed assert table
+        # with a bare string so the malformed entry is the only error reported.
+        bad = """
+id = "p28-rpc-mixed-assert"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "example"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+assert = [
+    { kind = "field-equals", field = "protocolVersion", value = 28 },
+    "not-a-table",
+]
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertIn(
+            "assert[1] must be a table",
+            "\n".join(report.errors),
+        )
+        # The valid entry alongside the malformed one must not itself error.
+        self.assertFalse(any("assert[0]" in e for e in report.errors))
+
+    def test_unknown_top_level_field_is_rejected_and_named(self) -> None:
+        # F-031 flipped the previously documented behavior: an unrecognized
+        # top-level field (here a typo'd source_reference) is now an error,
+        # and the diagnostic names the offending key so the typo is visible.
+        with_unknown = VALID_XDR.replace(
+            'source_reference = "CAP-0083"',
+            'source_reference = "CAP-0083"\nsoure_reference = "typo"',
+        )
+        report = self.run_validation({"a.toml": with_unknown})
+        self.assertTrue(
+            any("unexpected top-level key 'soure_reference'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_misspelled_top_level_key_is_rejected(self) -> None:
+        # A misspelled duplicate of a valid field must fail outright rather
+        # than pass while the intended field is merely reported missing.
+        with_typo = VALID_XDR + '\ndescriptoin = "example"\n'
+        report = self.run_validation({"a.toml": with_typo})
+        self.assertTrue(
+            any("unexpected top-level key 'descriptoin'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_key_belonging_to_another_surface_is_rejected(self) -> None:
+        # 'method' is a declared fixture key, but only for surface = "rpc".
+        cross_surface = VALID_XDR + '\nmethod = "get-network"\n'
+        report = self.run_validation({"a.toml": cross_surface})
+        self.assertTrue(
+            any("unexpected top-level key 'method'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_unknown_key_in_assert_table_is_rejected(self) -> None:
+        # Section keys are closed too: a misspelled key inside [[assert]]
+        # fails with the key named (the [expect] table has its own test).
+        bad_rpc = RPC_HEADER + RPC_ASSERT_TABLE + '''
+[[assert]]
+kind = "field-exists"
+requrest = "passphrase"
+'''
+        report = self.run_validation({"a.toml": bad_rpc})
+        self.assertTrue(
+            any(
+                "unexpected key(s) 'requrest' in assert[1]" in e for e in report.errors
+            ),
+            report.errors,
+        )
 
     def test_rpc_fixture_requires_at_least_one_assert(self) -> None:
         bad = """
@@ -172,10 +1049,1088 @@ method = "get-network"
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("at least one" in e for e in report.errors))
 
+    def test_rpc_fixture_rejects_invalid_method(self) -> None:
+        # `get-balance` is a real Stellar RPC method that canary-rpc does not
+        # implement; `getTransactions` is the case #159 asks for. Neither may
+        # be silently accepted just because it looks like a plausible name.
+        for invalid_method in ("get-balance", "getTransactions"):
+            with self.subTest(method=invalid_method):
+                bad = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{invalid_method}"'
+                )
+                report = self.run_validation({"a.toml": bad})
+                errors = [e for e in report.errors if "'method'" in e]
+                self.assertEqual(len(errors), 1, report.errors)
+                # The error must name the offending method and enumerate the
+                # methods the validator accepts, so that any change to
+                # RPC_METHODS is detectable from the message alone.
+                self.assertIn(invalid_method, errors[0])
+                for supported in ("get-network", "get-latest-ledger"):
+                    self.assertIn(supported, errors[0])
+
+    def test_rpc_fixture_rejects_missing_method(self) -> None:
+        bad = VALID_RPC.replace('method = "get-network"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'method'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_rpc_fixture_rejects_empty_assert_array(self) -> None:
+        bad = RPC_HEADER + "\nassert = []\n"
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("non-empty array" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_non_array_assert_value(self) -> None:
+        bad = (
+            RPC_HEADER
+            + '\nassert = { kind = "field-equals", field = "protocolVersion", value = 28 }\n'
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("'assert' must be a non-empty array of tables" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_rpc_fixture_rejects_non_table_assert_entry(self) -> None:
+        bad = RPC_HEADER + '\nassert = ["not-a-table"]\n'
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("assert[0] must be a table" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_invalid_assert_kind(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "not-a-real-kind"
+field = "protocolVersion"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("assert[0].kind" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_missing_assert_field(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-equals"
+value = 28
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("missing required non-empty 'field'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_empty_assert_field(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-equals"
+field = ""
+value = 28
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("missing required non-empty 'field'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_non_string_assert_field(self) -> None:
+        cases = (("42", "int"), ("true", "bool"), ('["a"]', "list"), ("{a = 1}", "dict"))
+        for value, actual_type in cases:
+            with self.subTest(value=value):
+                bad = RPC_HEADER + f"""
+[[assert]]
+kind = "field-equals"
+field = {value}
+value = 28
+"""
+                report = self.run_validation({"a.toml": bad})
+                errors = [error for error in report.errors if "assert[0].field" in error]
+                self.assertEqual(len(errors), 1, report.errors)
+                self.assertIn(actual_type, errors[0])
+
+    def test_rpc_fixture_rejects_field_equals_without_value(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-equals"
+field = "protocolVersion"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("kind=field-equals requires 'value'" in e for e in report.errors))
+
+    def test_rpc_fixture_rejects_invalid_expected_type(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-type"
+field = "protocolVersion"
+expected_type = "not-a-real-type"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("assert[0].expected_type" in e for e in report.errors))
+    def test_rejects_unrecognized_rpc_assert_kind(self) -> None:
+        bad = VALID_RPC.replace('kind = "field-equals"', 'kind = "field-contains"')
+        report = self.run_validation({"a.toml": bad})
+        errors = [e for e in report.errors if "assert[0].kind" in e]
+        self.assertEqual(len(errors), 1, report.errors)
+        # The error must name the offending kind and enumerate the kinds the
+        # validator does accept, so that neither widening nor narrowing
+        # RPC_ASSERT_KINDS can pass unnoticed.
+        self.assertIn("field-contains", errors[0])
+        for supported in ("field-exists", "field-absent", "field-type", "field-equals"):
+            self.assertIn(supported, errors[0])
+
+    def test_accepts_rpc_fixture_with_field_absent(self) -> None:
+        fixture = RPC_HEADER + """
+[[assert]]
+kind = "field-absent"
+field = "error"
+"""
+        report = self.run_validation({"a.toml": fixture})
+        self.assertEqual(report.errors, [])
+
+    # --- F-052 (issue #326): RPC methods and [request] table validation ---
+
+    def test_rpc_parameterless_methods_reject_request_table(self) -> None:
+        for method in ("get-network", "get-latest-ledger"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    # --- F-017 (issue #280): the health and diagnostic RPC methods
+    def test_rpc_health_and_diagnostic_methods_are_accepted(self) -> None:
+        # canary-rpc parses get-health, get-version-info and get-fee-stats
+        # (crates/canary-rpc/src/request.rs, read at Protocol-Canary commit
+        # 94d7c794780a7c87944c5177ff1f8eb3edec300e), so a fixture naming one
+        # of them is a request the engine can run, not a misspelling.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                good = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{method}"'
+                )
+                report = self.run_validation({"a.toml": good})
+                self.assertEqual(report.errors, [], report.errors)
+
+    def test_rpc_health_and_diagnostic_methods_reject_a_request_table(self) -> None:
+        # The engine's parameter table lists these three as taking no
+        # parameters, so a [request] table must be rejected the same way it
+        # is for get-network and get-latest-ledger.
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                bad = f"""
+id = "p28-rpc-{method}"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+
+[request]
+limit = 1
+
+[[assert]]
+kind = "field-exists"
+field = "id"
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("takes no parameters" in e for e in report.errors),
+                    report.errors,
+                )
+
+    def test_rpc_fixture_rejects_misspelled_health_method_names(self) -> None:
+        # The accepted names are the engine's own kebab-case spellings;
+        # an underscore or camelCase spelling of the same method is not
+        # accepted, and the diagnostic must name the allowed methods.
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                bad = VALID_RPC.replace(
+                    'method = "get-network"', f'method = "{invalid_method}"'
+                )
+                report = self.run_validation({"a.toml": bad})
+                errors = [e for e in report.errors if "'method'" in e]
+                self.assertEqual(len(errors), 1, report.errors)
+                self.assertIn(invalid_method, errors[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, errors[0])
+
+    def test_the_test_fixtures_cover_each_health_and_diagnostic_method(self) -> None:
+        # Accepting a method and never using it leaves the vocabulary
+        # unproven, so F-017 also ships one fixture per method, under
+        # tests/fixtures/rpc/. They stay out of a protocol pack on purpose:
+        # a pack's RPC fixtures must all be capturable by
+        # tools/evidence/capture_live.py, whose allowlist is the three
+        # read-only methods CF-04 section 8 names.
+        rpc_fixtures = REPO_ROOT / "tests" / "fixtures" / "rpc"
+        report = validate.validate_directory(rpc_fixtures)
+        self.assertEqual(report.errors, [], report.errors)
+        methods: list[str] = []
+        for path in sorted(rpc_fixtures.glob("*.toml")):
+            with open(path, "rb") as handle:
+                methods.append(tomllib.load(handle)["method"])
+        self.assertEqual(
+            sorted(methods),
+            ["get-fee-stats", "get-health", "get-version-info"],
+        )
+
+    def test_the_schema_accepts_the_health_and_diagnostic_methods(self) -> None:
+        # The validator leg is covered above; this is the schema leg (F-017).
+        # jsonschema_lite cannot run the schema's allOf/if/then blocks, so the
+        # rpc method enum is checked directly, which is the part of the
+        # schema that decides whether these names are authorable.
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for method in ("get-health", "get-version-info", "get-fee-stats"):
+            with self.subTest(method=method):
+                self.assertIn(method, method_schema["enum"])
+                self.assertEqual(jsonschema_lite.validate(method, method_schema), [])
+
+    def test_the_schema_rejects_misspelled_health_method_names(self) -> None:
+        block = schema_sync.surface_block(schema_sync.load_schema(), "rpc")
+        assert block is not None
+        method_schema = block["properties"]["method"]
+        for invalid_method in ("get_health", "getHealthy", "get_fee_stats"):
+            with self.subTest(method=invalid_method):
+                problems = jsonschema_lite.validate(invalid_method, method_schema)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(invalid_method, problems[0])
+                for supported in ("get-health", "get-version-info", "get-fee-stats"):
+                    self.assertIn(supported, problems[0])
+                    self.assertIn(supported, method_schema["enum"])
+
+    def test_rpc_get_ledger_entries_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-entries"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-ledger-entries"
+"""
+        # Missing [request] table entirely
+        no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": no_req})
+        self.assertTrue(any("requires a [request] table with 'keys'" in e for e in rep.errors))
+
+        # Valid keys and xdrFormat
+        valid = base + """
+[request]
+keys = ["AAAAAA=="]
+xdrFormat = "base64"
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # Empty keys
+        empty_keys = base + """
+[request]
+keys = []
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": empty_keys})
+        self.assertTrue(any("keys: must not be empty" in e for e in rep.errors))
+
+        # 50 keys accepted
+        fifty = base + f"""
+[request]
+keys = {['AAAA'] * 50}
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": fifty})
+        self.assertEqual(rep.errors, [])
+
+        # 51 keys rejected (> MAX_KEYS)
+        fifty_one = base + f"""
+[request]
+keys = {['AAAA'] * 51}
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": fifty_one})
+        self.assertTrue(any("allows at most 50" in e for e in rep.errors))
+
+        # Non-base64 key
+        bad_b64 = base + """
+[request]
+keys = ["not base64!"]
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": bad_b64})
+        self.assertTrue(any("not a base64 string" in e for e in rep.errors))
+
+        # Unknown key in request
+        extra_key = base + """
+[request]
+keys = ["AAAAAA=="]
+unknownKey = 123
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": extra_key})
+        self.assertTrue(any("unknown [request] key(s)" in e for e in rep.errors))
+
+        # Invalid xdrFormat
+        bad_format = base + """
+[request]
+keys = ["AAAAAA=="]
+xdrFormat = "json"
+
+[[assert]]
+kind = "field-exists"
+field = "entries"
+"""
+        rep = self.run_validation({"a.toml": bad_format})
+        self.assertTrue(any("only 'base64' is supported" in e for e in rep.errors))
+
+    def test_rpc_get_transaction_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-tx"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-transaction"
+"""
+        # Missing hash
+        no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": no_req})
+        self.assertTrue(any("requires a [request] table with 'hash'" in e for e in rep.errors))
+
+        # Valid 64 lowercase hex
+        valid = base + f"""
+[request]
+hash = "{"ab" * 32}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # Uppercase hex rejected
+        bad_upper = base + f"""
+[request]
+hash = "{"AB" * 32}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_upper})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+        # Wrong length (63 chars)
+        bad_len = base + f"""
+[request]
+hash = "{"a" * 63}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_len})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+        # Non-hex characters
+        bad_chars = base + f"""
+[request]
+hash = "{"g" * 64}"
+
+[[assert]]
+kind = "field-exists"
+field = "status"
+"""
+        rep = self.run_validation({"a.toml": bad_chars})
+        self.assertTrue(any("64 lowercase hex characters" in e for e in rep.errors))
+
+    def test_rpc_paged_methods_pagination_and_limits(self) -> None:
+        for method in ("get-ledgers", "get-transactions"):
+            with self.subTest(method=method):
+                base = f"""
+id = "p28-rpc-paged"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "{method}"
+"""
+                # Valid without [request] table
+                valid_no_req = base + """
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": valid_no_req})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 1 accepted
+                lim1 = base + """
+[request]
+startLedger = 0
+[request.pagination]
+limit = 1
+cursor = "c1"
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim1})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 50 accepted
+                lim50 = base + """
+[request.pagination]
+limit = 50
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim50})
+                self.assertEqual(rep.errors, [])
+
+                # Pagination limit = 0 rejected
+                lim0 = base + """
+[request.pagination]
+limit = 0
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim0})
+                self.assertTrue(any("limit 0 is outside 1..=50" in e for e in rep.errors))
+
+                # Pagination limit = 51 rejected
+                lim51 = base + """
+[request.pagination]
+limit = 51
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": lim51})
+                self.assertTrue(any("limit 51 is outside 1..=50" in e for e in rep.errors))
+
+                # Empty cursor rejected
+                empty_cur = base + """
+[request.pagination]
+cursor = ""
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": empty_cur})
+                self.assertTrue(any("cursor must be a non-empty string" in e for e in rep.errors))
+
+                # Unknown key in pagination
+                bad_pag_key = base + """
+[request.pagination]
+unknown = 1
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": bad_pag_key})
+                self.assertTrue(any("expected 'cursor' or 'limit'" in e for e in rep.errors))
+
+                # startLedger out of range: negative
+                neg_ledger = base + """
+[request]
+startLedger = -1
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": neg_ledger})
+                self.assertTrue(any("is not a ledger sequence" in e for e in rep.errors))
+
+                # startLedger > 4294967295
+                huge_ledger = base + """
+[request]
+startLedger = 4294967296
+
+[[assert]]
+kind = "field-exists"
+field = "latestLedger"
+"""
+                rep = self.run_validation({"a.toml": huge_ledger})
+                self.assertTrue(any("is not a ledger sequence" in e for e in rep.errors))
+
+    def test_rpc_get_events_valid_and_invalid(self) -> None:
+        base = """
+id = "p28-rpc-events"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "test"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference"
+method = "get-events"
+"""
+        # Valid events request
+        valid = base + """
+[request]
+startLedger = 100
+endLedger = 200
+[[request.filters]]
+type = "contract"
+contractIds = ["CAAA", "CBBB"]
+topics = [["topic1"], ["topic2"]]
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": valid})
+        self.assertEqual(rep.errors, [])
+
+        # More than 2 filters rejected
+        three_filters = base + """
+[request]
+[[request.filters]]
+type = "contract"
+[[request.filters]]
+type = "system"
+[[request.filters]]
+type = "diagnostic"
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": three_filters})
+        self.assertTrue(any("has 3 filters; the engine allows at most 2" in e for e in rep.errors))
+
+        # Invalid filter type
+        bad_type = base + """
+[request]
+[[request.filters]]
+type = "other"
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": bad_type})
+        self.assertTrue(any("type must be 'contract', 'system' or 'diagnostic'" in e for e in rep.errors))
+
+        # Filter contractIds > 5 rejected
+        six_cids = base + f"""
+[request]
+[[request.filters]]
+type = "contract"
+contractIds = {['C' + str(i) for i in range(6)]}
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": six_cids})
+        self.assertTrue(any("contractIds has more than 5 entries" in e for e in rep.errors))
+
+        # Filter topics > 5 rejected
+        six_topics = base + f"""
+[request]
+[[request.filters]]
+type = "contract"
+topics = {[["t"] for _ in range(6)]}
+
+[[assert]]
+kind = "field-exists"
+field = "events"
+"""
+        rep = self.run_validation({"a.toml": six_topics})
+        self.assertTrue(any("topics has more than 5 entries" in e for e in rep.errors))
+
+    def test_rpc_request_structural_edge_cases(self) -> None:
+        from tools.validate.validate import validate_rpc_request, Report
+
+        # 1. request is not a dict
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": "not-a-table"}, Path("a.toml"), rep)
+        self.assertTrue(any("[request] must be a table" in e for e in rep.errors))
+
+        # 2. keys is not a list
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": {"keys": "not-a-list"}}, Path("a.toml"), rep)
+        self.assertTrue(any("keys: must be an array of strings" in e for e in rep.errors))
+
+        # 3. keys entry is not a string
+        rep = Report()
+        validate_rpc_request("get-ledger-entries", {"request": {"keys": [123]}}, Path("a.toml"), rep)
+        self.assertTrue(any("keys: entry 0 must be a string" in e for e in rep.errors))
+
+        # 4. hash is not a string
+        rep = Report()
+        validate_rpc_request("get-transaction", {"request": {"hash": 123}}, Path("a.toml"), rep)
+        self.assertTrue(any("hash: must be a string" in e for e in rep.errors))
+
+        # 5. startLedger is bool or not int
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"startLedger": True}}, Path("a.toml"), rep)
+        self.assertTrue(any("startLedger: must be an integer" in e for e in rep.errors))
+
+        # 6. pagination is not a table
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"pagination": "not-a-table"}}, Path("a.toml"), rep)
+        self.assertTrue(any("pagination: must be a table" in e for e in rep.errors))
+
+        # 7. pagination limit is bool or not int
+        rep = Report()
+        validate_rpc_request("get-ledgers", {"request": {"pagination": {"limit": "not-int"}}}, Path("a.toml"), rep)
+        self.assertTrue(any("pagination: limit must be an integer" in e for e in rep.errors))
+
+        # 8. filters is not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": "not-a-list"}}, Path("a.toml"), rep)
+        self.assertTrue(any("filters: must be an array of tables" in e for e in rep.errors))
+
+        # 9. filter is not a dict
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": ["not-a-dict"]}}, Path("a.toml"), rep)
+        self.assertTrue(any("filter 0 must be a table" in e for e in rep.errors))
+
+        # 10. filter unknown key
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"bad_key": 1}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("unknown key 'bad_key'" in e for e in rep.errors))
+
+        # 11. filter contractIds not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"contractIds": "not-a-list"}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("contractIds must be an array of strings" in e for e in rep.errors))
+
+        # 12. filter contractIds contains non-string
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"contractIds": [123]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("contractIds must contain only strings" in e for e in rep.errors))
+
+        # 13. filter topics not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": "not-a-list"}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("topics must be an array of arrays" in e for e in rep.errors))
+
+        # 14. filter topics row not a list
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": ["not-a-row-list"]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry must be an array of strings" in e for e in rep.errors))
+
+        # 15. filter topics row len > 5
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": [["a", "b", "c", "d", "e", "f"]]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry has more than 5 entries" in e for e in rep.errors))
+
+        # 16. filter topics row contains non-string
+        rep = Report()
+        validate_rpc_request("get-events", {"request": {"filters": [{"topics": [[123]]}]}}, Path("a.toml"), rep)
+        self.assertTrue(any("a topics entry must contain only strings" in e for e in rep.errors))
+
     def test_soroban_fixture_requires_expect(self) -> None:
         bad = VALID_SOROBAN.replace('[expect]\nkind = "simulation-success"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'expect'" in e for e in report.errors))
+
+    def test_rejects_non_array_args(self) -> None:
+        # schemas/fixture-v1.schema.json declares soroban "args" as
+        # { "type": "array" }; a non-array value must be reported here too.
+        for literal in ('"not-an-array"', "5"):
+            with self.subTest(args=literal):
+                bad = VALID_SOROBAN.replace(
+                    "sequence_number = 1",
+                    f"sequence_number = 1\nargs = {literal}",
+                )
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(
+                    any("'args'" in e and "array" in e for e in report.errors),
+                    f"expected an 'args' array error for args = {literal}, "
+                    f"got: {report.errors}",
+                )
+
+    def test_accepts_an_array_of_arg_tables(self) -> None:
+        good = VALID_SOROBAN.replace(
+            "sequence_number = 1",
+            'sequence_number = 1\nargs = [{ kind = "symbol", value = "name" }]',
+        )
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [])
+
+    # --- F-051 (issue #325): Soroban [[args]] entries ---------------------
+
+    # One valid argument table body per supported kind. The bodies are
+    # appended after "[[args]]" by _soroban_with_args().
+    VALID_ARG_BODIES = {
+        "void": 'kind = "void"',
+        "bool": 'kind = "bool"\nvalue = true',
+        "u32": 'kind = "u32"\nvalue = 42',
+        "i32": 'kind = "i32"\nvalue = -42',
+        "u64": 'kind = "u64"\nvalue = 1000000000',
+        "i64": 'kind = "i64"\nvalue = -1000000000',
+        "u128": 'kind = "u128"\nvalue = "340282366920938463463374607431768211455"',
+        "i128": 'kind = "i128"\nvalue = "-170141183460469231731687303715884105728"',
+        "u256": 'kind = "u256"\nvalue = "0x'
+        + "f" * 64
+        + '"',
+        "i256": 'kind = "i256"\nvalue = '
+        '"-57896044618658097711785492504343953926634992332820282019728792003956564819968"',
+        "duration": 'kind = "duration"\nvalue = 86400',
+        "timepoint": 'kind = "timepoint"\nvalue = 1729166400',
+        "symbol": 'kind = "symbol"\nvalue = "transfer"',
+        "string": 'kind = "string"\nvalue = "Hello, Stellar"',
+        "bytes-hex": 'kind = "bytes"\nvalue = "0xdeadbeefcafe"',
+        "bytes-base64": 'kind = "bytes"\nvalue = "3q2+7w=="',
+        "address-account": 'kind = "address"\nvalue = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"',
+        "address-contract": 'kind = "address"\nvalue = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"',
+        "vec": 'kind = "vec"\nvalue = [{ kind = "u32", value = 1 }]',
+        "map": 'kind = "map"\nvalue = [{ key = { kind = "symbol", value = "k" }, '
+        'value = { kind = "u32", value = 1 } }]',
+    }
+
+    # One invalid argument body per kind, plus the structural errors the
+    # acceptance criteria call out. The expected fragment makes each message
+    # precise enough to pin the reason, not merely that an error was emitted.
+    INVALID_ARG_BODIES = {
+        "bool given as a string": ('kind = "bool"\nvalue = "true"', "must be a boolean"),
+        "u32 negative": ('kind = "u32"\nvalue = -1', "outside the allowed range"),
+        "i32 above maximum": ('kind = "i32"\nvalue = 2147483648', "outside the allowed range"),
+        "u64 negative": ('kind = "u64"\nvalue = -1', "outside the allowed range"),
+        "i64 given as a string": ('kind = "i64"\nvalue = "1"', "must be an integer"),
+        "u128 above maximum": (
+            'kind = "u128"\nvalue = "340282366920938463463374607431768211456"',
+            "above the maximum",
+        ),
+        "i128 below minimum": (
+            'kind = "i128"\nvalue = "-170141183460469231731687303715884105729"',
+            "below the minimum",
+        ),
+        "u256 above maximum": (
+            'kind = "u256"\nvalue = "0x1' + "0" * 64 + '"',
+            "above the maximum",
+        ),
+        "i256 below minimum": (
+            'kind = "i256"\nvalue = "-0x8' + "0" * 62 + '1"',
+            "below the minimum",
+        ),
+        "u128 decimal with underscores": (
+            'kind = "u128"\nvalue = "1_000"',
+            "decimal or 0x-prefixed hex",
+        ),
+        "duration negative": ('kind = "duration"\nvalue = -1', "non-negative"),
+        "timepoint negative": ('kind = "timepoint"\nvalue = -1', "non-negative"),
+        "symbol with a space": (
+            'kind = "symbol"\nvalue = "not a symbol"',
+            "at most 32 characters",
+        ),
+        "symbol too long": (
+            'kind = "symbol"\nvalue = "' + "a" * 33 + '"',
+            "at most 32 characters",
+        ),
+        "string given as an integer": ('kind = "string"\nvalue = 1', "must be a string"),
+        "bytes odd-length hex": (
+            'kind = "bytes"\nvalue = "0xabc"',
+            "odd number of digits",
+        ),
+        "bytes non-hex with prefix": (
+            'kind = "bytes"\nvalue = "0xzz"',
+            "outside 0-9a-fA-F",
+        ),
+        "bytes non-canonical base64": (
+            'kind = "bytes"\nvalue = "AB=="',
+            "unused trailing bits",
+        ),
+        "bytes invalid base64": (
+            'kind = "bytes"\nvalue = "!!!!"',
+            "outside the standard alphabet",
+        ),
+        "address secret seed": (
+            'kind = "address"\nvalue = "SBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"',
+            "must not be a secret seed",
+        ),
+        "address malformed": (
+            'kind = "address"\nvalue = "not-an-address"',
+            "56-character G...",
+        ),
+        "vec given a string": ('kind = "vec"\nvalue = "nope"', "must be an array"),
+        "map given a string": ('kind = "map"\nvalue = "nope"', "must be an array"),
+        "map entry missing its key": (
+            'kind = "map"\nvalue = [{ value = { kind = "u32", value = 1 } }]',
+            "missing its 'key'",
+        ),
+        "map entry missing its value": (
+            'kind = "map"\nvalue = [{ key = { kind = "u32", value = 1 } }]',
+            "missing its 'value'",
+        ),
+        "nested vec has an unknown key": (
+            'kind = "vec"\nvalue = [{ kind = "u32", value = 1, extra = 2 }]',
+            "unexpected key(s) 'extra'",
+        ),
+    }
+
+    @staticmethod
+    def _soroban_with_args(args_text: str) -> str:
+        return VALID_SOROBAN.replace(
+            "sequence_number = 1",
+            "sequence_number = 1\n\n" + args_text,
+        )
+
+    @staticmethod
+    def _nested_vec(levels: int) -> str:
+        expression = '{ kind = "u32", value = 1 }'
+        for _ in range(levels):
+            expression = '{ kind = "vec", value = [' + expression + '] }'
+        return expression
+
+    @staticmethod
+    def _nested_map(levels: int) -> str:
+        expression = '{ kind = "u32", value = 1 }'
+        for _ in range(levels):
+            expression = (
+                '{ kind = "map", value = [{ key = { kind = "u32", value = 0 }, '
+                "value = " + expression + " }] }"
+            )
+        return expression
+
+    def test_accepts_every_supported_arg_kind(self) -> None:
+        for name, body in self.VALID_ARG_BODIES.items():
+            with self.subTest(kind=name):
+                fixture = self._soroban_with_args("[[args]]\n" + body + "\n")
+                report = self.run_validation({"a.toml": fixture})
+                self.assertEqual(report.errors, [], f"valid {name} argument rejected")
+
+    def test_accepts_a_void_arg_with_an_ignored_value(self) -> None:
+        # parse_arg_at returns Void before reading a value, so a present value
+        # is ignored rather than rejected.
+        fixture = self._soroban_with_args(
+            '[[args]]\nkind = "void"\nvalue = "ignored"\n'
+        )
+        report = self.run_validation({"a.toml": fixture})
+        self.assertEqual(report.errors, [])
+
+    def test_rejects_each_malformed_arg_with_a_precise_message(self) -> None:
+        for name, (body, fragment) in self.INVALID_ARG_BODIES.items():
+            with self.subTest(case=name):
+                fixture = self._soroban_with_args("[[args]]\n" + body + "\n")
+                report = self.run_validation({"a.toml": fixture})
+                matching = [e for e in report.errors if fragment in e]
+                self.assertTrue(
+                    matching,
+                    f"expected {fragment!r} for {name}, got: {report.errors}",
+                )
+                # Every argument diagnostic names the argument index.
+                self.assertTrue(
+                    any("args[0]" in e for e in report.errors),
+                    f"diagnostic does not name args[0]: {report.errors}",
+                )
+
+    def test_rejects_an_unknown_arg_kind_with_the_supported_list(self) -> None:
+        fixture = self._soroban_with_args(
+            '[[args]]\nkind = "f64"\nvalue = 1.5\n'
+        )
+        report = self.run_validation({"a.toml": fixture})
+        matching = [e for e in report.errors if "args[0].kind" in e]
+        self.assertTrue(matching, report.errors)
+        for kind in validate.SOROBAN_ARG_KINDS:
+            self.assertIn(kind, matching[0])
+
+    def test_rejects_an_arg_with_an_unknown_key(self) -> None:
+        fixture = self._soroban_with_args(
+            '[[args]]\nkind = "u32"\nvalue = 1\nextra = true\n'
+        )
+        report = self.run_validation({"a.toml": fixture})
+        self.assertTrue(
+            any("args[0]" in e and "'extra'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_rejects_a_non_void_arg_missing_its_value(self) -> None:
+        fixture = self._soroban_with_args('[[args]]\nkind = "u32"\n')
+        report = self.run_validation({"a.toml": fixture})
+        self.assertTrue(
+            any("args[0]" in e and "missing its 'value'" in e for e in report.errors),
+            report.errors,
+        )
+
+    def test_accepts_vec_map_nesting_at_the_limit(self) -> None:
+        fixture = self._soroban_with_args(
+            "args = [" + self._nested_vec(validate.MAX_ARG_DEPTH) + "]\n"
+        )
+        report = self.run_validation({"a.toml": fixture})
+        self.assertEqual(report.errors, [])
+
+    def test_rejects_vec_map_nesting_one_level_past_the_limit(self) -> None:
+        for name, builder in (
+            ("vec", self._nested_vec),
+            ("map", self._nested_map),
+        ):
+            with self.subTest(container=name):
+                fixture = self._soroban_with_args(
+                    "args = ["
+                    + builder(validate.MAX_ARG_DEPTH + 1)
+                    + "]\n"
+                )
+                report = self.run_validation({"a.toml": fixture})
+                matching = [
+                    e for e in report.errors if "nested deeper than the limit" in e
+                ]
+                self.assertTrue(matching, report.errors)
+                self.assertIn(str(validate.MAX_ARG_DEPTH), matching[0])
+
+    def test_existing_protocol_28_soroban_fixtures_still_validate(self) -> None:
+        report = validate.validate_directory(REPO_ROOT / "protocol-28")
+        self.assertEqual(report.errors, [])
+
+    def test_soroban_fixture_rejects_unknown_expect_kind(self) -> None:
+        # [expect] is present but its kind is not in SOROBAN_EXPECT_KINDS —
+        # a different branch of validate_soroban_body than the missing-
+        # [expect] case above.
+        bad = VALID_SOROBAN.replace(
+            'kind = "simulation-success"', 'kind = "simulation-timeout"'
+        )
+        report = self.run_validation({"a.toml": bad})
+        errors = [e for e in report.errors if "expect.kind" in e]
+        self.assertEqual(len(errors), 1, report.errors)
+        # The error must name the offending value and enumerate the kinds the
+        # validator does accept, so that neither widening nor narrowing
+        # SOROBAN_EXPECT_KINDS can pass unnoticed.
+        self.assertIn("simulation-timeout", errors[0])
+        for supported in validate.SOROBAN_EXPECT_KINDS:
+            self.assertIn(supported, errors[0])
+
+    def test_soroban_fixture_rejects_missing_source_account(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"\n',
+            "",
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'source_account'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_string_source_account(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"',
+            "source_account = 12345",
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'source_account'" in e and "must be of type str" in e and "int" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_missing_contract_id(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"\n',
+            "",
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'contract_id'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_string_contract_id(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            'contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"',
+            'contract_id = true',
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'contract_id'" in e and "must be of type str" in e and "bool" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_missing_function(self) -> None:
+        bad = VALID_SOROBAN.replace('function = "name"\n', "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'function'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_string_function(self) -> None:
+        bad = VALID_SOROBAN.replace('function = "name"', 'function = ["name"]')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'function'" in e and "must be of type str" in e and "list" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_missing_sequence_number(self) -> None:
+        bad = VALID_SOROBAN.replace("sequence_number = 1\n", "")
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any("missing required field 'sequence_number'" in e for e in report.errors)
+        )
+
+    def test_soroban_fixture_rejects_non_integer_sequence_number(self) -> None:
+        bad = VALID_SOROBAN.replace("sequence_number = 1", 'sequence_number = "1"')
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(
+            any(
+                "'sequence_number'" in e and "must be of type int" in e and "str" in e
+                for e in report.errors
+            ),
+            report.errors,
+        )
+
+    def test_soroban_fixture_rejects_non_table_expect(self) -> None:
+        bad = VALID_SOROBAN.replace(
+            "[expect]\nkind = \"simulation-success\"\n",
+            'expect = "simulation-success"\n',
+        )
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("'expect' must be a table" in e for e in report.errors))
 
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
         bad = VALID_XDR.replace(
@@ -210,6 +2165,1687 @@ method = "get-network"
         )
         report = self.run_validation({"a.toml": good})
         self.assertEqual(report.errors, [])
+
+    def test_main_autodiscovers_protocol_directories_when_no_arguments_passed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "protocol-28/xdr/cap-0083/fixture.toml", VALID_XDR)
+            write(root, "not-a-protocol/other.toml", "invalid toml [[[")
+            fake_file = str(root / "tools" / "validate" / "validate.py")
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(validate, "__file__", fake_file):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = validate.main([])
+            self.assertEqual(code, 0)
+            self.assertEqual(err.getvalue(), "")
+            self.assertIn("1 fixture file(s) valid across 1 root(s)", out.getvalue())
+
+    def test_main_rejects_non_directory_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            file_path = Path(tmp) / "not-a-directory.txt"
+            file_path.write_text("dummy", encoding="utf-8")
+            code, out, err = run_main([str(file_path)])
+        self.assertEqual(code, 1)
+        self.assertIn("not a directory", err)
+        self.assertIn("FAILED: 1 error(s)", err)
+
+    def test_main_rejects_non_existent_root(self) -> None:
+        code, out, err = run_main(["non-existent-root-path-for-test"])
+        self.assertEqual(code, 1)
+        self.assertIn("not a directory", err)
+        self.assertIn("FAILED: 1 error(s)", err)
+
+    def test_default_root_falls_back_to_repository_root_when_no_packs_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            fake_file = repo / "tools" / "validate" / "validate.py"
+            fake_file.parent.mkdir(parents=True)
+            fake_file.touch()
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(validate, "__file__", str(fake_file)):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = validate.main([])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn("0 fixture file(s) valid across 1 root(s)", out.getvalue())
+
+
+class ExpectedBase64KindTests(unittest.TestCase):
+    """expected_base64 belongs to an encode-equals fixture only (F-116, #398).
+
+    canary-xdr's loader accepts "kind", "type" and "value_base64" for every
+    other kind and rejects the whole fixture when it finds another key, so
+    a fixture that carries expected_base64 with, say, kind = "roundtrip"
+    used to pass this validator and be refused by the engine.
+    """
+
+    def fixture(self, kind: str, expected: str | None = "AAAAAA==") -> str:
+        text = VALID_XDR.replace('kind = "decode-success"', f'kind = "{kind}"')
+        if expected is not None:
+            text += f'expected_base64 = "{expected}"\n'
+        return text
+
+    def run_validation(self, contents: str) -> "validate.Report":
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "a.toml", contents)
+            return validate.validate_directory(root)
+
+    def test_every_other_kind_rejects_the_field(self) -> None:
+        for kind in ("roundtrip", "decode-success", "decode-failure"):
+            with self.subTest(kind=kind):
+                report = self.run_validation(self.fixture(kind))
+                self.assertEqual(len(report.errors), 1, report.errors)
+                self.assertIn(
+                    "field 'expected_base64' is only allowed for kind "
+                    f"'encode-equals', not {kind!r}",
+                    report.errors[0],
+                )
+
+    def test_the_error_points_at_the_expected_base64_key(self) -> None:
+        text = self.fixture("roundtrip")
+        report = self.run_validation(text)
+        self.assertEqual(len(report.error_entries), 1, report.errors)
+        self.assertEqual(
+            report.error_entries[0].line, len(text.splitlines()), report.errors
+        )
+
+    def test_an_empty_value_on_another_kind_is_this_error_and_not_a_base64_one(self) -> None:
+        report = self.run_validation(self.fixture("roundtrip", expected=""))
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("only allowed for kind 'encode-equals'", report.errors[0])
+        self.assertNotIn("must not be empty", report.errors[0])
+
+    def test_encode_equals_still_accepts_a_valid_value(self) -> None:
+        report = self.run_validation(self.fixture("encode-equals"))
+        self.assertEqual(report.errors, [])
+
+    def test_encode_equals_still_rejects_an_empty_or_invalid_value(self) -> None:
+        empty = self.run_validation(self.fixture("encode-equals", expected=""))
+        self.assertTrue(
+            any("field 'expected_base64' must not be empty" in e for e in empty.errors),
+            empty.errors,
+        )
+        invalid = self.run_validation(self.fixture("encode-equals", expected="!!!not-base64!!!"))
+        self.assertTrue(
+            any("not valid base64" in e for e in invalid.errors), invalid.errors
+        )
+
+    def test_a_fixture_without_the_field_is_unaffected_for_every_kind(self) -> None:
+        for kind in sorted(validate.XDR_KINDS):
+            with self.subTest(kind=kind):
+                report = self.run_validation(self.fixture(kind, expected=None))
+                if kind == "encode-equals":
+                    # The field is required for this kind: the existing
+                    # missing-field error is unchanged.
+                    self.assertTrue(
+                        any(
+                            "missing required field 'expected_base64'" in e
+                            for e in report.errors
+                        ),
+                        report.errors,
+                    )
+                else:
+                    self.assertEqual(report.errors, [])
+
+    def test_an_unknown_or_missing_kind_reports_only_the_kind_error(self) -> None:
+        unknown = (
+            VALID_XDR.replace('kind = "decode-success"', 'kind = "bogus-kind"')
+            + 'expected_base64 = "AAAAAA=="\n'
+        )
+        report = self.run_validation(unknown)
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("field 'kind' must be one of", report.errors[0])
+
+        missing = (
+            VALID_XDR.replace('kind = "decode-success"\n', "")
+            + 'expected_base64 = "AAAAAA=="\n'
+        )
+        report = self.run_validation(missing)
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("missing required field 'kind'", report.errors[0])
+
+        not_a_string = (
+            VALID_XDR.replace('kind = "decode-success"', "kind = 42")
+            + 'expected_base64 = "AAAAAA=="\n'
+        )
+        report = self.run_validation(not_a_string)
+        self.assertEqual(len(report.errors), 1, report.errors)
+        self.assertIn("field 'kind' must be of type str", report.errors[0])
+
+
+class QuietFlagTests(unittest.TestCase):
+    """`--quiet` suppresses warnings while keeping errors and the summary.
+
+    A missing ``source_reference`` is now an error rather than a warning, so
+    no built-in validator rule currently emits a warning. To keep the flag's
+    suppression path covered, these tests inject a warning into the report
+    returned for the temporary root. Errors are produced by a real invalid
+    fixture, so both halves of the flag's behavior are exercised together.
+    """
+
+    def run_main(self, argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = validate.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def write_error_fixture(self, root: Path) -> None:
+        # Invalid surface -> error only (source_reference is still present).
+        write(root, "error.toml", VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"'))
+
+    def with_injected_warning(self):
+        # Wrap the real validate_directory so the report it returns also carries
+        # a warning, giving --quiet something to suppress.
+        real = validate.validate_directory
+
+        def wrapper(root: Path, *args, **kwargs) -> "validate.Report":
+            report = real(root, *args, **kwargs)
+            report.warning(Path(root) / "injected.toml", "injected warning")
+            return report
+
+        return mock.patch.object(validate, "validate_directory", side_effect=wrapper)
+
+    def test_default_prints_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_error_fixture(root)
+            with self.with_injected_warning():
+                code, out, err = self.run_main([str(root)])
+        self.assertIn("warning:", out)
+        self.assertIn("error:", err)
+        self.assertEqual(code, 1)
+
+    def test_quiet_suppresses_warnings_but_keeps_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_error_fixture(root)
+            with self.with_injected_warning():
+                code, out, err = self.run_main(["--quiet", str(root)])
+        self.assertNotIn("warning:", out)
+        self.assertIn("error:", err)
+        self.assertEqual(code, 1)
+
+    def test_quiet_keeps_ok_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "ok.toml", VALID_XDR)
+            with self.with_injected_warning():
+                code, out, err = self.run_main(["--quiet", str(root)])
+        self.assertNotIn("warning:", out)
+        self.assertIn("OK:", out)
+        self.assertEqual(code, 0)
+
+
+class JsonFormatTests(unittest.TestCase):
+    """`--format json` prints one machine-readable report on stdout (F-023).
+
+    The JSON document is the CLI's contract with automated consumers — CI
+    jobs and tooling — so these tests exercise ``validate.main`` (the entry
+    point such a consumer runs) and parse its stdout the way a pipeline
+    would, rather than calling ``build_json_report`` directly and trusting
+    the printing path to agree with it.
+    """
+
+    def run_json(self, argv: list[str]) -> tuple[int, dict, str, str]:
+        """Run ``validate.main(argv)``; return exit code, parsed document, stdout, stderr."""
+        code, out, err = run_main(argv)
+        return code, json.loads(out), out, err
+
+    def test_valid_run_emits_the_documented_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", VALID_XDR)
+            code, document, out, err = self.run_json(["--format", "json", tmp])
+        self.assertEqual(code, 0)
+        # A machine consumer reads the outcome from stdout alone: the JSON
+        # document is the whole of it, and nothing goes to stderr.
+        self.assertEqual(err, "")
+        self.assertEqual(list(document), ["valid", "errors", "warnings", "summary"])
+        self.assertIs(document["valid"], True)
+        self.assertEqual(document["errors"], [])
+        self.assertEqual(document["warnings"], [])
+        self.assertEqual(
+            document["summary"],
+            {"roots": [tmp], "fixtures": 1, "errors": 0, "warnings": 0},
+        )
+
+    def test_invalid_run_exits_1_and_reports_valid_false(self) -> None:
+        bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            code, document, out, err = self.run_json(["--format", "json", tmp])
+        # `valid` must mirror the exit code, not merely correlate with it.
+        self.assertEqual(code, 1)
+        self.assertIs(document["valid"], False)
+        self.assertEqual(err, "")
+        self.assertTrue(document["errors"])
+        self.assertEqual(document["summary"]["errors"], len(document["errors"]))
+        self.assertEqual(document["summary"]["warnings"], len(document["warnings"]))
+
+    def test_error_diagnostic_carries_path_id_line_and_message(self) -> None:
+        # Negative case called for by the issue: a validation error must come
+        # back as JSON naming the file, the line and the reason, not as prose.
+        bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write(Path(tmp), "a.toml", bad)
+            code, document, out, err = self.run_json(["--format", "json", tmp])
+        self.assertEqual(code, 1)
+        self.assertEqual(len(document["errors"]), 1, document["errors"])
+        diagnostic = document["errors"][0]
+        self.assertEqual(list(diagnostic), ["path", "id", "line", "message"])
+        self.assertEqual(diagnostic["path"], str(path))
+        self.assertEqual(diagnostic["id"], "p28-xdr-cap83-example")
+        # `surface` is the fourth line of VALID_XDR, which opens with a blank line.
+        self.assertEqual(diagnostic["line"], 4)
+        self.assertIn("field 'surface' must be one of", diagnostic["message"])
+        self.assertIn("'wallet'", diagnostic["message"])
+
+    def test_line_is_null_when_the_validator_cannot_locate_it(self) -> None:
+        # A missing field has no line to point at, and the documented contract
+        # is that an unknown line is reported as null rather than guessed.
+        bad = VALID_XDR.replace('type = "StellarValue"\n', "")
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            code, document, out, err = self.run_json(["--format", "json", tmp])
+        self.assertEqual(code, 1)
+        matching = [
+            e for e in document["errors"] if "missing required field 'type'" in e["message"]
+        ]
+        self.assertEqual(len(matching), 1, document["errors"])
+        self.assertIsNone(matching[0]["line"])
+
+    def test_malformed_toml_reports_the_parser_line(self) -> None:
+        # A TOML syntax error is one of the two places a line is genuinely
+        # known, so it must be reported rather than left null.
+        bad = VALID_XDR.replace('surface = "xdr"', "surface = ")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write(Path(tmp), "a.toml", bad)
+            code, document, out, err = self.run_json(["--format", "json", tmp])
+        self.assertEqual(code, 1)
+        self.assertEqual(len(document["errors"]), 1, document["errors"])
+        diagnostic = document["errors"][0]
+        self.assertEqual(diagnostic["path"], str(path))
+        self.assertTrue(diagnostic["message"].startswith("invalid TOML:"), diagnostic)
+        self.assertEqual(diagnostic["line"], 4)
+
+    def test_special_characters_in_a_message_are_escaped_and_round_trip(self) -> None:
+        # The characters that would break a hand-formatted report: a double
+        # quote, a backslash (0x5C) and a newline. TOML and JSON basic strings
+        # share the same escape rules, so json.dumps renders a valid TOML
+        # literal for a value that carries all three.
+        needle = 'bad"quote' + chr(92) + 'slash' + chr(10) + 'nl'
+        bad = VALID_XDR.replace('surface = "xdr"', "surface = " + json.dumps(needle))
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            code, document, out, err = self.run_json(["--format", "json", tmp])
+        self.assertEqual(code, 1)
+        self.assertEqual(err, "")
+        self.assertEqual(len(document["errors"]), 1, document["errors"])
+        message = document["errors"][0]["message"]
+        # The validator renders an offending value with repr(), so the quote
+        # and the backslash both reach the message and the newline becomes the
+        # two characters the repr spells out -- all of which JSON escape again.
+        self.assertTrue(message.endswith("got " + repr(needle)), repr(message))
+        # Escaped on the wire rather than embedded literally -- a bare newline
+        # would end the JSON string early -- so the document text carries
+        # JSON's escaping of the same characters, and json.loads (above) is
+        # what proves the result is still one parseable document.
+        self.assertIn(json.dumps(repr(needle))[1:-1], out)
+
+    def test_quiet_does_not_suppress_warnings_in_the_json_report(self) -> None:
+        # `--quiet` is a text-format convenience; a machine consumer decides
+        # what to do with warnings, so the JSON document always carries them.
+        real = validate.validate_directory
+
+        def wrapper(root: Path, *args, **kwargs) -> "validate.Report":
+            report = real(root, *args, **kwargs)
+            report.warning(Path(root) / "injected.toml", "injected warning")
+            return report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", VALID_XDR)
+            with mock.patch.object(validate, "validate_directory", side_effect=wrapper):
+                code, document, out, err = self.run_json(["--quiet", "--format", "json", tmp])
+        # A warning is not an error: the run still exits 0 with valid true.
+        self.assertEqual(code, 0)
+        self.assertIs(document["valid"], True)
+        self.assertEqual(len(document["warnings"]), 1, document)
+        self.assertEqual(document["warnings"][0]["message"], "injected warning")
+        self.assertEqual(document["warnings"][0]["path"], str(Path(tmp) / "injected.toml"))
+        self.assertEqual(document["summary"]["warnings"], 1)
+        self.assertEqual(err, "")
+
+    def test_summary_counts_every_root_and_fixture(self) -> None:
+        bad = VALID_XDR.replace(
+            'id = "p28-xdr-cap83-example"', 'id = "p28-xdr-cap83-bad"'
+        ).replace('surface = "xdr"', 'surface = "wallet"')
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            write(Path(tmp1), "a.toml", VALID_XDR)
+            write(Path(tmp1), "xdr/b.toml", bad)
+            write(Path(tmp2), "c.toml", VALID_SOROBAN)
+            code, document, out, err = self.run_json(["--format", "json", tmp1, tmp2])
+        self.assertEqual(code, 1)
+        self.assertEqual(document["summary"]["roots"], [tmp1, tmp2])
+        # Both roots are discovered recursively, including the nested file.
+        self.assertEqual(document["summary"]["fixtures"], 3)
+        self.assertEqual(document["summary"]["errors"], 1)
+        self.assertEqual(document["summary"]["errors"], len(document["errors"]))
+
+    def test_non_directory_root_is_reported_in_the_json_document(self) -> None:
+        code, document, out, err = self.run_json(
+            ["--format", "json", "non-existent-root-for-json-test"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIs(document["valid"], False)
+        self.assertEqual(document["summary"]["fixtures"], 0)
+        self.assertEqual([e["message"] for e in document["errors"]], ["not a directory"])
+        self.assertEqual(err, "")
+
+    def test_encoding_is_deterministic_and_matches_the_documented_form(self) -> None:
+        bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            code1, document, out1, err1 = self.run_json(["--format", "json", tmp])
+            code2, _, out2, err2 = self.run_json(["--format", "json", tmp])
+        self.assertEqual((code1, out1), (code2, out2))
+        # Two-space indent and exactly one trailing newline, so two reports can
+        # be diffed and `| jq` sees a complete document.
+        self.assertEqual(out1, json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+        self.assertTrue(out1.endswith("}\n"), out1)
+
+    def test_text_is_still_the_default_format(self) -> None:
+        # `--format json` is opt-in: the existing human-readable output and its
+        # exit code are unchanged when the flag is absent.
+        bad = VALID_XDR.replace('surface = "xdr"', 'surface = "wallet"')
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            code, out, err = run_main([tmp])
+        self.assertEqual(code, 1)
+        self.assertIn("error:", err)
+        self.assertIn("FAILED: 1 error(s)", err)
+        self.assertNotIn("{", out)
+
+    def test_rejects_an_unknown_format(self) -> None:
+        # An unrecognized format must fail loudly rather than silently falling
+        # back to text, which a CI job expecting JSON would misread.
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                validate.main(["--format", "xml", "."])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("invalid choice", stderr.getvalue())
+
+
+class SchemaSyncTests(unittest.TestCase):
+    """schemas/fixture-v1.schema.json must not drift from validate.py.
+
+    The schema is this repository's editor-facing mirror of the validator's
+    rules, but nothing consumes it at run time. ``schema_sync.py`` (standard
+    library only) compares the schema's enums and required-field lists with
+    ``validate.py``'s constants; these tests pin that enforcement so a
+    validator change such as adding a new XDR type or RPC method cannot
+    silently leave the schema stale. See CONTRIBUTING.md#fixture-schema.
+    """
+
+    def setUp(self) -> None:
+        self.schema = schema_sync.load_schema()
+        self.validator = validate
+
+    def test_repository_schema_is_in_sync_with_the_validator(self) -> None:
+        self.assertEqual(schema_sync.check_sync(self.schema, self.validator), [])
+
+    def test_main_reports_ok_for_the_repository(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = schema_sync.main([])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn("OK:", out.getvalue())
+
+    def test_detects_rpc_method_the_schema_lacks(self) -> None:
+        # Simulates validate.py gaining an RPC method the schema does not
+        # list: the schema is unchanged, so dropping a method from its enum
+        # is equivalent to the validator supporting an extra one.
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "rpc")
+        assert block is not None
+        block["properties"]["method"]["enum"].remove("get-latest-ledger")
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("rpc method enum" in e for e in errors), errors)
+        self.assertTrue(any("get-latest-ledger" in e for e in errors), errors)
+
+    def test_detects_rpc_method_the_validator_lacks(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "rpc")
+        assert block is not None
+        block["properties"]["method"]["enum"].append("get-unreleased-method")
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("rpc method enum" in e for e in errors), errors)
+        self.assertTrue(any("get-unreleased-method" in e for e in errors), errors)
+
+    def test_detects_xdr_type_drift(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "xdr")
+        assert block is not None
+        block["properties"]["type"]["enum"].append("TransactionEnvelopeV2")
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("xdr type enum" in e for e in errors), errors)
+        self.assertTrue(any("TransactionEnvelopeV2" in e for e in errors), errors)
+
+    def test_schema_lists_every_validator_xdr_type_in_the_same_order(self) -> None:
+        # F-050: the validator's set and the schema's enum must name exactly
+        # the same five types, in the order decoder.rs lists them.
+        block = schema_sync.surface_block(self.schema, "xdr")
+        assert block is not None
+        self.assertEqual(
+            block["properties"]["type"]["enum"],
+            [
+                "StellarValue",
+                "ContractExecutable",
+                "ScVal",
+                "TransactionEnvelope",
+                "LedgerEntry",
+            ],
+        )
+        self.assertEqual(
+            set(block["properties"]["type"]["enum"]), validate.XDR_TYPES
+        )
+
+    def test_detects_soroban_args_kind_drift(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "soroban")
+        assert block is not None
+        block["properties"]["args"]["items"]["properties"]["kind"]["enum"].remove(
+            "map"
+        )
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("soroban args kind enum" in e for e in errors), errors)
+        self.assertTrue(any("'map'" in e or "map" in e for e in errors), errors)
+
+    def test_detects_soroban_args_field_drift(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "soroban")
+        assert block is not None
+        block["properties"]["args"]["items"]["properties"]["extra"] = {
+            "type": "string"
+        }
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("soroban args fields" in e for e in errors), errors)
+
+    def test_detects_missing_soroban_args_items(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "soroban")
+        assert block is not None
+        del block["properties"]["args"]["items"]
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("soroban args" in e for e in errors), errors)
+
+    def test_detects_missing_required_field(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["required"].remove("source_reference")
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("top-level required fields" in e for e in errors), errors)
+        self.assertTrue(any("source_reference" in e for e in errors), errors)
+
+    def test_reports_a_missing_xdr_conditional_block(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "xdr")
+        assert block is not None
+        block["if"]["properties"]["kind"]["const"] = "decode-success"
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertIn(
+            "xdr kind=encode-equals: schema has no conditional required-field block",
+            errors,
+        )
+
+    def test_reports_a_malformed_nested_schema_node(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["properties"]["required_capabilities"] = []
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("required_capabilities enum" in error for error in errors))
+
+    def test_detects_capability_drift(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["properties"]["required_capabilities"]["items"]["enum"].append(
+            "time-travel"
+        )
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("required_capabilities enum" in e for e in errors), errors)
+
+    def test_detects_a_missing_surface_block(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["allOf"] = [
+            block
+            for block in drift["allOf"]
+            if block["if"]["properties"]["surface"]["const"] != "soroban"
+        ]
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("soroban surface" in e for e in errors), errors)
+
+    def test_detects_a_missing_xdr_surface_block(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["allOf"] = [
+            block
+            for block in drift["allOf"]
+            if block["if"]["properties"]["surface"]["const"] != "xdr"
+        ]
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("xdr surface" in e for e in errors), errors)
+
+    def test_detects_a_missing_rpc_surface_block(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["allOf"] = [
+            block
+            for block in drift["allOf"]
+            if block["if"]["properties"]["surface"]["const"] != "rpc"
+        ]
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("rpc surface" in e for e in errors), errors)
+
+    def test_detects_surface_enum_drift(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        drift["properties"]["surface"]["enum"].append("cli")
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("surface enum" in e for e in errors), errors)
+
+    def test_detects_xdr_kind_drift(self) -> None:
+        drift = copy.deepcopy(self.schema)
+        block = schema_sync.surface_block(drift, "xdr")
+        assert block is not None
+        block["properties"]["kind"]["enum"].append("fuzz-test")
+        errors = schema_sync.check_sync(drift, self.validator)
+        self.assertTrue(any("xdr kind enum" in e for e in errors), errors)
+
+    def test_main_reports_failure_on_schema_validator_drift(self) -> None:
+        with mock.patch.object(
+            schema_sync, "check_sync", return_value=["rpc method enum drift"]
+        ):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = schema_sync.main([])
+        self.assertEqual(code, 1)
+        self.assertIn("error: rpc method enum drift", err.getvalue())
+        self.assertIn("FAILED: 1 schema/validator drift error(s)", err.getvalue())
+
+    def test_main_rejects_unexpected_arguments(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = schema_sync.main(["--unexpected-flag"])
+        self.assertEqual(code, 2)
+        self.assertIn("usage:", err.getvalue())
+
+    def test_validator_module_entry_point_exits_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", VALID_XDR)
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(sys, "argv", [str(VALIDATE_PATH), tmp]):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(SystemExit) as caught:
+                        runpy.run_path(str(VALIDATE_PATH), run_name="__main__")
+        self.assertEqual(caught.exception.code, 0, err.getvalue())
+        self.assertIn("1 fixture file(s) valid", out.getvalue())
+
+    def test_schema_sync_module_entry_point_exits_zero(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", [str(SCHEMA_SYNC_PATH)]):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as caught:
+                    runpy.run_path(str(SCHEMA_SYNC_PATH), run_name="__main__")
+        self.assertEqual(caught.exception.code, 0, err.getvalue())
+        self.assertIn("matches tools/validate/validate.py", out.getvalue())
+
+
+class SourceReferenceFormatTests(unittest.TestCase):
+    """`source_reference` must be a CAP identifier or a pinned https URL (F-025).
+
+    The syntactic rule is also expressed as ``source_reference.pattern`` in
+    schemas/fixture-v1.schema.json; ``SchemaSyncTests`` pins the two together.
+    The rule a regex cannot express, that a GitHub link names a commit or a
+    tag and not a branch, is checked only by ``validate.check_source_reference``.
+    """
+
+    SHA = "9cd703075d87a6ce293752b1532e7b68efe12ae1"
+
+    def problem(self, value: str) -> str | None:
+        return validate.check_source_reference(value)
+
+    def test_accepts_a_cap_identifier(self) -> None:
+        for value in ("CAP-0083", "CAP-0001", "CAP-9999"):
+            self.assertIsNone(self.problem(value), value)
+
+    def test_accepts_documentation_and_standards_urls(self) -> None:
+        for value in (
+            "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork",
+            "https://developers.stellar.org/docs/networks/software-versions#protocol-29",
+            "https://www.rfc-editor.org/rfc/rfc8785",
+            "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5",
+        ):
+            self.assertIsNone(self.problem(value), value)
+
+    def test_accepts_github_links_pinned_to_a_commit_or_a_tag(self) -> None:
+        base = "https://github.com/stellar/stellar-protocol"
+        for value in (
+            f"{base}/blob/{self.SHA}/core/cap-0083.md",
+            f"{base}/blob/{self.SHA}/core/cap-0083.md#L10-L20",
+            f"{base}/tree/{self.SHA}/core",
+            f"{base}/blob/v28.0.1/core/cap-0083.md",
+            f"{base}/blob/28.0/core/cap-0083.md",
+            f"{base}/blob/protocol-28/core/cap-0083.md",
+            f"{base}/blob/core-v21.0.0-rc.1/core/cap-0083.md",
+            f"{base}/releases/tag/v28.0.1",
+            f"{base}/commit/{self.SHA}",
+            f"{base}/issues/1234",
+            f"{base}/pull/1234",
+            f"https://raw.githubusercontent.com/stellar/stellar-protocol/{self.SHA}/core/cap-0083.md",
+            "https://raw.githubusercontent.com/stellar/stellar-protocol/v28.0.1/core/cap-0083.md",
+            "https://raw.githubusercontent.com/stellar/stellar-protocol/refs/tags/v28.0.1/core/cap-0083.md",
+        ):
+            self.assertIsNone(self.problem(value), value)
+
+    def test_rejects_free_text(self) -> None:
+        for value in ("see issue", "TODO", "n/a", "the CAP", "CAP 0083", "CAP-83", "cap-0083"):
+            message = self.problem(value)
+            self.assertIsNotNone(message, value)
+            self.assertIn("CAP identifier", message)
+
+    def test_rejects_relative_links_and_non_https_schemes(self) -> None:
+        for value in (
+            "docs/cap-0083.md",
+            "./cap-0083.md",
+            "../cap-0083.md",
+            "/docs/cap-0083.md",
+            "//github.com/stellar/stellar-protocol/blob/v1/core/cap-0083.md",
+            "ftp://example.com/cap-0083.md",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "mailto:someone@example.com",
+        ):
+            self.assertIsNotNone(self.problem(value), value)
+
+    def test_rejects_plain_http(self) -> None:
+        message = self.problem("http://developers.stellar.org/docs/x")
+        self.assertIsNotNone(message)
+        self.assertIn("https://", message)
+
+    def test_rejects_urls_without_a_host_or_a_path(self) -> None:
+        for value in ("https://", "https:///docs/x", "https://example.com", "https://example.com/"):
+            self.assertIsNotNone(self.problem(value), value)
+        message = self.problem("https://localhost/docs/x")
+        self.assertIsNotNone(message)
+        self.assertIn("host", message)
+
+    def test_rejects_embedded_credentials(self) -> None:
+        for value in (
+            f"https://user:secret@github.com/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md",
+            "https://token@example.com/docs/x",
+        ):
+            message = self.problem(value)
+            self.assertIsNotNone(message, value)
+            self.assertIn("credentials", message)
+
+    def test_url_parser_also_rejects_credentials_after_syntax_acceptance(self) -> None:
+        class AcceptsReference:
+            @staticmethod
+            def fullmatch(value: str) -> bool:
+                return True
+
+        with mock.patch.object(validate, "_SOURCE_REFERENCE_RE", AcceptsReference()):
+            message = self.problem("https://user@example.com/docs/x")
+        self.assertEqual(message, "must not embed credentials (user@host) in the URL")
+
+    def test_rejects_whitespace(self) -> None:
+        for value in (
+            "https://example.com/a b",
+            " https://example.com/docs/x",
+            "https://example.com/docs/x ",
+            "https://example.com/docs/x\n",
+            "https://example.com/\tdocs",
+        ):
+            self.assertIsNotNone(self.problem(value), repr(value))
+
+    def test_rejects_a_github_link_that_follows_a_branch(self) -> None:
+        base = "https://github.com/stellar/stellar-protocol"
+        for ref in ("master", "main", "develop", "HEAD", "latest", "next", "my-branch"):
+            message = self.problem(f"{base}/blob/{ref}/core/cap-0083.md")
+            self.assertIsNotNone(message, ref)
+            self.assertIn(repr(ref), message)
+            self.assertIn("pin", message)
+        self.assertIsNotNone(self.problem(f"{base}/tree/master/core"))
+        self.assertIsNotNone(
+            self.problem("https://raw.githubusercontent.com/stellar/stellar-protocol/master/core/cap-0083.md")
+        )
+        self.assertIsNotNone(
+            self.problem(
+                "https://raw.githubusercontent.com/stellar/stellar-protocol/refs/heads/master/core/cap-0083.md"
+            )
+        )
+
+    def test_github_host_spellings_and_trailing_dot_accepted_when_pinned(self) -> None:
+        """Positive tests: commit-pinned and tag-pinned links on github.com.,
+        WWW.GITHUB.COM. and the raw host with a trailing dot; ordinary hosts (F-121, issue #415).
+        """
+        path = f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"
+        tag_path = "/stellar/stellar-protocol/blob/v28.0.1/core/cap-0083.md"
+        raw_commit_path = f"/stellar/stellar-protocol/{self.SHA}/core/cap-0083.md"
+        raw_tag_path = "/stellar/stellar-protocol/v28.0.1/core/cap-0083.md"
+
+        for base_url in (
+            f"https://github.com.{path}",
+            f"https://github.com.{tag_path}",
+            f"https://WWW.GITHUB.COM.{path}",
+            f"https://WWW.GITHUB.COM.{tag_path}",
+            f"https://raw.githubusercontent.com.{raw_commit_path}",
+            f"https://raw.githubusercontent.com.{raw_tag_path}",
+            "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork",
+            f"https://github.com:443{path}",
+        ):
+            with self.subTest(url=base_url):
+                self.assertIsNone(self.problem(base_url), base_url)
+
+    def test_github_host_spellings_and_malformed_hosts_rejected(self) -> None:
+        """Negative tests: branch refs on trailing dot spellings, malformed hosts,
+        percent, non-ASCII letters, empty labels, only dots (F-121, issue #415).
+        """
+        branch_path = "/stellar/stellar-protocol/blob/master/core/cap-0083.md"
+        raw_branch_path = "/stellar/stellar-protocol/master/core/cap-0083.md"
+
+        # Valid trailing-dot hosts with branch ref must be rejected with the pin message
+        for host, p in (
+            ("github.com.", branch_path),
+            ("WWW.GITHUB.COM.", branch_path),
+            ("www.github.com.", branch_path),
+            ("GITHUB.COM.", branch_path),
+            ("raw.githubusercontent.com.", raw_branch_path),
+        ):
+            with self.subTest(host=host, case="branch_ref"):
+                message = self.problem(f"https://{host}{p}")
+                self.assertIsNotNone(message, host)
+                self.assertIn("pin", message)
+                self.assertIn("branch name", message)
+
+        # Malformed host spellings must be rejected with host-character message naming source_reference
+        malformed_hosts = (
+            "github.com..",
+            "github..com",
+            ".github.com",
+            "git%68ub.com",
+            "github.com\u3002",
+            "g\u00edthub.com",
+            "....",
+            ".",
+        )
+        for host in malformed_hosts:
+            for p in (branch_path, f"/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"):
+                with self.subTest(host=host, path=p, case="malformed"):
+                    message = self.problem(f"https://{host}{p}")
+                    self.assertIsNotNone(message, host)
+                    self.assertIn("source_reference", message)
+                    self.assertIn("host", message)
+
+    def test_rejects_a_short_commit_hash(self) -> None:
+        # Seven characters is ambiguous and can start to collide; the link
+        # must name the full object so it cannot silently change meaning.
+        base = "https://github.com/stellar/stellar-protocol"
+        self.assertIsNotNone(self.problem(f"{base}/blob/9cd7030/core/cap-0083.md"))
+        self.assertIsNotNone(self.problem(f"{base}/blob/{self.SHA.upper()}/core/cap-0083.md"))
+
+    def test_rejects_a_github_repository_root_and_a_ref_less_link(self) -> None:
+        for value in (
+            "https://github.com/stellar/stellar-protocol",
+            "https://github.com/stellar/stellar-protocol/",
+            "https://github.com/stellar",
+            "https://github.com/stellar/stellar-protocol/blob",
+        ):
+            self.assertIsNotNone(self.problem(value), value)
+
+    def test_rejects_a_raw_github_link_without_a_ref_or_file(self) -> None:
+        message = self.problem(
+            "https://raw.githubusercontent.com/stellar/stellar-protocol/master"
+        )
+        self.assertEqual(
+            message,
+            "has no ref and file path; link to a file at a commit or tag",
+        )
+
+    def test_rejects_an_overlong_reference(self) -> None:
+        value = "https://example.com/" + "a" * validate.MAX_SOURCE_REFERENCE_LENGTH
+        message = self.problem(value)
+        self.assertIsNotNone(message)
+        self.assertIn("characters", message)
+
+    def test_source_reference_boundaries_table_driven(self) -> None:
+        """Test source_reference length limits and URL shape rules at exact boundaries (F-123, issue #419)."""
+        self.assertEqual(validate.MAX_SOURCE_REFERENCE_LENGTH, 2048)
+        base = "https://example.com/"
+        h40 = "a" * 40
+        h64 = "b" * 64
+
+        p2047 = base + "x" * (2047 - len(base))
+        p2048 = base + "x" * (2048 - len(base))
+        p2049 = base + "x" * (2049 - len(base))
+
+        rows = [
+            (p2047, None, "2047 characters"),
+            (p2048, None, "2048 characters (exact limit)"),
+            (p2049, "characters", "2049 characters (limit plus one)"),
+            ("https://github.com/o/r", "repository root", "github repository root"),
+            ("https://github.com/o/r/", "repository root", "github repository root trailing slash"),
+            ("https://github.com/o/r/blob", "has no ref after", "github blob without ref"),
+            (f"https://github.com/o/r/blob/{h40}/f.md", None, "github blob 40-hex commit"),
+            (f"https://github.com/o/r/blob/{h64}/f.md", None, "github blob 64-hex commit"),
+            ("https://github.com/o/r/blob/v1.2.3/f.md", None, "github blob version tag"),
+            ("https://github.com/o/r/blob/protocol-28/f.md", None, "github blob tag with prefix"),
+            (f"https://github.com/o/r/tree/{h40}/core", None, "github tree with pinned ref"),
+            ("https://github.com/o/r/blob/master/f.md", "branch name", "github blob branch ref"),
+            ("https://raw.githubusercontent.com/o/r", "has no ref and file path", "raw github without ref and path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}", "has no ref and file path", "raw github without file path"),
+            (f"https://raw.githubusercontent.com/o/r/{h40}/f.md", None, "raw github with 40-hex commit and file path"),
+            ("https://raw.githubusercontent.com/o/r/master/f.md", "branch name", "raw github branch ref"),
+            ("https://raw.githubusercontent.com/o/r/refs/heads/master/f.md", "links to a branch (refs/heads/...)", "raw github refs/heads branch"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/v1.0.0/f.md", None, "raw github refs/tags release tag"),
+            ("https://raw.githubusercontent.com/o/r/refs/tags/master/f.md", "branch name", "raw github refs/tags branch name"),
+            ("https://user@example.com/x", "credentials", "credentials in url"),
+            ("https://example.com/a b", "whitespace", "whitespace inside url"),
+            (" https://example.com/x", "whitespace", "leading whitespace"),
+            ("https://example.com/x ", "whitespace", "trailing whitespace"),
+        ]
+
+        for value, expected_fragment, label in rows:
+            with self.subTest(label=label, value=value[:60] if len(value) > 60 else value):
+                result = self.problem(value)
+                if expected_fragment is None:
+                    self.assertIsNone(result, f"expected {value!r} to be accepted, got: {result}")
+                else:
+                    self.assertIsNotNone(result, f"expected {value!r} to be rejected")
+                    self.assertIn(expected_fragment, result)
+
+    def test_the_error_names_the_field_the_value_and_the_fix(self) -> None:
+        bad = VALID_XDR.replace(
+            'source_reference = "CAP-0083"',
+            'source_reference = "https://github.com/stellar/stellar-protocol/blob/master/core/cap-0083.md"',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            report = validate.validate_directory(Path(tmp))
+        matching = [e for e in report.errors if "source_reference" in e]
+        self.assertEqual(len(matching), 1, report.errors)
+        self.assertIn("'master'", matching[0])
+        self.assertIn("pin the link to a full commit SHA or a release tag", matching[0])
+        self.assertIn("blob/master/core/cap-0083.md", matching[0])
+
+    def test_a_pinned_github_link_passes_end_to_end(self) -> None:
+        good = VALID_XDR.replace(
+            'source_reference = "CAP-0083"',
+            f'source_reference = "https://github.com/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md"',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", good)
+            report = validate.validate_directory(Path(tmp))
+        self.assertEqual(report.errors, [])
+
+    def test_free_text_fails_end_to_end(self) -> None:
+        bad = VALID_XDR.replace('source_reference = "CAP-0083"', 'source_reference = "see issue"')
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "a.toml", bad)
+            report = validate.validate_directory(Path(tmp))
+        self.assertTrue(any("source_reference" in e and "'see issue'" in e for e in report.errors))
+
+    def test_every_shipped_fixture_reference_passes(self) -> None:
+        for path in sorted((REPO_ROOT).glob("protocol-*/**/*.toml")):
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            reference = data.get("source_reference")
+            self.assertIsInstance(reference, str, path)
+            self.assertIsNone(validate.check_source_reference(reference), f"{path}: {reference}")
+
+    def test_the_schema_example_passes_the_validator_rule(self) -> None:
+        schema = schema_sync.load_schema()
+        example = schema["examples"][0]["source_reference"]
+        self.assertIsNone(validate.check_source_reference(example))
+
+    def test_schema_sync_detects_a_drifted_pattern(self) -> None:
+        schema = copy.deepcopy(schema_sync.load_schema())
+        schema["properties"]["source_reference"]["pattern"] = "^https://.+$"
+        errors = schema_sync.check_sync(schema, validate)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("source_reference pattern", errors[0])
+
+    def test_schema_sync_detects_a_missing_pattern(self) -> None:
+        schema = copy.deepcopy(schema_sync.load_schema())
+        del schema["properties"]["source_reference"]["pattern"]
+        errors = schema_sync.check_sync(schema, validate)
+        self.assertEqual(len(errors), 1, errors)
+
+
+class VerificationEvidenceTests(unittest.TestCase):
+    """validate_evidence (F-006, CF-04 sections 3 and 8)."""
+
+    # The clock every record in this class is judged against. It is injected
+    # rather than read from the machine, so the tests never depend on the
+    # date they happen to run on (F-115, issue #397).
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+
+    LIVE = {
+        "verificationVersion": 1,
+        "fixtureId": "p28-rpc-network",
+        "fixtureSha256": "a" * 64,
+        "method": "live-read-only",
+        "checkedAt": "2026-09-28T12:30:00Z",
+        "network": {
+            "name": "testnet",
+            "passphrase": "Test SDF Network ; September 2015",
+            "observedProtocol": 28,
+        },
+        "endpointHost": "soroban-testnet.stellar.org",
+        "verifier": {"name": "stellar-canary", "version": "0.1.1"},
+        "evidenceRef": "evidence/p28-rpc-network.json",
+        "outcome": "matched",
+    }
+    OFFLINE = {
+        "verificationVersion": 1,
+        "fixtureId": "p28-xdr-example",
+        "fixtureSha256": "b" * 64,
+        "method": "structural",
+        "checkedAt": "2026-10-01T00:00:00Z",
+        "verifier": {"name": "validate.py", "version": "1"},
+        "outcome": "matched",
+    }
+
+    def problems(self, **changes) -> list[str]:
+        record = copy.deepcopy(self.LIVE)
+        for key, value in changes.items():
+            if value is _MISSING:
+                record.pop(key, None)
+            else:
+                record[key] = value
+        return validate.validate_evidence(record, now=self.NOW)
+
+    def test_valid_live_and_offline_records_pass(self) -> None:
+        self.assertEqual(validate.validate_evidence(self.LIVE, now=self.NOW), [])
+        self.assertEqual(validate.validate_evidence(self.OFFLINE, now=self.NOW), [])
+
+    def test_offline_methods_may_carry_null_network_fields(self) -> None:
+        record = copy.deepcopy(self.OFFLINE)
+        record.update(
+            method="source-checked", network=None, endpointHost=None, evidenceRef=None
+        )
+        self.assertEqual(validate.validate_evidence(record, now=self.NOW), [])
+
+    def test_a_record_must_be_an_object(self) -> None:
+        for bad in ([], "text", 7, None):
+            self.assertTrue(validate.validate_evidence(bad))
+
+    def test_each_mandatory_field_is_required(self) -> None:
+        for name in validate.EVIDENCE_REQUIRED_FIELDS:
+            with self.subTest(name):
+                found = self.problems(**{name: _MISSING})
+                self.assertTrue(any(name in p for p in found), found)
+
+    def test_unknown_fields_are_rejected(self) -> None:
+        found = self.problems(notes="free text")
+        self.assertTrue(any("unknown field 'notes'" in p for p in found), found)
+
+    def test_unknown_fields_in_nested_objects_are_rejected(self) -> None:
+        verifier = dict(self.LIVE["verifier"], vendor="x")
+        self.assertTrue(any("verifier" in p for p in self.problems(verifier=verifier)))
+        network = dict(self.LIVE["network"], chainId=1)
+        self.assertTrue(any("network" in p for p in self.problems(network=network)))
+
+    def test_version_must_be_the_integer_one(self) -> None:
+        for bad in (2, "1", True, 1.0, None):
+            with self.subTest(bad):
+                self.assertTrue(self.problems(verificationVersion=bad))
+
+    def test_fixture_hash_must_be_64_lowercase_hex(self) -> None:
+        for bad in ("A" * 64, "a" * 63, "g" * 64, "", 5):
+            with self.subTest(bad):
+                self.assertTrue(self.problems(fixtureSha256=bad))
+
+    def test_method_and_outcome_are_closed_sets(self) -> None:
+        self.assertTrue(self.problems(method="unknown"))
+        self.assertTrue(self.problems(method="live"))
+        self.assertTrue(self.problems(outcome="passed"))
+
+    def test_checked_at_must_be_a_utc_instant(self) -> None:
+        for good in ("2026-09-28T12:00:00Z", "2026-09-28T12:00:00.123Z"):
+            self.assertEqual(self.problems(checkedAt=good), [], good)
+        for bad in (
+            "2026-09-28",
+            "2026-09-28T12:00:00",
+            "2026-09-28T12:00:00+00:00",
+            "2026-09-28T12:00:00+01:00",
+            "2026-13-40T12:00:00Z",
+            "2026-09-28T25:00:00Z",
+            "yesterday",
+            20260928,
+        ):
+            with self.subTest(bad):
+                self.assertTrue(self.problems(checkedAt=bad))
+        self.assertIn(
+            "checkedAt must be an RFC 3339 UTC instant such as 2026-09-28T12:00:00Z",
+            self.problems(checkedAt="yesterday"),
+        )
+        self.assertIn(
+            "is not a real date and time",
+            self.problems(checkedAt="2026-13-40T12:00:00Z")[0],
+        )
+
+    def test_invalid_evidence_fields_report_specific_diagnostics(self) -> None:
+        problems = self.problems(
+            fixtureId="",
+            verifier="not an object",
+            network="testnet",
+            endpointHost=42,
+            evidenceRef="",
+        )
+        for message in (
+            "fixtureId must be a non-empty string",
+            "verifier must be an object with name and version",
+            "network must be an object or null",
+            "endpointHost must be a host name only",
+            "evidenceRef must be a non-empty string or null",
+        ):
+            self.assertTrue(any(message in problem for problem in problems), problems)
+
+        problems = self.problems(verifier={}, network={"passphrase": "p", "observedProtocol": 28})
+        self.assertIn("verifier.name must be a non-empty string", problems)
+        self.assertIn("verifier.version must be a non-empty string", problems)
+        self.assertIn("network.name must be a non-empty string", problems)
+
+    def test_live_record_without_network_fails(self) -> None:
+        for method in validate.EVIDENCE_LIVE_METHODS:
+            with self.subTest(method):
+                found = self.problems(method=method, network=_MISSING)
+                self.assertTrue(any("requires a network object" in p for p in found), found)
+                found = self.problems(method=method, network=None)
+                self.assertTrue(any("requires a network object" in p for p in found), found)
+
+    def test_live_record_without_passphrase_or_observed_protocol_fails(self) -> None:
+        no_passphrase = {"name": "testnet", "observedProtocol": 28}
+        found = self.problems(network=no_passphrase)
+        self.assertTrue(any("network.passphrase" in p for p in found), found)
+        no_protocol = {"name": "testnet", "passphrase": "Test SDF Network ; September 2015"}
+        found = self.problems(network=no_protocol)
+        self.assertTrue(any("network.observedProtocol" in p for p in found), found)
+
+    def test_observed_protocol_must_be_a_non_negative_integer(self) -> None:
+        for bad in (-1, "28", 28.5, True, None):
+            network = dict(self.LIVE["network"], observedProtocol=bad)
+            with self.subTest(bad):
+                self.assertTrue(self.problems(network=network))
+
+    def test_live_record_needs_endpoint_host_and_evidence_ref(self) -> None:
+        self.assertTrue(any("endpointHost" in p for p in self.problems(endpointHost=_MISSING)))
+        self.assertTrue(any("evidenceRef" in p for p in self.problems(evidenceRef=_MISSING)))
+        self.assertTrue(any("evidenceRef" in p for p in self.problems(evidenceRef=None)))
+
+    def test_endpoint_host_must_be_a_bare_host_name(self) -> None:
+        for bad in (
+            "https://rpc.example.org",
+            "rpc.example.org:443",
+            "rpc.example.org/path",
+            "rpc.example.org?key=1",
+            "user@rpc.example.org",
+            "rpc example.org",
+            "",
+        ):
+            with self.subTest(bad):
+                self.assertTrue(self.problems(endpointHost=bad))
+
+    def test_evidence_ref_must_stay_inside_the_repository(self) -> None:
+        for bad in ("/etc/passwd", "../outside.json", "a/../b.json", "a\\b.json", "a//b.json"):
+            with self.subTest(bad):
+                self.assertTrue(self.problems(evidenceRef=bad))
+
+    def test_validator_agrees_with_the_json_schema(self) -> None:
+        schema_path = REPO_ROOT / "schemas" / "verification-v1.schema.json"
+        schema = __import__("json").loads(schema_path.read_text(encoding="utf-8"))
+        # jsonschema_lite has no `allOf`; the conditional live-method rules it
+        # holds are asserted directly in the tests above.
+        schema.pop("allOf", None)
+        schema["properties"]["checkedAt"].pop("format", None)
+        lite_spec = importlib.util.spec_from_file_location(
+            "jsonschema_lite_for_evidence",
+            REPO_ROOT / "tools" / "validate" / "jsonschema_lite.py",
+        )
+        lite = importlib.util.module_from_spec(lite_spec)
+        assert lite_spec.loader is not None
+        lite_spec.loader.exec_module(lite)
+        cases = [
+            self.LIVE,
+            self.OFFLINE,
+            dict(self.LIVE, notes="x"),
+            dict(self.LIVE, fixtureSha256="short"),
+            dict(self.LIVE, method="unknown"),
+            dict(self.LIVE, verificationVersion=2),
+            {k: v for k, v in self.LIVE.items() if k != "outcome"},
+            dict(self.LIVE, endpointHost="https://x.example"),
+        ]
+        for record in cases:
+            with self.subTest(record=record.get("fixtureId"), keys=len(record)):
+                # The validator is at least as strict as the schema: whatever
+                # the schema rejects, it rejects too.
+                if lite.validate(record, schema):
+                    self.assertTrue(validate.validate_evidence(record, now=self.NOW))
+                if not validate.validate_evidence(record, now=self.NOW):
+                    self.assertEqual(lite.validate(record, schema), [])
+
+
+class FutureCheckedAtTests(unittest.TestCase):
+    """A verification record cannot be dated in the future (F-115, #397).
+
+    A verification is made by a person or a scheduled job that actually
+    ran the step (CF-04 section 3), so a ``checkedAt`` in the future
+    describes a step that has not happened yet. The freshness states of
+    CF-04 section 4 are derived from ``checkedAt``, so a forward-dated
+    record would look "verified" for years.
+    """
+
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+
+    def record(self, checked_at: str) -> dict:
+        return {
+            "verificationVersion": 1,
+            "fixtureId": "p28-xdr-example",
+            "fixtureSha256": "0" * 64,
+            "method": "structural",
+            "checkedAt": checked_at,
+            "verifier": {"name": "s", "version": "1"},
+            "outcome": "matched",
+        }
+
+    def problems(self, checked_at: str) -> list[str]:
+        """The problems of one record, judged against the injected clock."""
+        return validate.validate_evidence(self.record(checked_at), now=self.NOW)
+
+    def test_the_table_of_accepted_and_rejected_instants(self) -> None:
+        cases = [
+            # (checkedAt, accepted?)
+            ("2026-10-21T10:00:00Z", True),  # exactly now
+            ("2026-10-21T10:05:00Z", True),  # now + the whole tolerance
+            ("2026-10-21T10:05:01Z", False),  # now + the tolerance + 1 second
+            ("2026-10-21T10:05:00.5Z", False),  # a fraction past the tolerance
+            ("2099-01-01T00:00:00Z", False),  # a mistyped year
+            ("2026-10-21T09:59:59.9Z", True),  # a fraction before now
+            ("2026-10-21T09:59:59Z", True),  # a second before now
+            ("2000-01-01T00:00:00Z", True),  # the CF-04 contract example
+        ]
+        for checked_at, accepted in cases:
+            with self.subTest(checkedAt=checked_at):
+                problems = self.problems(checked_at)
+                if accepted:
+                    self.assertEqual(problems, [], checked_at)
+                else:
+                    self.assertEqual(len(problems), 1, problems)
+                    self.assertIn("is later than the current time", problems[0])
+                    self.assertIn("allowed clock skew 5 minutes", problems[0])
+
+    def test_the_message_names_the_field_the_value_and_the_clock(self) -> None:
+        problems = self.problems("2099-01-01T00:00:00Z")
+        self.assertEqual(
+            problems,
+            [
+                "checkedAt '2099-01-01T00:00:00Z' is later than the current time "
+                "2026-10-21T10:00:00Z (allowed clock skew 5 minutes)"
+            ],
+        )
+
+    def test_fractional_seconds_beyond_microseconds_are_handled(self) -> None:
+        # Nine digits of fraction: the extra digits are truncated downwards,
+        # so the comparison errs on the side of accepting.
+        self.assertEqual(self.problems("2026-10-21T09:59:59.123456789Z"), [])
+        problems = self.problems("2026-10-21T10:05:00.123456789Z")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is later than the current time", problems[0])
+
+    def test_a_malformed_checked_at_gets_only_the_format_message(self) -> None:
+        for bad in (
+            "2026-10-21",  # a date, not an instant
+            "yesterday",
+            "2026-10-21T23:59:60Z",  # a leap second
+            "2026-13-40T10:00:00Z",  # not a real date
+        ):
+            with self.subTest(bad=bad):
+                problems = self.problems(bad)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertNotIn("is later than the current time", problems[0])
+
+    def test_a_naive_now_is_refused(self) -> None:
+        naive = datetime(2026, 10, 21, 10, 0, 0)
+        with self.assertRaises(ValueError):
+            validate.validate_evidence(
+                self.record("2026-10-21T10:00:00Z"), now=naive
+            )
+
+    def test_the_default_clock_accepts_the_past_and_rejects_the_far_future(self) -> None:
+        # The only test here that reads the real clock: the default path
+        # (now=None) must accept an obviously past date and reject an
+        # obviously future one.
+        past = validate.validate_evidence(
+            self.record("2000-01-01T00:00:00Z"), now=None
+        )
+        self.assertEqual(past, [])
+        problems = validate.validate_evidence(
+            self.record("2999-01-01T00:00:00Z"), now=None
+        )
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is later than the current time", problems[0])
+
+    def test_the_file_helper_judges_the_record_against_the_given_instant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "record.json"
+            path.write_text(
+                json.dumps(self.record("2099-01-01T00:00:00Z")), encoding="utf-8"
+            )
+            report = validate.Report()
+            self.assertIsNone(
+                validate.validate_evidence_file(path, report, now=self.NOW)
+            )
+            self.assertTrue(
+                any("is later than the current time" in e for e in report.errors),
+                report.errors,
+            )
+            # The same file is fine when the record is not in the future.
+            later = datetime(2100, 1, 1, tzinfo=timezone.utc)
+            report = validate.Report()
+            self.assertIsNotNone(
+                validate.validate_evidence_file(path, report, now=later)
+            )
+            self.assertEqual(report.errors, [])
+
+
+class EvidenceCommandLineTests(unittest.TestCase):
+    """--evidence on the command line: files, directories and fixture checks."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        pack = self.root / "protocol-28"
+        pack.mkdir()
+        self.fixture = pack / "p28-xdr-example.toml"
+        self.fixture.write_text(VALID_XDR, encoding="utf-8", newline="\n")
+        self.fixture_id = tomllib.loads(VALID_XDR)["id"]
+        self.sha = __import__("hashlib").sha256(self.fixture.read_bytes()).hexdigest()
+        self.evidence = self.root / "evidence"
+        self.evidence.mkdir()
+
+    def record(self, **changes) -> dict:
+        data = dict(VerificationEvidenceTests.OFFLINE)
+        data.update(fixtureId=self.fixture_id, fixtureSha256=self.sha)
+        # A date in the past, so these command-line tests do not depend on
+        # the date they happen to run on: the validator rejects a record
+        # whose checkedAt is in the future (F-115).
+        data.update(checkedAt="2000-01-01T00:00:00Z")
+        data.update(changes)
+        return data
+
+    def write(self, name: str, data) -> Path:
+        path = self.evidence / name
+        path.write_text(__import__("json").dumps(data), encoding="utf-8")
+        return path
+
+    def run_main(self, *args: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = validate.main([str(self.root / "protocol-28"), *args])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_valid_evidence_directory_passes(self) -> None:
+        self.write("a.json", self.record())
+        code, out, err = self.run_main("--evidence", str(self.evidence))
+        self.assertEqual(code, 0, err)
+        self.assertIn("1 evidence record(s) valid", out)
+
+    def test_json_format_validates_evidence_like_text_mode(self) -> None:
+        valid_path = self.write("valid.json", self.record())
+        invalid_path = self.write("invalid.json", self.record(method="live-read-only"))
+        missing_path = self.evidence / "missing.json"
+
+        cases = ((valid_path, True), (invalid_path, False), (missing_path, False))
+        for evidence_path, expected_valid in cases:
+            with self.subTest(path=evidence_path.name):
+                json_code, json_out, json_err = self.run_main(
+                    "--evidence", str(evidence_path), "--format", "json"
+                )
+                document = json.loads(json_out)
+                text_code, _, _ = self.run_main("--evidence", str(evidence_path))
+                self.assertEqual(json_err, "")
+                self.assertEqual(json_code, text_code)
+                self.assertEqual(document["valid"], expected_valid)
+                self.assertEqual(document["valid"], json_code == 0)
+                if not expected_valid:
+                    self.assertTrue(document["errors"])
+                    self.assertTrue(
+                        any(str(evidence_path) in error["path"] for error in document["errors"])
+                    )
+
+    def test_an_invalid_record_fails_with_its_path(self) -> None:
+        path = self.write("bad.json", self.record(method="live-read-only"))
+        code, _, err = self.run_main("--evidence", str(path))
+        self.assertEqual(code, 1)
+        self.assertIn("bad.json", err)
+        self.assertIn("requires a network object", err)
+
+    def test_a_future_record_fails_and_only_it_is_named(self) -> None:
+        # Both records are judged against the same instant, read once for the
+        # run, so the past one is valid and only the future one is reported.
+        self.write("past.json", self.record(checkedAt="2000-01-01T00:00:00Z"))
+        self.write("future.json", self.record(checkedAt="2999-01-01T00:00:00Z"))
+        code, out, err = self.run_main("--evidence", str(self.evidence))
+        self.assertEqual(code, 1)
+        self.assertIn("future.json", err)
+        self.assertNotIn("past.json", err)
+        self.assertIn("is later than the current time", err)
+
+    def test_unknown_fixture_id_fails(self) -> None:
+        path = self.write("ghost.json", self.record(fixtureId="p28-xdr-ghost"))
+        code, _, err = self.run_main("--evidence", str(path))
+        self.assertEqual(code, 1)
+        self.assertIn("does not match any fixture", err)
+
+    def test_stale_fixture_hash_fails(self) -> None:
+        path = self.write("old.json", self.record(fixtureSha256="c" * 64))
+        code, _, err = self.run_main("--evidence", str(path))
+        self.assertEqual(code, 1)
+        self.assertIn("earlier version", err)
+
+    def test_malformed_json_and_missing_path_fail(self) -> None:
+        broken = self.evidence / "broken.json"
+        broken.write_text("{not json", encoding="utf-8")
+        code, _, err = self.run_main("--evidence", str(broken))
+        self.assertEqual(code, 1)
+        self.assertIn("not valid JSON", err)
+        code, _, err = self.run_main("--evidence", str(self.root / "absent"))
+        self.assertEqual(code, 1)
+        self.assertIn("does not exist", err)
+
+    def test_evidence_read_error_is_reported(self) -> None:
+        unreadable = self.evidence / "directory.json"
+        unreadable.mkdir()
+        report = validate.Report()
+        self.assertIsNone(validate.validate_evidence_file(unreadable, report))
+        self.assertTrue(
+            any("cannot read the evidence file" in error for error in report.errors),
+            report.errors,
+        )
+
+    def test_unloadable_fixtures_are_ignored_when_hashing_evidence(self) -> None:
+        invalid = self.root / "protocol-28" / "broken.toml"
+        invalid.write_text("id = [", encoding="utf-8")
+        hashes = validate.fixture_hashes([self.root / "protocol-28"])
+        self.assertEqual(set(hashes), {self.fixture_id})
+
+    def test_evidence_file_with_an_invisible_character_fails(self) -> None:
+        data = self.record()
+        data["verifier"] = {"name": "canary\u200b", "version": "1.0.0"}
+        path = self.evidence / "unsafe.json"
+        # ensure_ascii=False writes the actual invisible character to disk, so
+        # the validator has to scan the decoded text rather than JSON escapes.
+        path.write_text(
+            __import__("json").dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+        code, _, err = self.run_main("--evidence", str(path))
+        self.assertEqual(code, 1)
+        self.assertIn("unsafe.json", err)
+        self.assertIn("line 1", err)
+        self.assertIn("U+200B", err)
+
+    def test_without_the_flag_nothing_changes(self) -> None:
+        self.write("bad.json", {"verificationVersion": 9})
+        code, out, _ = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertNotIn("evidence", out)
+
+
+class FileTextSafetyTests(unittest.TestCase):
+    """F-048: reject invisible and control characters in fixture text."""
+
+    def run_validation(self, contents: str | bytes, name: str = "a.toml"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(contents, bytes):
+                path.write_bytes(contents)
+            else:
+                path.write_text(contents, encoding="utf-8")
+            return validate.validate_directory(root)
+
+    def test_find_unsafe_characters_reports_every_offender_with_location(self) -> None:
+        text = "a\u202eb\u200bc\x00d\u0085e\ufefff"
+        found = validate.find_unsafe_characters(text)
+        self.assertEqual(
+            [(item.codepoint, item.line, item.column) for item in found],
+            [
+                (0x202E, 1, 2),
+                (0x200B, 1, 4),
+                (0x0000, 1, 6),
+                (0x0085, 1, 8),
+                (0xFEFF, 1, 10),
+            ],
+        )
+
+    def test_allowed_whitespace_and_leading_bom_are_not_reported(self) -> None:
+        self.assertEqual(
+            validate.find_unsafe_characters("\ufeffid = 1\n\t\r\n"), []
+        )
+
+    def test_every_bidirectional_control_is_reported(self) -> None:
+        codepoints = list(range(0x202A, 0x202F)) + list(range(0x2066, 0x206A))
+        for codepoint in codepoints:
+            with self.subTest(codepoint=hex(codepoint)):
+                found = validate.find_unsafe_characters(f"x{chr(codepoint)}y")
+                self.assertEqual([item.codepoint for item in found], [codepoint])
+
+    def test_zero_width_and_format_characters_are_reported(self) -> None:
+        for character in ("\u200b", "\u200c", "\u200d", "\u2060", "\u00ad", "\u061c"):
+            with self.subTest(codepoint=hex(ord(character))):
+                found = validate.find_unsafe_characters(f"a{character}b")
+                self.assertEqual([item.codepoint for item in found], [ord(character)])
+
+    def test_control_characters_are_rejected_except_allowed_whitespace(self) -> None:
+        for codepoint in (0x00, 0x07, 0x1F, 0x7F, 0x80, 0x85, 0x9F):
+            with self.subTest(codepoint=hex(codepoint)):
+                found = validate.find_unsafe_characters(f"a{chr(codepoint)}b")
+                self.assertEqual([item.codepoint for item in found], [codepoint])
+        self.assertEqual(validate.find_unsafe_characters("\t\n\r"), [])
+
+    def test_bom_is_only_allowed_as_the_first_character(self) -> None:
+        self.assertEqual(validate.find_unsafe_characters("\ufeffid = 1\n"), [])
+        found = validate.find_unsafe_characters(" \ufeff")
+        self.assertEqual([(item.codepoint, item.line, item.column) for item in found], [(0xFEFF, 1, 2)])
+
+    def test_fixture_with_each_forbidden_class_names_file_line_column_and_codepoint(self) -> None:
+        cases = {
+            "\u202e": "U+202E",
+            "\u2066": "U+2066",
+            "\u200b": "U+200B",
+            "\x00": "U+0000",
+        }
+        for character, codepoint in cases.items():
+            with self.subTest(codepoint=codepoint):
+                fixture = VALID_XDR.replace(
+                    'description = "example"', f'description = "ex{character}ample"'
+                )
+                report = self.run_validation(fixture)
+                self.assertFalse(report.ok)
+                matching = [error for error in report.errors if codepoint in error]
+                self.assertTrue(matching, report.errors)
+                message = matching[0]
+                self.assertIn("a.toml", message)
+                self.assertIn("line 6", message)
+                self.assertIn("column 18", message)
+
+    def test_forbidden_character_in_a_comment_fails(self) -> None:
+        fixture = VALID_XDR.replace(
+            'description = "example"', '# note \u200b\ndescription = "example"'
+        )
+        report = self.run_validation(fixture)
+        self.assertTrue(any("U+200B" in error for error in report.errors), report.errors)
+        self.assertTrue(any("line 6" in error for error in report.errors), report.errors)
+
+    def test_bom_in_the_middle_of_a_value_fails(self) -> None:
+        fixture = VALID_XDR.replace(
+            'description = "example"', 'description = "ex\ufeffample"'
+        )
+        report = self.run_validation(fixture)
+        self.assertTrue(any("U+FEFF" in error for error in report.errors), report.errors)
+
+    def test_accented_and_non_latin_text_is_still_valid(self) -> None:
+        fixture = "# café 日本語 — naïve\n" + VALID_XDR.replace(
+            'description = "example"', 'description = "café 日本語 naïve"'
+        )
+        report = self.run_validation(fixture)
+        self.assertEqual(report.errors, [])
+
+    def test_invalid_utf8_still_reports_a_read_error(self) -> None:
+        report = self.run_validation(b'id = "\xff\xfe"\n')
+        self.assertTrue(any("UTF-8" in error for error in report.errors), report.errors)
+
+
+class PortableFixtureNameTests(unittest.TestCase):
+    """F-049: reject path names Windows cannot create."""
+
+    def run_validation(self, name: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, name, VALID_XDR)
+            return validate.validate_directory(root)
+
+    def test_windows_reserved_device_names_are_rejected(self) -> None:
+        for name in (
+            "con.toml",
+            "NUL",
+            "Aux.toml",
+            "com1.toml",
+            "lpt9.toml",
+            "aux.v2.toml",
+            "xdr/con/a.toml",
+            "NUL/a.toml",
+        ):
+            with self.subTest(name=name):
+                report = self.run_validation(name)
+                joined = "\n".join(report.errors)
+                self.assertIn("non-portable file name", joined)
+                self.assertIn("device name", joined)
+
+    def test_trailing_dot_or_space_and_forbidden_characters_are_rejected(self) -> None:
+        for name in (
+            "bad./a.toml",
+            "bad /a.toml",
+            "xdr/a:b.toml",
+            "xdr/a?.toml",
+            "xdr/a*.toml",
+            "xdr/a<b.toml",
+            "xdr/a>b.toml",
+            'xdr/a"b.toml',
+            "xdr/a|b.toml",
+            "xdr/payload?.bin",
+        ):
+            with self.subTest(name=name):
+                report = self.run_validation(name)
+                self.assertTrue(
+                    any("non-portable file name" in error for error in report.errors),
+                    report.errors,
+                )
+
+    def test_portable_names_and_unicode_lookalikes_are_accepted(self) -> None:
+        for name in (
+            "console.toml",
+            "p28-xdr-con.toml",
+            "lpt10.toml",
+            "\u0421ON.toml",  # Cyrillic ES, not an ASCII C
+        ):
+            with self.subTest(name=name):
+                report = self.run_validation(name)
+                self.assertEqual(report.errors, [])
+
+
+class FixtureFileReadingTests(unittest.TestCase):
+    """F-112: fixtures are read from bytes, like the engine reads them.
+
+    No newline translation (a lone carriage return must reach the TOML parser
+    and fail there with a line number) and exactly one leading UTF-8 BOM is
+    accepted, matching the engine. Every test writes raw bytes to a
+    temporary directory.
+    """
+
+    @staticmethod
+    def run_validation(contents: bytes) -> validate.Report:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.toml").write_bytes(contents)
+            return validate.validate_directory(root)
+
+    def test_ordinary_lf_fixture_is_unchanged(self) -> None:
+        # Control: the same file without a BOM still validates, so the BOM
+        # test below proves only the BOM handling changed.
+        report = self.run_validation(VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_one_leading_utf8_bom_is_accepted(self) -> None:
+        report = self.run_validation(b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_a_second_bom_is_rejected_as_invalid_toml(self) -> None:
+        report = self.run_validation(
+            b"\xef\xbb\xbf\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        )
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        self.assertTrue(any("line 1" in error for error in matching), matching)
+
+    def test_lone_carriage_return_fails_with_a_toml_error_and_line_number(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r").encode("utf-8"))
+        self.assertFalse(report.ok)
+        matching = [error for error in report.errors if "invalid TOML" in error]
+        self.assertTrue(matching, report.errors)
+        # Negative: the failure is the TOML parser's complaint about the
+        # newline, not a decoding error.
+        self.assertFalse(
+            any("not valid UTF-8" in error for error in report.errors), report.errors
+        )
+        self.assertTrue(any("line " in error for error in matching), matching)
+        # The structured diagnostic carries the same line number.
+        entries = [
+            entry for entry in report.error_entries if "invalid TOML" in entry.message
+        ]
+        self.assertTrue(all(isinstance(entry.line, int) for entry in entries), entries)
+
+    def test_crlf_line_endings_are_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.replace("\n", "\r\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_missing_final_newline_is_accepted(self) -> None:
+        report = self.run_validation(VALID_XDR.rstrip("\n").encode("utf-8"))
+        self.assertTrue(report.ok, report.errors)
+
+    def test_field_line_reports_the_same_line_the_parser_saw(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.toml"
+            path.write_bytes(contents)
+            # VALID_XDR opens with an empty line, so `id` is line 2 whether or
+            # not the BOM is present -- the BOM must not shift it to line 3.
+            self.assertEqual(validate._field_line(path, "id"), 2)
+
+    def test_type_error_on_a_bom_file_still_points_at_the_right_line(self) -> None:
+        contents = b"\xef\xbb\xbf" + VALID_XDR.replace(
+            "protocol = 28", 'protocol = "28"'
+        ).encode("utf-8")
+        report = self.run_validation(contents)
+        matching = [
+            entry
+            for entry in report.error_entries
+            if "'protocol' must be of type int" in entry.message
+        ]
+        self.assertTrue(matching, report.errors)
+        # `protocol` is the third line of VALID_XDR; the BOM occupies part of
+        # line 1 and must not change the line _field_line attributes to the
+        # diagnostic (the machine-readable view; text format omits it).
+        self.assertEqual(matching[0].line, 3)
+
+
+_MISSING = object()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+id = "p29-rpc-network-mismatch"
+protocol = 29
+surface = "rpc"
+category = "protocol-mismatch"
+description = "A Protocol 28 target observes Protocol 29 from get-version-info and must report a mismatch."
+source_reference = "https://developers.stellar.org/docs/data/rpc/api-reference/methods/getVersionInfo"
+
+method = "get-version-info"
+
+[[assert]]
+kind = "field-equals"
+field = "protocolVersion"
+value = 29

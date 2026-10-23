@@ -1,0 +1,49 @@
+# Protocol 28 / TransactionEnvelope: a fee-bump envelope with a truncated inner transaction is rejected.
+#
+# Complements p28-xdr-transaction-envelope-fee-bump-roundtrip.toml: a
+# decoder that accepts truncated input is as much of a compatibility break
+# as one that rejects valid input. The fee-bump arm nests a whole v1
+# envelope inside the outer one, so a decoder that stops at the end of
+# the outer fields, or that treats a missing inner transaction as an
+# empty one, would accept a value the protocol cannot produce.
+#
+# Malformation rule (documented, deterministic): this value_base64 is
+# the first 130 bytes of the 328-byte crate-produced encoding in
+# p28-xdr-transaction-envelope-fee-bump-roundtrip.toml — the outer
+# envelope discriminant, the fee source, the fee, the inner union's
+# discriminant, the inner transaction's source account, fee, sequence
+# number, preconditions, memo and operation list, the inner operation's
+# body discriminant, and the first 6 bytes of the 32-byte destination
+# account key of the inner payment operation. The cut therefore falls
+# inside the inner transaction: the rest of that key, the inner payment's
+# asset and amount, the inner transaction's extension, the inner
+# transaction's signature list, the fee-bump extension and the outer
+# signature list are all missing.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official
+# `stellar-xdr` 28.0.1 crate (features base64 and alloc, the crate
+# version Protocol-Canary's canary-xdr pins for Protocol 28; rustc 1.99.1
+# (58cf8f9c3 2026-10-13)): TransactionEnvelope::from_xdr_base64 returns
+# Err ("failed to fill whole buffer") for this input, while the
+# unmodified 328-byte encoding it was cut from decodes and round-trips
+# successfully with the same crate. The rejection is the truncation
+# itself; nothing here is an unrecognised discriminant.
+#
+# The source value was built by a program using the pinned crate, with
+# the expression recorded in the roundtrip fixture's header; the
+# truncation above is the only mutation. Every byte is a synthetic
+# structural value, not a capture of a real network object. Nothing here
+# was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x
+
+id = "p28-xdr-transaction-envelope-fee-bump-decode-failure"
+protocol = 28
+surface = "xdr"
+category = "transaction-envelope"
+description = "A fee-bump `TransactionEnvelope` whose inner transaction is truncated is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x"
+
+type = "TransactionEnvelope"
+kind = "decode-failure"
+value_base64 = "AAAABQAAAADMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzAAAAAAAAw1AAAAAAgAAAACZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmQABhqAAAAAAAEWzUgAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAKqqqqqqqg=="

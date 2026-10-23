@@ -1,0 +1,136 @@
+# Contributing
+
+## Adding a fixture
+
+A fixture is accepted only if a reviewer can answer all of the following
+from the fixture file and its header comment alone, without running a
+script:
+
+1. What Stellar behavior does this test?
+2. Why is that behavior important?
+3. What protocol/CAP introduced it?
+4. What is the expected result, and where does that expectation come from?
+5. Is the test deterministic?
+
+To add one:
+
+**Short version** (the detailed walkthrough follows below):
+
+- **Source it** — identify the upstream behavior from an authoritative source
+  you have actually checked, and record it in `source_reference` plus a header
+  comment explaining how the expected value was derived.
+- **Write it** — stable, repository-unique `p<protocol>-<surface>-<slug>` ID;
+  deterministic input; an explicit expected result using the surface's typed
+  assertion vocabulary.
+- **Check it** — run `python3 tools/validate/validate.py`.
+- **Document & test it** — update the relevant `docs/protocol-NN.md` table
+  (and the pack's `README.md` for a new CAP or surface), then run
+  `python3 -m unittest discover tests`.
+
+1. **Identify the upstream behavior.** Read the CAP text, the upstream XDR
+   definition, the upstream implementation, or the official release/API
+   docs — in that order of preference. Never cite a source you have not
+   actually checked describes the specific behavior you are asserting.
+2. **Add source provenance.** Every fixture sets `source_reference` to an
+   authoritative URL or CAP identifier (note: omitting it currently produces
+   a warning, not a validator error), and its header comment (a `#`
+   comment block above the TOML body) explains, in prose, how the expected
+   value was derived or observed — e.g. "built with the official
+   `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
+   not "looks right".
+3. **Define a stable ID.** Follow `p<protocol>-<surface>-<slug>` (e.g.
+   `p28-xdr-cap85-external-ref-roundtrip`). IDs are lowercase, unique
+   across the *entire* repository (the loader validates this across all
+   `*.toml` files under a given `--fixtures-dir`, not just one file), and
+   never renamed just because an implementation detail changed — if the
+   semantic assertion itself changes, add a new fixture ID instead of
+   silently repurposing an old one.
+4. **Create deterministic input.** No fixture may depend on ledger state
+   that changes between runs (a current ledger sequence, "the latest
+   anything") unless the assertion is explicitly scoped as a live-network
+   check and documented as such.
+5. **Define an explicit expected result** using the assertion vocabulary
+   the target surface actually supports (see "Fixture schema" below) — no
+   generic string matching when a typed assertion exists.
+6. **Validate the fixture**: `python3 tools/validate/validate.py`.
+7. **Add/update documentation**: the relevant `docs/protocol-NN.md` table
+   and, if you added a new CAP or surface, the pack's `README.md`.
+8. **Run the repository tests**: `python3 -m unittest discover tests`.
+
+> **Note**: Do not add a `manifest.toml` or similar discovery/enumeration file. The loader recursively treats every `*.toml` file under `--fixtures-dir` as a fixture, so a manifest `.toml` file would be mis-parsed as a malformed fixture and fail the run (see [README.md](README.md#repository-relationship)).
+
+No fixture should be merged solely because it makes some consumer's CI
+green. If you cannot pin down the exact expected wire representation or
+host-function behavior from an authoritative source, **stop** — do not
+guess a byte sequence or invent an undocumented host function because it
+"looks right". Open an issue describing the gap instead.
+
+## Fixture schema
+
+This repository's fixture files must conform exactly to what
+`StellarCanary/Protocol-Canary`'s `canary-fixtures`/`canary-xdr`/
+`canary-rpc`/`canary-soroban` crates actually parse — that implementation,
+documented in its `docs/fixture-contract.md`, is authoritative. This
+repository does not define its own competing schema. `schemas/fixture-v1.schema.json`
+here is a convenience JSON Schema mirroring that contract for editor/CI
+linting; if the two ever disagree, `Protocol-Canary`'s implementation wins
+and this repository's schema/validator must be corrected to match — never
+the other way around.
+
+Common fields (every fixture):
+
+```toml
+id = "unique-string"
+protocol = 28
+surface = "xdr" # | "rpc" | "soroban"
+category = "cap-0083"
+description = "..."
+source_reference = "CAP-0083"          # optional but expected for protocol-specific fixtures
+required_capabilities = []              # optional, see fixture-contract.md
+input_file = "..."                      # optional, path relative to this file (currently unused by any fixture)
+expected_file = "..."                   # optional (currently unused by any fixture)
+```
+
+Per-surface body (everything else in the file):
+
+| Surface | Fields |
+|---|---|
+| `xdr` | `type` (currently `"StellarValue"` or `"ContractExecutable"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, `expected_base64` (only for `encode-equals`) |
+| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`) |
+| `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]`, `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
+
+If you need an XDR `type` this repository does not yet support, that is a
+`Protocol-Canary` limitation, not something to work around here — open an
+issue/PR against `Protocol-Canary`'s `canary-xdr` crate first (see its own
+`CONTRIBUTING.md`), and only add the fixture here once that support exists
+and is released.
+
+## What never belongs in a fixture
+
+- Shell commands, scripts, or any embedded JavaScript/Python/Bash/Rust —
+  fixtures are declarative data, never code. There is no `exec`,
+  `shell_command`, `pre_run`, or `post_run` field, and none will ever be
+  added.
+- Private keys, seed phrases, or funded-account secrets.
+- A request for `Protocol-Canary` to submit a real, state-changing
+  transaction. Fixtures may require simulation, decoding/encoding, or a
+  read-only RPC call — never submission.
+- A claim about current live network state (a specific ledger sequence, a
+  specific balance) unless the fixture is explicitly and narrowly scoped as
+  a live-network check with its assumptions documented.
+- A `manifest.toml` or any discovery/enumeration file. The loader recursively
+  parses every `*.toml` file under `--fixtures-dir` as a fixture, so a manifest
+  file would be mis-parsed as a malformed fixture and fail validation (see
+  [README.md](README.md#repository-relationship)).
+
+## Deprecating a fixture
+
+Do not silently delete a fixture that is still referenced by a released
+`Protocol-Canary` version's tests or documentation. Mark it deprecated in
+its header comment with the reason, note it in `CHANGELOG.md`, and remove
+it in a later, separate change once nothing depends on it.
+
+## Development setup
+
+No build system is required. `tools/validate/validate.py` uses only the
+Python 3.11+ standard library (`tomllib`), so there is nothing to install.

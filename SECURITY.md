@@ -37,12 +37,53 @@ untrusted input by any consumer, including `Protocol-Canary` itself:
 structural problems (schema conformance, duplicate IDs, missing files). It
 never executes a fixture's assertion and never makes a network call.
 
+The validator also enforces provenance rather than merely advising on it: a
+fixture with no `source_reference` (or an empty one) is reported as an
+**error**, so it fails validation and therefore CI, instead of passing
+with a printed warning. This makes the shared validator — not a
+pack-specific test — the common enforcement point for the claim that every
+assertion is traceable to an authoritative upstream source.
+
+## Build provenance and attestation
+
+Pack release archives (`protocolcanary-fixtures-<version>.tar.gz`) and release
+manifests (`protocolcanary-fixtures-<version>.manifest.json`) published by this
+repository carry cryptographically signed build provenance attestations generated
+by GitHub Actions using `actions/attest-build-provenance`.
+
+These attestations establish that published artifacts were built by this
+repository's release workflow from an exact commit, without tampering.
+
+### Verifying release artifact provenance
+
+To verify the provenance of a downloaded release archive using the GitHub CLI (`gh`):
+
+```bash
+gh attestation verify protocolcanary-fixtures-<version>.tar.gz \
+  --repo StellarCanary/ProtocolCanary-Fixtures \
+  --signer-workflow StellarCanary/ProtocolCanary-Fixtures/.github/workflows/release-pack.yml
+```
+
+To verify the provenance of a release manifest:
+
+```bash
+gh attestation verify protocolcanary-fixtures-<version>.manifest.json \
+  --repo StellarCanary/ProtocolCanary-Fixtures \
+  --signer-workflow StellarCanary/ProtocolCanary-Fixtures/.github/workflows/release-pack.yml
+```
+
+The expected workflow identity is:
+- **Repository:** `StellarCanary/ProtocolCanary-Fixtures`
+- **Signer workflow:** `StellarCanary/ProtocolCanary-Fixtures/.github/workflows/release-pack.yml`
+
 ## Audit status
 
 No formal third-party security audit has been performed on this
 repository. Confidence in the "fixtures are data, not code" claim comes
 from the fixture schema itself (no executable field exists) and the
-validator's tests, not from an external review.
+validator's tests, not from an external review. Confidence in fixture
+provenance comes from the structural validator, which treats a missing
+`source_reference` as an error (see above).
 
 ## Reporting a vulnerability
 
@@ -51,6 +92,23 @@ used to smuggle executable content past a consumer's TOML parser, a schema
 gap that would let an untrusted `.toml` file crash a validator, or similar
 — please open a private report via GitHub's "Report a vulnerability"
 feature on this repository rather than filing a public issue. Include a
-description of the issue, its impact, and steps to reproduce. We will
-acknowledge reports and work with you on a fix and disclosure timeline
-before any public write-up.
+description of the issue, its impact, and steps to reproduce.
+
+### Expected response times
+
+| Stage | Expected time frame |
+|---|---|
+| We acknowledge your report | within **3 business days** |
+| We give an initial assessment (severity, and whether it is in scope) | within **10 business days** |
+| We ship a fix, or share a concrete remediation plan | within **30 calendar days** |
+| Public disclosure | a date agreed with you, after a fix is available |
+
+These are best-effort targets for a small project with no paid on-call
+rotation, not a contractual SLA — but they are the times to hold us to. If
+a window above passes with no reply, please follow up in the same private
+report thread instead of disclosing publicly: a missed window means we lost
+track of the report, not that it was dismissed or out of scope.
+
+Disclosure is coordinated with you, never unilateral on either side: we
+agree a date before any public write-up, and we will credit you in the
+fix's release notes unless you would rather stay anonymous.

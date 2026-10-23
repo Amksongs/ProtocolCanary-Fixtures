@@ -1,0 +1,21 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index d01c4a0..bbbc2d5 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -65,6 +65,16 @@ host-function behavior from an authoritative source, **stop** — do not
+ guess a byte sequence or invent an undocumented host function because it
+ "looks right". Open an issue describing the gap instead.
+ 
++### Reviewing a source reference
++
++The "no-fabrication" policy is only as strong as the review step that enforces it. `validate.py` only checks that a `source_reference` field is present and non-empty. It is the reviewer's responsibility to confirm the cited source actually supports the specific value asserted before approving a PR.
++
++When reviewing a fixture, you must:
++1. **Verify the text:** Open the cited CAP text, upstream XDR definition, or API reference, and confirm it explicitly documents the exact field, discriminant, or wire representation the fixture asserts (not just that the linked URL exists).
++2. **Verify the execution:** If the fixture's header comment explains that the expected value was derived by running a specific crate call or CLI command, re-run that exact call locally and diff the output to confirm it matches the fixture.
++
++A plausible-looking but unverified `source_reference` must not pass review.
++
+ ## Fixture schema
+ 
+ This repository's fixture files must conform exactly to what
