@@ -1,0 +1,45 @@
+# Protocol 28 / TransactionEnvelope: a v0 envelope truncated mid-signature is rejected.
+#
+# Complements p28-xdr-transaction-envelope-v0-roundtrip.toml: a decoder
+# that accepts truncated input is as much of a compatibility break as one
+# that rejects valid input. The v0 envelope's signature list carries a
+# `DecoratedSignature` — a 4-byte `SignatureHint` and a 64-byte
+# `Signature` — and a decoder that treats a half-read signature as a
+# signature would accept a value the protocol would never accept.
+#
+# Malformation rule (documented, deterministic): this value_base64 is
+# the first 150 bytes of the 212-byte crate-produced encoding in
+# p28-xdr-transaction-envelope-v0-roundtrip.toml — the envelope
+# discriminant, the whole `TransactionV0`, the signature vector's length
+# prefix, the 4-byte signature hint, the signature's 4-byte length prefix
+# (64) and the first 2 of its 64 bytes. The remaining 62 signature bytes
+# are missing, so the signature is cut in half and the envelope ends
+# mid-signature.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official
+# `stellar-xdr` 28.0.1 crate (features base64 and alloc, the crate
+# version Protocol-Canary's canary-xdr pins for Protocol 28; rustc 1.99.1
+# (58cf8f9c3 2026-10-13)): TransactionEnvelope::from_xdr_base64 returns
+# Err ("failed to fill whole buffer") for this input, while the
+# unmodified 212-byte encoding it was cut from decodes and round-trips
+# successfully with the same crate. The rejection is the truncation
+# itself; nothing here is an unrecognised discriminant.
+#
+# The source value was built by a program using the pinned crate, with
+# the expression recorded in the roundtrip fixture's header; the
+# truncation above is the only mutation. Every byte is a synthetic
+# structural value, not a capture of a real network object. Nothing here
+# was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x
+
+id = "p28-xdr-transaction-envelope-v0-decode-failure"
+protocol = 28
+surface = "xdr"
+category = "transaction-envelope"
+description = "A `TransactionEnvelope` whose signature is truncated mid-signature is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-transaction.x"
+
+type = "TransactionEnvelope"
+kind = "decode-failure"
+value_base64 = "AAAAABERERERERERERERERERERERERERERERERERERERERERAAAAZAAAAAAAEtaHAAAAAQAAAAAAAAAAAAAAAGjneAAAAAAAAAAAAQAAAAAAAAABAAAAACIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAAAAAAAAAAAAAPoAAAAAAAAAAEzMzMzAAAAQDMz"

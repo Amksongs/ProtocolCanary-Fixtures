@@ -1,0 +1,100 @@
+# Scheduled read-only verification job (issue #368, CF-04-E): capture live
+# read-only RPC evidence on the approved schedule and write CF-04
+# verification records for the pack's RPC fixtures.
+#
+# The hand-taken captures in `protocol-29/evidence/testnet/` go stale. This
+# job keeps the evidence fresh inside decision D-05's 30-day window without
+# anyone having to remember to take it again.
+#
+# Non-blocking by design, like engine-drift.yml:
+#   - the workflow only runs on the weekly schedule or on manual dispatch --
+#     never on pull requests or pushes -- so it cannot gate a merge, and it
+#     must stay out of this repository's required checks;
+#   - `permissions` is read-only, no secrets are used, and the job makes only
+#     read-only JSON-RPC calls to the approved public endpoint;
+#   - it never writes to the repository: the captures and the records are
+#     uploaded as an artifact.
+#
+# The schedule, the exact endpoints and the storage design are maintainer
+# decisions (issue #368 lists them as still open). Each one is in one place:
+# the cron line below, the endpoint list in tools/evidence/capture_live.py,
+# and the upload step at the end. Changing the storage design to a pull
+# request or a bot commit is a permission decision, and is not made here.
+#
+# Every action below is pinned to a full commit SHA (with the release tag in
+# a trailing comment), matching .github/workflows/validate.yml.
+# Dependabot (.github/dependabot.yml) keeps those SHAs current.
+
+name: live-evidence
+
+on:
+  schedule:
+    # Weekly, Monday 07:17 UTC. Off the hour -- validate.yml uses 06:00 and
+    # engine-drift.yml 05:17 -- to avoid the top-of-hour GitHub Actions
+    # scheduler congestion. Weekly is well inside D-05's 30-day freshness
+    # window; a daily run would call the endpoint 52 times a year for no
+    # extra freshness.
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the fixture pack
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Same interpreter pin as validate.yml; see its comment.
+          python-version: "3.11.16"
+
+      - name: Capture the live read-only evidence
+        # The script calls only the approved read-only methods on the
+        # approved endpoint, saves each capture and writes one record per
+        # verified fixture. It exits non-zero when a capture fails, and
+        # writes no record for a capture that did not happen.
+        #
+        # `getVersionInfo` is asked for explicitly so the capture set
+        # matches the hand-taken corpus in protocol-29/evidence/testnet/.
+        run: |
+          set -uo pipefail
+          status=0
+          {
+            echo "## Live read-only capture"
+            echo
+            echo '```'
+            python3 tools/evidence/capture_live.py protocol-28 \
+              --capture-method getVersionInfo || status=$?
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Validate the records
+        # The records are checked with the same validator and the same rules
+        # the CI uses, so a record that does not satisfy CF-04 fails the job
+        # instead of being uploaded.
+        run: >
+          python3 tools/validate/validate.py protocol-28
+          --evidence protocol-28/evidence/live/records
+
+      - name: Upload the captures and the records
+        # The storage design is a maintainer decision (issue #368). An
+        # artifact needs no write permission, so `contents: read` is enough
+        # and the job cannot modify the repository. A pull request opened by
+        # the workflow or a commit by a bot would need more, and is not
+        # configured here.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: live-evidence-${{ github.run_number }}
+          path: protocol-28/evidence/live
+          if-no-files-found: error
+          # The captures are public data from a public endpoint, and the
+          # freshness window is 30 days, so the artifact is kept for the
+          # same period (D-05).
+          retention-days: 30
