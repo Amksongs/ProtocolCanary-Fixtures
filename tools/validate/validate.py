@@ -2162,6 +2162,10 @@ EVIDENCE_REQUIRED_FIELDS = (
     "outcome",
 )
 EVIDENCE_OPTIONAL_FIELDS = ("network", "endpointHost", "evidenceRef")
+KNOWN_NETWORK_PASSPHRASES = {
+    "Test SDF Network ; September 2015": "Test SDF Network ; September 2015",
+    "Test SDF Future Network ; October 2022": "Test SDF Future Network ; October 2022",
+}
 _EVIDENCE_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _EVIDENCE_HOST_RE = re.compile(r"[^/:?#@\s\\]+")
 _EVIDENCE_INSTANT_RE = re.compile(
@@ -2339,6 +2343,8 @@ def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
                 problems.append("network.name must be a non-empty string")
             if not _non_empty_str(network.get("passphrase")):
                 problems.append("network.passphrase must be a non-empty string")
+            elif network.get("name") in KNOWN_NETWORK_PASSPHRASES and network["passphrase"] != KNOWN_NETWORK_PASSPHRASES[network["name"]]:
+                problems.append("network.passphrase does not match network.name")
             observed = network.get("observedProtocol")
             if not _is_int(observed) or observed < 0:
                 problems.append("network.observedProtocol must be a non-negative integer")

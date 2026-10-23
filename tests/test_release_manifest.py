@@ -28,6 +28,7 @@ REPO_ROOT = support.REPO_ROOT
 _schema_spec = support.load_tool(
     "canary_jsonschema_lite", "tools/validate/jsonschema_lite.py"
 )
+run_records = support.load_tool("canary_run_records", "tools/release/run_records.py")
 SCHEMA = json.loads(
     (REPO_ROOT / "schemas" / "release-manifest-v1.schema.json").read_text(encoding="utf-8")
 )
@@ -386,6 +387,199 @@ class ManifestCliTests(unittest.TestCase):
                     run_name="__main__",
                 )
         self.assertEqual(caught.exception.code, 0)
+
+
+class RunRecordTests(unittest.TestCase):
+    """``compatibleEngines[].verified`` comes from a real run record (#367).
+
+    CF-06 section 3: the flag is true only when that exact engine version
+    and that exact pack were run together and the run is recorded. These
+    tests use a synthetic record (a test fixture, never a committed one) to
+    pin the rule down.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        support.write_pack(self.root)
+        self.info = pack.build_archive(self.root / "pack", self.root / "out", "1.4.2")
+        self.runs = self.root / "runs"
+        self.runs.mkdir()
+
+    def record(self, **overrides) -> dict:
+        data = {
+            "runRecordVersion": 1,
+            "engineVersion": "0.2.0",
+            "packDigest": support.GOLDEN_DIGEST,
+            "checkedAt": "2026-10-20T12:00:00Z",
+            "verifier": {"name": "protocol-canary-ci", "version": "0.2.0"},
+            "outcome": "passed",
+            "evidenceRef": None,
+        }
+        data.update(overrides)
+        return data
+
+    def write_record(self, record: dict, name: str = "0.2.0.json") -> Path:
+        path = self.runs / name
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        return path
+
+    def build(self, engines: list[str], records: list[dict] | None) -> dict:
+        return manifest.build_manifest(
+            self.info.path,
+            revision=support.REVISION,
+            engines=engines,
+            records=records,
+        )
+
+    def test_without_records_every_engine_stays_unverified(self) -> None:
+        result = self.build(["0.2.0"], None)
+        self.assertEqual(
+            result["compatibleEngines"], [{"version": "0.2.0", "verified": False}]
+        )
+
+    def test_a_matching_record_verifies_the_engine(self) -> None:
+        result = self.build(["0.2.0"], [self.record()])
+        self.assertEqual(
+            result["compatibleEngines"], [{"version": "0.2.0", "verified": True}]
+        )
+
+    def test_a_record_for_another_engine_does_not_verify(self) -> None:
+        result = self.build(["0.2.1"], [self.record(engineVersion="0.2.0")])
+        self.assertEqual(
+            result["compatibleEngines"], [{"version": "0.2.1", "verified": False}]
+        )
+
+    def test_a_record_for_another_pack_does_not_verify(self) -> None:
+        other = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(manifest.ManifestError, "describes pack"):
+            self.build(["0.2.0"], [self.record(packDigest=other)])
+
+    def test_a_failed_run_does_not_verify(self) -> None:
+        result = self.build(["0.2.0"], [self.record(outcome="failed")])
+        self.assertEqual(
+            result["compatibleEngines"], [{"version": "0.2.0", "verified": False}]
+        )
+
+    def test_only_the_matching_engine_is_verified(self) -> None:
+        records = [self.record(engineVersion="0.2.0"), self.record(engineVersion="0.1.1")]
+        result = self.build(["0.1.1", "0.2.0", "0.3.0"], records)
+        self.assertEqual(
+            result["compatibleEngines"],
+            [
+                {"version": "0.1.1", "verified": True},
+                {"version": "0.2.0", "verified": True},
+                {"version": "0.3.0", "verified": False},
+            ],
+        )
+
+    def test_a_record_for_an_engine_that_was_not_asked_for_is_ignored(self) -> None:
+        records = [self.record(engineVersion="0.1.1", packDigest="sha256:" + "0" * 64)]
+        result = self.build(["0.2.0"], records)
+        self.assertEqual(
+            result["compatibleEngines"], [{"version": "0.2.0", "verified": False}]
+        )
+
+    def test_the_manifest_is_unchanged_when_no_record_exists(self) -> None:
+        # A runs directory that holds no record is simply no record: the
+        # manifest is exactly the one written before run records existed.
+        without = self.build(["0.2.0"], None)
+        with_empty_directory = self.build(
+            ["0.2.0"], run_records.load_run_records(self.runs)
+        )
+        self.assertEqual(with_empty_directory, without)
+        self.assertEqual(without["compatibleEngines"][0]["verified"], False)
+
+    def test_a_record_with_a_future_date_is_refused(self) -> None:
+        future = "2099-01-01T00:00:00Z"
+        self.write_record(self.record(checkedAt=future))
+        with self.assertRaisesRegex(run_records.RunRecordError, "future"):
+            run_records.load_run_records(self.runs)
+
+    def test_a_record_without_a_date_is_refused(self) -> None:
+        record = self.record()
+        del record["checkedAt"]
+        self.write_record(record)
+        with self.assertRaisesRegex(run_records.RunRecordError, "checkedAt"):
+            run_records.load_run_records(self.runs)
+
+    def test_a_record_with_a_range_as_engine_version_is_refused(self) -> None:
+        self.write_record(self.record(engineVersion="0.2.x"))
+        with self.assertRaisesRegex(run_records.RunRecordError, "exact"):
+            run_records.load_run_records(self.runs)
+
+    def test_a_malformed_record_is_refused(self) -> None:
+        (self.runs / "broken.json").write_text("{not json", encoding="utf-8")
+        with self.assertRaisesRegex(run_records.RunRecordError, "not valid JSON"):
+            run_records.load_run_records(self.runs)
+
+    def test_a_record_with_an_unknown_field_is_refused(self) -> None:
+        self.write_record(self.record(surprise=True))
+        with self.assertRaisesRegex(run_records.RunRecordError, "unknown field"):
+            run_records.load_run_records(self.runs)
+
+    def test_a_missing_runs_directory_is_refused(self) -> None:
+        with self.assertRaisesRegex(run_records.RunRecordError, "not found"):
+            run_records.load_run_records(self.root / "no-such-directory")
+
+    def test_the_cli_verifies_from_a_record(self) -> None:
+        self.write_record(self.record())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = manifest.main(
+                [
+                    str(self.info.path),
+                    "--revision",
+                    support.REVISION,
+                    "--engine",
+                    "0.2.0",
+                    "--runs",
+                    str(self.runs),
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("verified: 0.2.0", out.getvalue())
+        written = self.info.path.with_name("protocolcanary-fixtures-1.4.2.manifest.json")
+        result = json.loads(written.read_text(encoding="utf-8"))
+        self.assertEqual(result["compatibleEngines"], [{"version": "0.2.0", "verified": True}])
+        self.assertEqual(schema_problems(result), [])
+
+    def test_the_cli_refuses_a_broken_record(self) -> None:
+        (self.runs / "broken.json").write_text("{not json", encoding="utf-8")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = manifest.main(
+                [
+                    str(self.info.path),
+                    "--revision",
+                    support.REVISION,
+                    "--engine",
+                    "0.2.0",
+                    "--runs",
+                    str(self.runs),
+                ]
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("not valid JSON", err.getvalue())
+        self.assertFalse(self.info.path.with_name("protocolcanary-fixtures-1.4.2.manifest.json").exists())
+
+    def test_the_tool_never_writes_a_record(self) -> None:
+        self.write_record(self.record())
+        before = sorted(path.name for path in self.runs.iterdir())
+        with contextlib.redirect_stdout(io.StringIO()):
+            manifest.main(
+                [
+                    str(self.info.path),
+                    "--revision",
+                    support.REVISION,
+                    "--engine",
+                    "0.2.0",
+                    "--runs",
+                    str(self.runs),
+                ]
+            )
+        self.assertEqual(sorted(path.name for path in self.runs.iterdir()), before)
 
 
 if __name__ == "__main__":

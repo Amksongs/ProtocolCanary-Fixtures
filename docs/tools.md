@@ -20,7 +20,8 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 10. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
 11. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
 12. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
-13. [Observed Inconsistencies](#observed-inconsistencies)
+13. [`tools/validate/validate_registry.py`](#toolsvalidatevalidate_registrypy)
+14. [Observed Inconsistencies](#observed-inconsistencies)
 
 ---
 
@@ -31,7 +32,7 @@ Builds the deterministic release archive for one protocol pack (CF-06). Reads pa
 ### Synopsis
 
 ```bash
-python3 tools/pack/pack.py PACK --version VERSION [--output-dir DIR]
+python3 tools/pack/pack.py PACK --version VERSION [--output-dir DIR] [--verified]
 ```
 
 ### Options
@@ -39,13 +40,14 @@ python3 tools/pack/pack.py PACK --version VERSION [--output-dir DIR]
 - `-h`, `--help`: show this help message and exit
 - `--version VERSION`: release version, MAJOR.MINOR.PATCH; names the archive
 - `--output-dir DIR`: directory for the archive (default: dist)
+- `--verified`: require valid, passing CF-04 evidence for every fixture
 
 ### Exit Codes
 
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: deterministic archive created in output directory. |
-| `1` | Pack error: pack path is not a directory, empty pack, invalid semver format, broken fixture, limit violation, or archive write failure. |
+| `1` | Pack error: pack path is not a directory, empty pack, invalid semver format, broken fixture, missing or invalid verification evidence with `--verified`, limit violation, or archive write failure. |
 | `2` | Command-line syntax error: missing required arguments (`PACK` or `--version`), or unknown options. |
 
 ### Output Streams
@@ -254,14 +256,15 @@ Generates the CF-06 release manifest (`.manifest.json`) for a built fixture-pack
 ### Synopsis
 
 ```bash
-python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--output PATH] [--sha256-file PATH] archive
+python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--runs DIR] [--output PATH] [--sha256-file PATH] archive
 ```
 
 ### Options
 
 - `-h`, `--help`: show this help message and exit
 - `--revision REVISION`: full 40-character git commit hash of the pack source
-- `--engine VERSION`: an exact engine version to list as a compatible engine, recorded as unverified; may be given more than once
+- `--engine VERSION`: an exact engine version to list as a compatible engine, recorded as unverified unless a run record says that exact engine version ran against this exact pack; may be given more than once
+- `--runs DIR`: directory of pack-by-engine run records (issue #367); an engine is marked `verified` only when a record there names that exact engine version, this exact pack digest and a passed run. Without this option every engine stays unverified
 - `--output PATH`: write the manifest here (default: next to the archive, .manifest.json)
 - `--sha256-file PATH`: also write the sha256sum-format checksum line here
 
@@ -270,13 +273,15 @@ python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--outp
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: manifest generated and validated against `schemas/manifest-v1.schema.json`. |
-| `1` | Manifest error: archive does not exist, revision is not a 40-character commit hash, invalid archive content, or cannot write output file. |
+| `1` | Manifest error: archive does not exist, revision is not a 40-character commit hash, invalid archive content, cannot write output file, or a run record in `--runs` is unreadable, malformed, describes another pack, or is dated in the future. |
 | `2` | Command-line syntax error: missing required arguments (`archive` or `--revision`), or unrecognized options. |
 
 ### Output Streams
 
-- **stdout**: Help text when `--help` is invoked.
+- **stdout**: Help text when `--help` is invoked; the path of the written manifest; one line per engine marked `verified`, naming the instant of the recorded run.
 - **stderr**: Usage and error diagnostics on failure.
+
+See [`docs/run-records.md`](run-records.md) for the run-record format and the rule the `verified` flag follows.
 
 ---
 
@@ -414,6 +419,36 @@ python3 tools/evidence/capture_live.py PACK [--output-dir DIR] [--endpoint HOST]
 
 ---
 
+## `tools/validate/validate_registry.py`
+
+Cross-validates a protocol pack's fixtures against its committed `registry-v1.json`: every regular `*.toml` file on disk must be listed in the registry's `fixtures[]` array, every listed fixture and payload must exist as a regular file, and every recorded `sha256` must equal the hash of the bytes on disk (CF-02 section 6, rules 2 and 3; issue #273). The registry document itself is checked against `schemas/registry-v1.schema.json` first, so an unusable registry is input error, not a cross-validation result. Freshness (regenerating and comparing bytes) belongs to CI's `check-registry` step; this tool only compares what is committed against what is on disk. Reads files only; never executes anything.
+
+### Synopsis
+
+```bash
+python3 tools/validate/validate_registry.py [PACK ...]
+```
+
+### Options
+
+- `-h`, `--help`: show this help message and exit
+- `PACK ...`: pack directories to check; when omitted, every `protocol-*` directory in the repository is checked
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Every checked pack matches its registry (including a pack with no fixtures and no registry). |
+| `1` | Cross-validation problems: a fixture on disk is not listed in the registry, a listed fixture or payload is missing on disk, a sha256 differs, or a pack with fixtures has no `registry-v1.json`. |
+| `2` | Unusable input: a pack path that is not a directory, a registry that cannot be read or is not a usable registry document (invalid JSON, schema violation, a path that escapes the pack), or a command-line error. |
+
+### Output Streams
+
+- **stdout**: one `OK:` line per pack that matches its registry; help text when `--help` is invoked.
+- **stderr**: one `error:` line per problem, a final `FAILED: N problem(s)` summary, input errors, and usage on a command-line error.
+
+---
+
 ## Observed Inconsistencies
 
 The following behaviors are recorded as observations of current implementations, not normative decisions. Changing any of them is out of scope for documentation issue #351 and belongs in separate issues should maintainers choose to open them:
@@ -429,4 +464,5 @@ The following behaviors are recorded as observations of current implementations,
    - `tools/pack/pack.py`: exits `2` (handled via argument error).
    - `tools/pack/verify_archive.py`: exits `2` (handled via archive error).
    - `tools/release/manifest.py`: exits `2` (handled via archive error).
+   - `tools/validate/validate_registry.py`: exits `2` (handled as unusable input).
    - `tools/badge/badge.py`: exits `0` (argument ignored).

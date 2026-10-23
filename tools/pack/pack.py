@@ -42,6 +42,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load(name: str, relative: str):
+    path = REPO_ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules.setdefault(name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Atomic writes (F-081): a release artifact is published under its final name
+# only once it is complete.
+atomic_write = _load("canary_atomic_write", "tools/common/atomic_write.py")
+write_bytes_atomic = atomic_write.write_bytes_atomic
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -71,7 +87,18 @@ def _load_generator():
     return module
 
 
+def _load_validator():
+    path = REPO_ROOT / "tools" / "validate" / "validate.py"
+    spec = importlib.util.spec_from_file_location("pack_validate", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules.setdefault("pack_validate", module)
+    spec.loader.exec_module(module)
+    return module
+
+
 generate = _load_generator()
+validate = _load_validator()
 
 
 class PackError(Exception):
@@ -159,6 +186,47 @@ def check_limits(members: dict[str, bytes], directories: list[str]) -> None:
         )
 
 
+def check_verified_evidence(pack: Path) -> None:
+    """Require passing CF-04 evidence for every fixture in ``pack``."""
+    evidence_dir = pack / "evidence"
+    if not evidence_dir.is_dir():
+        raise PackError("--verified requires an evidence/ directory")
+
+    try:
+        scanned = generate.scan_pack(pack)
+        registry = generate.build_registry(scanned)
+        generate.check_against_schema(registry)
+    except generate.PackError as error:
+        raise PackError(str(error)) from None
+    except OSError as error:
+        raise PackError(f"could not read the pack: {error}") from None
+
+    fixture_hashes = {
+        fixture["id"]: hashlib.sha256(scanned[fixture["path"]]).hexdigest()
+        for fixture in registry["fixtures"]
+    }
+    evidence_files = validate.find_evidence_files(evidence_dir)
+    verified: set[str] = set()
+    for path in evidence_files:
+        report = validate.Report()
+        record = validate.validate_evidence_file(path, report)
+        if record is None:
+            raise PackError(f"invalid verification evidence {path}: {'; '.join(report.errors)}")
+        validate.check_evidence_against_fixtures(path, record, fixture_hashes, report)
+        if report.errors:
+            raise PackError(f"invalid verification evidence {path}: {'; '.join(report.errors)}")
+        if record["outcome"] != "matched":
+            raise PackError(f"verification evidence {path} does not have a passing outcome")
+        verified.add(record["fixtureId"])
+
+    missing = sorted(set(fixture_hashes) - verified)
+    if missing:
+        raise PackError(
+            "--verified requires passing evidence records for every fixture; missing "
+            + ", ".join(missing)
+        )
+
+
 def _tar_info(name: str, *, directory: bool, size: int = 0) -> tarfile.TarInfo:
     info = tarfile.TarInfo(name)
     info.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
@@ -204,7 +272,7 @@ def build_archive(pack: Path, output_dir: Path, version: str) -> ArchiveInfo:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / archive_name(version)
-    path.write_bytes(data)
+    write_bytes_atomic(path, data)
     return ArchiveInfo(
         path=path,
         sha256=hashlib.sha256(data).hexdigest(),
@@ -237,12 +305,19 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="directory for the archive (default: dist)",
     )
+    parser.add_argument(
+        "--verified",
+        action="store_true",
+        help="require valid, passing CF-04 evidence for every fixture",
+    )
     return parser
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.verified:
+            check_verified_evidence(args.pack)
         info = build_archive(args.pack, args.output_dir, args.version)
     except PackError as error:
         print(f"error: {error}", file=sys.stderr)

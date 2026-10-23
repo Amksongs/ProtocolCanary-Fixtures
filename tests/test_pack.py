@@ -8,9 +8,11 @@ Run with: python3 -m unittest discover tests
 from __future__ import annotations
 
 import contextlib
+import datetime
 import gzip
 import hashlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -336,6 +338,70 @@ class ReadAndWriteFailureTests(Scratch):
         self.assertTrue(
             (self.root / "dist" / "protocolcanary-fixtures-1.0.0.tar.gz").is_file()
         )
+
+
+class VerifiedPackTests(Scratch):
+    def write_evidence(self, *, outcome: str = "matched", bad_hash: bool = False) -> None:
+        pack_dir = self.root / "pack"
+        scanned = pack.generate.scan_pack(pack_dir)
+        registry = pack.generate.build_registry(scanned)
+        records = pack_dir / "evidence" / "records"
+        records.mkdir(parents=True)
+        for fixture in registry["fixtures"]:
+            digest = hashlib.sha256(scanned[fixture["path"]]).hexdigest()
+            if bad_hash:
+                digest = "0" * 64
+            record = {
+                "verificationVersion": 1,
+                "fixtureId": fixture["id"],
+                "fixtureSha256": digest,
+                "method": "structural",
+                "checkedAt": datetime.datetime.now(datetime.timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "verifier": {"name": "test", "version": "1"},
+                "outcome": outcome,
+            }
+            (records / f"{fixture['id']}.json").write_text(
+                json.dumps(record), encoding="utf-8"
+            )
+
+    def run_verified(self) -> int:
+        return pack.main(
+            [
+                str(self.root / "pack"),
+                "--version",
+                "1.0.0",
+                "--output-dir",
+                str(self.root / "dist"),
+                "--verified",
+            ]
+        )
+
+    def setUp(self) -> None:
+        super().setUp()
+        support.write_pack(self.root)
+
+    def test_verified_pack_requires_evidence(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.run_verified(), 1)
+        self.assertFalse((self.root / "dist").exists())
+
+    def test_verified_pack_accepts_matching_passing_evidence(self) -> None:
+        self.write_evidence()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.run_verified(), 0)
+        self.assertTrue((self.root / "dist" / "protocolcanary-fixtures-1.0.0.tar.gz").is_file())
+
+    def test_verified_pack_rejects_mismatched_hashes_and_failed_outcomes(self) -> None:
+        for bad_hash, outcome in ((True, "matched"), (False, "mismatched")):
+            with self.subTest(bad_hash=bad_hash, outcome=outcome):
+                evidence = self.root / "pack" / "evidence"
+                if evidence.exists():
+                    __import__("shutil").rmtree(evidence)
+                self.write_evidence(bad_hash=bad_hash, outcome=outcome)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(self.run_verified(), 1)
 
 
 if __name__ == "__main__":
