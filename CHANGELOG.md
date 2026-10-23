@@ -12,6 +12,18 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Protocol 29 coverage now includes a Protocol 28-versus-29 RPC mismatch
+  fixture, with separate Testnet and Futurenet verification records whose
+  passphrases are validated against their network names. The release pack
+  tests also cover deterministic archives and D-06 limits, and `pack.py
+  --verified` requires valid, passing CF-04 evidence for every fixture.
+  Closes
+  [issues #294](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/294),
+  [#293](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/293),
+  [#292](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/292),
+  and [#266](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/266).
+  ([PR #468](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/468))
+
 - `schemas/run-record-v1.schema.json` and `tools/release/run_records.py`: the
   pack-by-engine run record and its reader (issue #367). A record names one
   exact engine version, the CF-02 pack digest of the pack it ran against, the

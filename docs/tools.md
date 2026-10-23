@@ -31,7 +31,7 @@ Builds the deterministic release archive for one protocol pack (CF-06). Reads pa
 ### Synopsis
 
 ```bash
-python3 tools/pack/pack.py PACK --version VERSION [--output-dir DIR]
+python3 tools/pack/pack.py PACK --version VERSION [--output-dir DIR] [--verified]
 ```
 
 ### Options
@@ -39,13 +39,14 @@ python3 tools/pack/pack.py PACK --version VERSION [--output-dir DIR]
 - `-h`, `--help`: show this help message and exit
 - `--version VERSION`: release version, MAJOR.MINOR.PATCH; names the archive
 - `--output-dir DIR`: directory for the archive (default: dist)
+- `--verified`: require valid, passing CF-04 evidence for every fixture
 
 ### Exit Codes
 
 | Exit Code | Meaning |
 |---|---|
 | `0` | Success: deterministic archive created in output directory. |
-| `1` | Pack error: pack path is not a directory, empty pack, invalid semver format, broken fixture, limit violation, or archive write failure. |
+| `1` | Pack error: pack path is not a directory, empty pack, invalid semver format, broken fixture, missing or invalid verification evidence with `--verified`, limit violation, or archive write failure. |
 | `2` | Command-line syntax error: missing required arguments (`PACK` or `--version`), or unknown options. |
 
 ### Output Streams
