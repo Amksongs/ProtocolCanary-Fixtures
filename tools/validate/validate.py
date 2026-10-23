@@ -19,6 +19,7 @@ With no arguments, validates every protocol-*/ directory found next to
 this script's repository root. Exits 0 if every fixture is valid, 1
 otherwise.
 """
+
 from __future__ import annotations
 
 import base64
@@ -127,8 +128,7 @@ def validate_common_fields(fx: Fixture, report: Report) -> None:
     if ok_category and data["category"].lower() in VAGUE_CATEGORIES:
         report.error(
             path,
-            f"field 'category' is too vague ({data['category']!r}); "
-            "use a specific CAP/topic slug",
+            f"field 'category' is too vague ({data['category']!r}); use a specific CAP/topic slug",
         )
 
     _require(data, "description", str, path, report)
@@ -282,9 +282,7 @@ def validate_unique_ids(fixtures: list[Fixture], report: Report) -> None:
         if not isinstance(fid, str):
             continue
         if fid in seen:
-            report.error(
-                fx.path, f"duplicate fixture id {fid!r}: already defined in {seen[fid]}"
-            )
+            report.error(fx.path, f"duplicate fixture id {fid!r}: already defined in {seen[fid]}")
         else:
             seen[fid] = fx.path
 

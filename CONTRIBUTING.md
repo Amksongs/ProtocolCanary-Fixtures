@@ -134,3 +134,36 @@ it in a later, separate change once nothing depends on it.
 
 No build system is required. `tools/validate/validate.py` uses only the
 Python 3.11+ standard library (`tomllib`), so there is nothing to install.
+
+## Code style and linting
+
+This repository uses [Ruff](https://docs.astral.sh/ruff/) for linting and
+formatting. Ruff is pinned to version 0.17.2 in `ruff.toml` to avoid surprise
+failures when rule behavior changes.
+
+### Running checks locally
+
+```bash
+# Run all checks (lint + format + tests)
+make check
+
+# Or run them individually:
+ruff check .              # Lint check
+ruff format --check .     # Format check
+python3 -m unittest discover tests  # Run tests
+```
+
+### Fixing lint issues
+
+```bash
+# Auto-fix lint issues where possible
+ruff check --fix .
+
+# Apply formatting
+ruff format .
+```
+
+### Adding a new Python file
+
+Ensure your code passes `ruff check` and `ruff format --check` before
+committing. The CI workflow runs both checks on every pull request.

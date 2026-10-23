@@ -7,6 +7,7 @@ Protocol-Canary against live testnet is recorded in each fixture's header
 comment and in docs/protocol-28.md, not re-run here — see CONTRIBUTING.md
 on why CI does not require a live RPC endpoint.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -43,8 +44,7 @@ class Protocol28PackTests(unittest.TestCase):
     def setUp(self) -> None:
         self.report = validate.validate_directory(PACK)
         fixtures = [
-            validate.load_fixture(p, validate.Report())
-            for p in validate.find_fixture_files(PACK)
+            validate.load_fixture(p, validate.Report()) for p in validate.find_fixture_files(PACK)
         ]
         self.fixtures = [fx for fx in fixtures if fx is not None]
 

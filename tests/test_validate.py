@@ -2,6 +2,7 @@
 
 Run with: python3 -m unittest discover tests
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -75,7 +76,7 @@ def write(dir_path: Path, name: str, contents: str) -> Path:
 
 
 class ValidatorTests(unittest.TestCase):
-    def run_validation(self, files: dict[str, str]) -> "validate.Report":
+    def run_validation(self, files: dict[str, str]) -> validate.Report:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name, contents in files.items():
@@ -95,9 +96,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(report.errors, [])
 
     def test_rejects_duplicate_ids(self) -> None:
-        other = VALID_XDR.replace(
-            'category = "cap-0083"', 'category = "cap-0083-2"'
-        )
+        other = VALID_XDR.replace('category = "cap-0083"', 'category = "cap-0083-2"')
         report = self.run_validation({"a.toml": VALID_XDR, "b.toml": other})
         self.assertTrue(any("duplicate fixture id" in e for e in report.errors))
 
@@ -155,9 +154,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("too vague" in e for e in report.errors))
 
     def test_rejects_uppercase_id(self) -> None:
-        bad = VALID_XDR.replace(
-            'id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"'
-        )
+        bad = VALID_XDR.replace('id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
 
@@ -176,19 +173,25 @@ method = "get-network"
         self.assertTrue(any("at least one" in e for e in report.errors))
 
     def test_soroban_fixture_requires_expect(self) -> None:
-        bad = VALID_SOROBAN.replace("[expect]\nkind = \"simulation-success\"\n", "")
+        bad = VALID_SOROBAN.replace('[expect]\nkind = "simulation-success"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'expect'" in e for e in report.errors))
 
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
-        bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"')
+        bad = VALID_XDR.replace(
+            'value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"'
+        )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "value_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "value_base64" in e for e in report.errors)
+        )
 
     def test_rejects_malformed_padding_base64(self) -> None:
         bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "AAAAA"')
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "value_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "value_base64" in e for e in report.errors)
+        )
 
     def test_rejects_invalid_base64_in_expected_base64(self) -> None:
         bad = (
@@ -196,7 +199,9 @@ method = "get-network"
             + 'expected_base64 = "not-valid-base64!!!"\n'
         )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "expected_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "expected_base64" in e for e in report.errors)
+        )
 
     def test_accepts_valid_base64_in_encode_equals(self) -> None:
         good = (

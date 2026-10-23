@@ -23,6 +23,18 @@ jobs:
           # deliberately when a new patch release is wanted.
           python-version: "3.11.16"
 
+      - name: Install Ruff
+        run: |
+          pip install ruff==0.17.2
+          # Ruff is pinned to 0.17.2 to match the version validated against
+          # the ruff.toml configuration. Bump both together when upgrading.
+
+      - name: Ruff lint check
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
       - name: Structural fixture validation
         run: python3 tools/validate/validate.py
 
