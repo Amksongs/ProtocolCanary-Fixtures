@@ -1,0 +1,68 @@
+# Test vector: `get-ledger-entries` for a key that has no entry (F-039, issue #296).
+#
+# Question this answers: what does Stellar RPC return when a requested key has
+# no ledger entry? CA-01 section 2 records only an inference ("`entries` holds
+# all found ledger entries, which suggests missing keys are omitted") and says
+# it must be checked against a real response before a fixture relies on it.
+# This is that check.
+#
+# Captured live from https://soroban-testnet.stellar.org on 2026-10-23 (UTC):
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getLedgerEntries","params":{"keys":["AAAAAAAAAADk9ktTswqgsgEiA3ZlQ5Rpr6sFhq0wAf8MsPWF3M2K9g=="]}}'
+#   => {"jsonrpc":"2.0","id":1,"result":{"entries":[],"latestLedger":5349346}}
+#
+# So the missing key is omitted from `entries`, and `entries` is an empty array
+# (not absent, not null). The same call with `"xdrFormat":"base64"` answered
+# identically. A request mixing this key with one that exists returned only the
+# existing entry, so omission is per key rather than all-or-nothing.
+#
+# The key is a `LedgerKey` XDR (ACCOUNT, ed25519) whose 32 key bytes are
+#
+#   sha256("protocolcanary-fixtures absent ledger key #296")
+#
+# That is a fixed value nobody holds a private key for, so no account with this
+# key can exist: the entry is absent by construction, on every network and at
+# every ledger, which keeps the fixture deterministic. (An all-zero key is not
+# used, because that account does exist on Testnet.) The base64 is 40 bytes:
+# `00000000` (ACCOUNT) + `00000000` (ed25519) + the 32-byte digest.
+#
+# Assertions:
+#   - `entries` equals the empty array. `field-equals` compares JSON exactly,
+#     and an empty array only equals a field that returns an empty array, so
+#     this is the omission check. There is no `field-absent` here on purpose:
+#     the omission is inside the array, and `field-absent` only looks at
+#     top-level keys, so naming `entries` would fail against the real answer.
+#   - `latestLedger` is a number, asserted by type because it advances with the
+#     chain.
+#
+# Kept under `tests/fixtures/rpc/` and not in a protocol pack: a pack's RPC
+# fixtures must all be capturable by `tools/evidence/capture_live.py`, whose
+# allowlist is the three read-only methods CF-04 section 8 names
+# (`getLedgerEntries` is not one of them). It is exercised by
+# `tests/test_rpc_absent_fixtures.py`.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLedgerEntries
+
+id = "test-rpc-nonexistent-entries"
+protocol = 28
+surface = "rpc"
+category = "absent-entity"
+description = "getLedgerEntries for a key with no ledger entry returns an empty entries array"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLedgerEntries"
+
+method = "get-ledger-entries"
+
+[request]
+keys = ["AAAAAAAAAADk9ktTswqgsgEiA3ZlQ5Rpr6sFhq0wAf8MsPWF3M2K9g=="]
+
+[[assert]]
+kind = "field-equals"
+field = "entries"
+value = []
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "number"
