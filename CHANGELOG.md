@@ -12,6 +12,19 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/validate/check_root_files.py` (F-054): a CI guard, run by the validate
+  workflow, that fails when a file or directory outside an explicit allow-list
+  appears in the repository root (`protocol-NN/` packs are always allowed), so a
+  stray scratch file can no longer be committed unnoticed. It reads the root
+  from `git ls-files` (falling back to a directory scan outside a git
+  checkout), exits 1 and names each unexpected entry, and uses only the
+  standard library. The same change removes the three stray root files it
+  would have caught: `PR_DESCRIPTION.md`, `diff.txt` and `main_CONTRIBUTING.md`.
+  `tests/test_check_root_files.py` covers the allow-list, path normalization,
+  the git and fallback listings and the exit codes. Closes
+  [issue #328](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/328).
+  ([PR #399](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/399))
+
 - Protocol 29 coverage now includes a Protocol 28-versus-29 RPC mismatch
   fixture, with separate Testnet and Futurenet verification records whose
   passphrases are validated against their network names. The release pack
