@@ -20,7 +20,8 @@ CI jobs, release workflows, and contributor scripts rely on these contracts. Any
 10. [`tools/validate/validate.py`](#toolsvalidatevalidatepy)
 11. [`tools/validate/schema_sync.py`](#toolsvalidateschema_syncpy)
 12. [`tools/evidence/capture_live.py`](#toolsevidencecapture_livepy)
-13. [Observed Inconsistencies](#observed-inconsistencies)
+13. [`tools/validate/validate_registry.py`](#toolsvalidatevalidate_registrypy)
+14. [Observed Inconsistencies](#observed-inconsistencies)
 
 ---
 
@@ -418,6 +419,36 @@ python3 tools/evidence/capture_live.py PACK [--output-dir DIR] [--endpoint HOST]
 
 ---
 
+## `tools/validate/validate_registry.py`
+
+Cross-validates a protocol pack's fixtures against its committed `registry-v1.json`: every regular `*.toml` file on disk must be listed in the registry's `fixtures[]` array, every listed fixture and payload must exist as a regular file, and every recorded `sha256` must equal the hash of the bytes on disk (CF-02 section 6, rules 2 and 3; issue #273). The registry document itself is checked against `schemas/registry-v1.schema.json` first, so an unusable registry is input error, not a cross-validation result. Freshness (regenerating and comparing bytes) belongs to CI's `check-registry` step; this tool only compares what is committed against what is on disk. Reads files only; never executes anything.
+
+### Synopsis
+
+```bash
+python3 tools/validate/validate_registry.py [PACK ...]
+```
+
+### Options
+
+- `-h`, `--help`: show this help message and exit
+- `PACK ...`: pack directories to check; when omitted, every `protocol-*` directory in the repository is checked
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|---|---|
+| `0` | Every checked pack matches its registry (including a pack with no fixtures and no registry). |
+| `1` | Cross-validation problems: a fixture on disk is not listed in the registry, a listed fixture or payload is missing on disk, a sha256 differs, or a pack with fixtures has no `registry-v1.json`. |
+| `2` | Unusable input: a pack path that is not a directory, a registry that cannot be read or is not a usable registry document (invalid JSON, schema violation, a path that escapes the pack), or a command-line error. |
+
+### Output Streams
+
+- **stdout**: one `OK:` line per pack that matches its registry; help text when `--help` is invoked.
+- **stderr**: one `error:` line per problem, a final `FAILED: N problem(s)` summary, input errors, and usage on a command-line error.
+
+---
+
 ## Observed Inconsistencies
 
 The following behaviors are recorded as observations of current implementations, not normative decisions. Changing any of them is out of scope for documentation issue #351 and belongs in separate issues should maintainers choose to open them:
@@ -433,4 +464,5 @@ The following behaviors are recorded as observations of current implementations,
    - `tools/pack/pack.py`: exits `2` (handled via argument error).
    - `tools/pack/verify_archive.py`: exits `2` (handled via archive error).
    - `tools/release/manifest.py`: exits `2` (handled via archive error).
+   - `tools/validate/validate_registry.py`: exits `2` (handled as unusable input).
    - `tools/badge/badge.py`: exits `0` (argument ignored).

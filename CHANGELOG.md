@@ -117,6 +117,20 @@ discussion and diff. New entries must include that link; see
   caught, and the production tools are never modified. Closes
   [issue #349](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/349).
   ([PR #409](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/409))
+- `tools/validate/validate_registry.py` — cross-validates a pack's fixtures
+  against its committed `registry-v1.json` (issue #273, CF-02 section 6 rules
+  2 and 3): every regular `*.toml` on disk must be listed in the registry,
+  every listed fixture and payload must exist on disk, and every recorded
+  `sha256` must equal the file's bytes — an orphaned fixture, a phantom entry
+  or a drifted hash is rejected by path (exit 1), while an unusable registry
+  is input error (exit 2). Without arguments every `protocol-*` directory is
+  checked; freshness and `packDigest` stay with CI's regeneration diff.
+  `tests/test_validate_registry.py` covers the three rejections, payload
+  entries, unusable inputs and the CLI contract (24 tests), and
+  `docs/tools.md` records the command-line contract. Closes
+  [issue #273](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/273).
+  ([PR #473](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/473))
+
 - `tools/inventory/compare.py`: a standard-library tool that compares the
   inventory `stellar-canary fixtures --format json` prints (CA-02,
   `inventoryVersion` 1) with a pack's `registry-v1.json`, asserting that the
