@@ -46,7 +46,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -177,7 +177,7 @@ def run(
     if not fixtures:
         raise RecordError(f"{pack} holds no fixture to record")
 
-    checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    checked_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     verifier_version = version if version else git_revision(REPO_ROOT)
     records = {
         fixture_id: build_record(

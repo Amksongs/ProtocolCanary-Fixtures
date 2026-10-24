@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 RUN_RECORD_VERSION = 1
@@ -129,8 +129,8 @@ def validate_run_record(record: object, now: datetime | None = None) -> list[str
         else:
             moment = datetime.strptime(
                 str(record["checkedAt"]).split(".")[0].rstrip("Z"), "%Y-%m-%dT%H:%M:%S"
-            ).replace(tzinfo=timezone.utc)
-            reference = now or datetime.now(timezone.utc)
+            ).replace(tzinfo=UTC)
+            reference = now or datetime.now(UTC)
             if moment > reference + CLOCK_SKEW:
                 problems.append(
                     f"checkedAt {record['checkedAt']!r} is in the future; a run "

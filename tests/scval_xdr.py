@@ -306,7 +306,7 @@ def _as_bytes(value: Any, label: str) -> bytes:
 
 def _write_sc_error(w: _Writer, error: dict) -> None:
     """Write an SCError union value.
-    
+
     Stellar-contract.x v28.0 lines 144-154:
     union SCError switch (SCErrorType type) {
     case SCE_OK:
@@ -351,7 +351,7 @@ def _write_sc_error(w: _Writer, error: dict) -> None:
 
 def _write_contract_executable(w: _Writer, executable: dict) -> None:
     """Write a ContractExecutable union value.
-    
+
     Stellar-contract.x v28.0 lines 172-237.
     """
     exec_type = executable.get("type")
@@ -385,7 +385,7 @@ def _write_contract_executable(w: _Writer, executable: dict) -> None:
 
 def _write_contract_instance(w: _Writer, instance: dict) -> None:
     """Write an SCContractInstance struct.
-    
+
     Stellar-contract.x v28.0 lines 156-163:
     struct SCContractInstance {
         ContractExecutable executable;
@@ -410,7 +410,7 @@ def _write_contract_instance(w: _Writer, instance: dict) -> None:
 
 def _write_nonce_key(w: _Writer, nonce: dict) -> None:
     """Write an SCNonceKey struct.
-    
+
     Stellar-contract.x v28.0 lines 165-168:
     struct SCNonceKey {
         SCAddress address;

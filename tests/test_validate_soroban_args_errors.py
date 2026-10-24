@@ -408,7 +408,7 @@ class SorobanArgErrorBranchTests(unittest.TestCase):
                         )
                 else:
                     differing = [
-                        i for i, (a, b) in enumerate(zip(row.good, row.bad)) if a != b
+                        i for i, (a, b) in enumerate(zip(row.good, row.bad, strict=True)) if a != b
                     ]
                     self.assertEqual(
                         differing, [0], "only the prefix char may differ"

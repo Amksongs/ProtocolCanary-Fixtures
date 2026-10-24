@@ -39,8 +39,13 @@ select = [
 #        because the existing test fixtures and long string literals would
 #        produce noisy diffs for little value. Ruff's formatter already handles
 #        line wrapping; the check is redundant with format --check.
+#
+# E402 - Module level import not at top of file. Scripts under tools/ and the
+#        tests put the repository root or a sibling directory on sys.path
+#        before importing the modules they share, so the imports cannot move.
 ignore = [
     "E501",  # line-too-long: let the formatter handle wrapping, not the linter
+    "E402",  # imports that follow the sys.path bootstrap
 ]
 
 [lint.isort]

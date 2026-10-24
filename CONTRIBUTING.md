@@ -64,6 +64,22 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
    not "looks right". If the header comment records *when* an observation
    was made, use the [date convention above](#recording-verification-dates).
+
+   The validator also rejects non-public URL hosts in `source_reference` and
+   non-public `endpointHost` values in verification evidence. It rejects
+   localhost and common local-only suffixes, explicitly denied IPv4 ranges,
+   and ambiguous noncanonical numeric IPv4 forms; bracketed IPv6 literals are
+   not accepted in `source_reference` URLs. This policy is checked offline
+   and does not resolve DNS, so it cannot detect a public-looking name such as
+   `127.0.0.1.nip.io` that resolves to a private address. DNS, redirect, and
+   runtime protections are outside this issue and belong to issue #390.
+   One exception keeps the capture tool's dry run working: a verification
+   record whose `network.name` is `local-mock` (what
+   `tools/evidence/capture_live.py --local-endpoint` writes when it is pointed
+   at the loopback mock server) may name `127.0.0.1` or `localhost` as its
+   `endpointHost`. No other non-public host is accepted, with or without that
+   label, and a record for a real network (`testnet`, `mainnet`, `futurenet`)
+   may never name a loopback host.
 3. **Define a stable ID.** Follow `p<protocol>-<surface>-<slug>` (e.g.
    `p28-xdr-cap85-external-ref-roundtrip`). IDs are lowercase, unique
    across the *entire* repository (the loader validates this across all
@@ -533,6 +549,21 @@ For convenience, a `Makefile` wraps the commands CI runs:
 The underlying commands work identically if run directly, so `make` is
 not a requirement for contributing — it only saves typing.
 
+## Linting
+
+CI runs `ruff check .` with the rules in `ruff.toml`, using the pinned
+version (Ruff 0.17.2). To run it locally:
+
+```
+pip install ruff==0.17.2
+ruff check .          # report findings
+ruff check . --fix    # apply the safe automatic fixes
+```
+
+A new Python file has to pass `ruff check .`. A genuine exception goes in
+`ruff.toml` with a one-line reason, not in a blanket `# noqa`. Formatting
+(`ruff format`) is not enforced.
+
 ## Coverage
 
 CI measures branch coverage of the Python tools on one operating system
@@ -627,4 +658,28 @@ python3 tools/validate/check_source_links.py --summary-file summary.md
 The script prints a markdown table with `URL`, `Fixture File`, and `Result`
 (`OK`, `Failed`, or `Inconclusive`). HTTP 429 rate limits are classified as
 inconclusive and do not trigger a non-zero exit code.
+
+### Address policy: public destinations only
+
+Fixture files are contributor-controlled content, but the scheduled job runs
+with the repository runner's network, so the checker only ever contacts
+publicly routable internet hosts. Before **every** request -- the first URL,
+every redirect hop, and the empty-POST fallback used after an HTTP 405 -- the
+destination's host is resolved with `socket.getaddrinfo` and the request is
+refused (`Failed (refused: non-public address)`) if **any** answer is not
+globally routable. Refused categories: loopback, private, link-local
+(`169.254.0.0/16`, `fe80::/10`), unique-local (`fc00::/7`), carrier-grade NAT
+(`100.64.0.0/10`), multicast, reserved and unspecified addresses, after
+unwrapping IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`). IP literals in all
+supported notations are recognised without any DNS query, including decimal,
+ hexadecimal and octal IPv4 forms (`http://2130706433/`, `http://0x7f.1/`,
+`http://0177.0.0.1/`) and bracketed IPv6 (`http://[::1]/`).
+
+The socket then dials the exact address that was validated, under the
+original host name (so TLS server name indication and certificate
+verification are unaffected); the name is never resolved a second time, so a
+changed DNS answer cannot redirect the connection after validation. The
+policy is enforced in code and defaults to strict: there is no command-line
+flag or environment variable that can weaken the job's policy -- tests that
+need to reach a loopback test server inject a permissive policy in-process.
 

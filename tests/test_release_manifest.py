@@ -61,13 +61,13 @@ def _ustar_header_claiming(name: str, size: int) -> bytes:
     header[100:108] = b"0000644\0"
     header[108:116] = b"0000000\0"
     header[116:124] = b"0000000\0"
-    header[124:136] = ("%011o" % size).encode("ascii") + b"\0"
+    header[124:136] = (f"{size:011o}").encode("ascii") + b"\0"
     header[136:148] = b"00000000000\0"
     header[156:157] = b"0"  # REGTYPE
     header[257:265] = b"ustar\00000"
     header[148:156] = b"        "
     checksum = sum(header)
-    header[148:156] = ("%06o\0 " % checksum).encode("ascii")
+    header[148:156] = (f"{checksum:06o}\0 ").encode("ascii")
     return bytes(header)
 
 

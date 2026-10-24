@@ -95,7 +95,6 @@ class XdrCodecUnitTests(unittest.TestCase):
 
     def test_non_zero_padding_rejected(self) -> None:
         # String length 3, followed by 3 chars, plus 1 padding byte which must be 0
-        writer = xdr_codec.XdrWriter()
         # ContractExecutable ExternalRef
         # Disc 2, SCAddress contract (1) + 32 bytes, string len 3 + "tag" + pad 0x01
         data = (

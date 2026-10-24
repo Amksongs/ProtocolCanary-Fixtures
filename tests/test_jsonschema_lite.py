@@ -186,9 +186,61 @@ class KeywordTests(unittest.TestCase):
         self.assertEqual(self.errors(1, schema), [])
 
     def test_a_keyword_the_validator_does_not_implement_is_an_error(self) -> None:
-        for keyword in ("oneOf", "anyOf", "allOf", "not", "format", "dependencies", "if"):
+        for keyword in ("oneOf", "anyOf", "not", "format", "dependencies", "if"):
             with self.assertRaises(lite.SchemaError, msg=keyword):
                 lite.validate(1, {keyword: []})
+
+    def test_all_of_subschemas(self) -> None:
+        self.assertEqual(self.errors(3, {"allOf": [{"type": "integer"}, {"minimum": 2}]}), [])
+        self.assertIn("expected string", self.errors(3, {"allOf": [{"type": "string"}]})[0])
+
+    def test_all_of_reports_all_failures_in_array_order(self) -> None:
+        errors = self.errors(3, {"allOf": [{"minimum": 5}, {"maximum": 1}]})
+        self.assertEqual(len(errors), 2)
+        self.assertIn("less than 5", errors[0])
+        self.assertIn("greater than 1", errors[1])
+
+    def test_all_of_with_sibling_keywords_and_type_mismatch(self) -> None:
+        schema = {
+            "type": "string",
+            "required": ["x"],
+            "properties": {"x": {"allOf": [{"type": "integer"}]}},
+            "allOf": [{"const": 4}],
+        }
+        errors = self.errors({"x": "bad"}, schema)
+        self.assertTrue(any("expected string" in error for error in errors))
+        self.assertTrue(any("must equal 4" in error for error in errors))
+        self.assertTrue(any("expected integer" in error for error in errors))
+
+    def test_all_of_single_nested_and_boolean_subschemas(self) -> None:
+        self.assertEqual(self.errors(1, {"allOf": [{"allOf": [True, {"type": "integer"}]}]}), [])
+        self.assertEqual(self.errors(1, {"allOf": [True]}), [])
+        self.assertEqual(self.errors(1, {"allOf": [False]}), ["$: no value is allowed here"])
+
+    def test_all_of_local_ref(self) -> None:
+        schema = {"$defs": {"positive": {"minimum": 1}}, "allOf": [{"$ref": "#/$defs/positive"}]}
+        self.assertEqual(self.errors(2, schema), [])
+        self.assertNotEqual(self.errors(0, schema), [])
+
+    def test_all_of_nested_instance_paths(self) -> None:
+        schema = {"properties": {"rows": {"items": {"allOf": [{"type": "integer"}]}}}}
+        self.assertIn("$.rows[1]", self.errors({"rows": [1, "x"]}, schema)[0])
+
+    def test_all_of_invalid_values_and_unsupported_subschema_keyword(self) -> None:
+        for value in ([], {}):
+            with self.assertRaisesRegex(lite.SchemaError, r"\$\.allOf"):
+                lite.validate(1, {"allOf": value})
+        with self.assertRaisesRegex(lite.SchemaError, r"\$\.allOf\[0\]"):
+            lite.validate(1, {"allOf": [3]})
+        with self.assertRaises(lite.SchemaError):
+            lite.validate(1, {"allOf": [{"if": True}]})
+
+    def test_fixture_schema_still_fails_on_if(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "fixture-v1.schema.json").read_text(encoding="utf-8")
+        )
+        with self.assertRaisesRegex(lite.SchemaError, "if"):
+            lite.validate({}, schema)
 
     def test_a_remote_ref_is_an_error(self) -> None:
         with self.assertRaises(lite.SchemaError):

@@ -58,12 +58,12 @@ import hashlib
 import json
 import socket
 import subprocess
-import time
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -158,7 +158,7 @@ class Summary:
 
 def utc_now() -> str:
     """The current instant, RFC 3339 in UTC -- the form CF-04 asks for."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def git_revision(repo_root: Path) -> str:
@@ -349,7 +349,7 @@ def values_equal(actual: object, expected: object) -> bool:
         return actual == expected
     if isinstance(actual, list) and isinstance(expected, list):
         return len(actual) == len(expected) and all(
-            values_equal(one, other) for one, other in zip(actual, expected)
+            values_equal(one, other) for one, other in zip(actual, expected, strict=False)
         )
     if isinstance(actual, dict) and isinstance(expected, dict):
         return set(actual) == set(expected) and all(
@@ -783,7 +783,7 @@ def main(argv: list[str]) -> int:
             print(f"--- {path}")
             print(render_json(document), end="")
     if summary.failures:
-        for method, message in summary.failures:
+        for _method, message in summary.failures:
             print(f"FAILED: {message}", file=sys.stderr)
         print(
             f"FAILED: {len(summary.failures)} capture(s) failed; no record was "

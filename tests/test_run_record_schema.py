@@ -18,7 +18,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -228,7 +228,7 @@ class RunRecordReaderTests(unittest.TestCase):
     def test_a_clock_skew_inside_the_tolerance_is_accepted(self) -> None:
         # The record is written by another machine, so its clock can be a
         # little behind; a small lead is tolerated rather than refused.
-        now = datetime(2026, 10, 20, 12, 5, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 10, 20, 12, 5, 0, tzinfo=UTC)
         record = dict(RECORD, checkedAt="2026-10-20T12:08:00Z")
         self.assertEqual(run_records.validate_run_record(record, now=now), [])
 

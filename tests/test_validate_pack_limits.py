@@ -8,8 +8,6 @@ Approved under decision D-06:
 """
 from __future__ import annotations
 
-import io
-import json
 import shutil
 import sys
 import tempfile

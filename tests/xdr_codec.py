@@ -102,7 +102,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 
 class XdrCodecError(ValueError):

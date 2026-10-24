@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import io
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -77,7 +76,7 @@ class TestRegistryGeneratorOutputSafety(unittest.TestCase):
 
         self.fixture = rpc_dir / "p28-rpc-test.toml"
         self.fixture.write_text(
-            f"""id = "p28-rpc-test"
+            """id = "p28-rpc-test"
 protocol = 28
 surface = "rpc"
 category = "smoke"
