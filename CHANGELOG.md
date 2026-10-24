@@ -12,6 +12,21 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- The validator rejects non-public hosts (F-114). A `source_reference` URL or a
+  verification record's `endpointHost` that names `localhost`, a local-only
+  suffix (`.localhost`, `.local`, `.localdomain`, `.internal`, `.home.arpa`),
+  an IPv4 address in a private, loopback, link-local, carrier-grade NAT,
+  documentation, benchmarking, multicast or reserved range, or an ambiguous
+  numeric host such as `2130706433` or `0x7f.1`, is now an error, and so is a
+  bracketed IPv6 literal in a `source_reference` URL. The check is offline and
+  deterministic (`non_public_host_problem` in `tools/validate/validate.py`); it
+  does not resolve DNS, so a public-looking name such as `127.0.0.1.nip.io`
+  that resolves to a private address is out of its reach. DNS, redirect and
+  runtime protection is the link checker's job (F-108). Documented in
+  `CONTRIBUTING.md`; `tests/test_validate.py` covers each range and form. Closes
+  [issue #396](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/396).
+  ([PR #414](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/414))
+
 - `tools/validate/check_source_links.py` only contacts publicly routable
   destinations (F-108). Fixture content is contributor-controlled, but the
   scheduled job runs on the repository runner's network, so a `source_reference`

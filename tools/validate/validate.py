@@ -615,12 +615,12 @@ def check_source_reference(value: str) -> str | None:
         return "must not embed credentials (user@host) in the URL"
     if parts.netloc.startswith("["):
         try:
-            ipaddress.IPv6Address(host)
+            ipaddress.IPv6Address(raw_host)
         except ipaddress.AddressValueError:
             pass
         else:
             return "must not use a bracketed IPv6 literal as the URL host"
-    host_problem = non_public_host_problem(host)
+    host_problem = non_public_host_problem(raw_host)
     if host_problem:
         return f"uses a non-public host: {host_problem}"
 
