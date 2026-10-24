@@ -30,9 +30,9 @@ import sys
 import tomllib
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 # Regex for extracting https:// URLs from text / comments.

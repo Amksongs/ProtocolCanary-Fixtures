@@ -13,12 +13,11 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -42,6 +41,7 @@ DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     "protocol-28",
     "protocol-29",
     "requirements-differential.txt",
+    "ruff.toml",
     "schemas",
     "tests",
     "tools",

@@ -549,6 +549,21 @@ For convenience, a `Makefile` wraps the commands CI runs:
 The underlying commands work identically if run directly, so `make` is
 not a requirement for contributing — it only saves typing.
 
+## Linting
+
+CI runs `ruff check .` with the rules in `ruff.toml`, using the pinned
+version (Ruff 0.17.2). To run it locally:
+
+```
+pip install ruff==0.17.2
+ruff check .          # report findings
+ruff check . --fix    # apply the safe automatic fixes
+```
+
+A new Python file has to pass `ruff check .`. A genuine exception goes in
+`ruff.toml` with a one-line reason, not in a blanket `# noqa`. Formatting
+(`ruff format`) is not enforced.
+
 ## Coverage
 
 CI measures branch coverage of the Python tools on one operating system

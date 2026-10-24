@@ -25,9 +25,9 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 # Optical opt-out label name
 OPT_OUT_LABEL = "no-changelog"
@@ -107,7 +107,7 @@ def is_governed_path(path: str | Path) -> bool:
     # Must start with protocol- and either have a child path or be a pack directory name
     if first.startswith("protocol-"):
         # Top-level standalone non-directory files like 'protocol-notes.txt' are not packs
-        if len(parts) > 1 or norm.endswith("/") or not ("." in first):
+        if len(parts) > 1 or norm.endswith("/") or "." not in first:
             return True
 
     return False
@@ -191,13 +191,12 @@ def get_git_diff_files(base_ref: str, repo_root: Path | None = None) -> list[str
                 res = subprocess.run(
                     cmd,
                     cwd=cwd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    capture_output=True,
                     text=True,
                     check=False,
                 )
             except FileNotFoundError:
-                raise RuntimeError("git executable not found in PATH")
+                raise RuntimeError("git executable not found in PATH") from None
             if res.returncode == 0:
                 return [line.strip() for line in res.stdout.splitlines() if line.strip()]
             last_error = res.stderr.strip()
@@ -222,7 +221,7 @@ def check_changelog(
     governed_files = [f for f in normalized_files if is_governed_path(f)]
 
     # Normalized labels
-    label_set = {str(l).strip().lower() for l in labels}
+    label_set = {str(label).strip().lower() for label in labels}
     has_opt_out = OPT_OUT_LABEL in label_set
 
     if not governed_files:
@@ -288,10 +287,10 @@ def build_markdown_summary(result: ChangelogCheckResult) -> str:
     title = f"### {status_icon} CHANGELOG Validation [{RULE_ID}]"
     lines = [title, ""]
     if result.passed:
-        lines.append(f"**Status:** PASSED")
+        lines.append("**Status:** PASSED")
         lines.append(f"\n{result.message}\n")
     else:
-        lines.append(f"**Status:** FAILED")
+        lines.append("**Status:** FAILED")
         lines.append(
             "\nA CHANGELOG entry is required for pull requests that change fixtures, schemas, or tools."
         )
@@ -362,8 +361,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Collect labels
     all_labels: set[str] = set()
-    for l in args.labels:
-        all_labels.add(l.strip().lower())
+    for label in args.labels:
+        all_labels.add(label.strip().lower())
     if args.labels_str:
         all_labels.update(parse_labels_string(args.labels_str))
 

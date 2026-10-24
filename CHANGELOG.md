@@ -12,6 +12,14 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Ruff lint check in CI (F-334). `ruff.toml` pins the rule set (`E`, `F`, `W`,
+  `I`, `B`, `UP`; `E501` and `E402` ignored with reasons) and the workflow runs
+  `ruff check .` with Ruff 0.17.2. The existing findings are fixed in the same
+  change: unused imports and variables, import order, quoted annotations,
+  `assertRaises(Exception)` narrowed to the errors the schema mirrors raise,
+  and three tests in `tests/test_validate.py` that a later test of the same
+  name was silently replacing now run under their own names. See
+  [PR #476](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/476).
 - The validator rejects non-public hosts (F-114). A `source_reference` URL or a
   verification record's `endpointHost` that names `localhost`, a local-only
   suffix (`.localhost`, `.local`, `.localdomain`, `.internal`, `.home.arpa`),

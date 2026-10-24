@@ -61,9 +61,9 @@ write_bytes_atomic = atomic_write.write_bytes_atomic
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.release import run_records
-from tools.common.json_strict import JSONInputError, load_json
 from tools.common import paths
+from tools.common.json_strict import JSONInputError, load_json
+from tools.release import run_records
 
 NAME = "protocolcanary-fixtures"
 MANIFEST_VERSION = 1

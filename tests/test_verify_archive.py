@@ -10,7 +10,6 @@ Run with: python3 -m unittest discover tests
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import io
 import json
 import os

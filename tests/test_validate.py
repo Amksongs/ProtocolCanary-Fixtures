@@ -2,6 +2,7 @@
 
 Run with: python3 -m unittest discover tests
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -15,7 +16,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -131,7 +132,7 @@ def run_main(argv: list[str]) -> tuple[int, str, str]:
 
 
 class ValidatorTests(unittest.TestCase):
-    def run_validation(self, files: dict[str, str]) -> "validate.Report":
+    def run_validation(self, files: dict[str, str]) -> validate.Report:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name, contents in files.items():
@@ -177,9 +178,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(report.errors, [])
 
     def test_rejects_duplicate_ids(self) -> None:
-        other = VALID_XDR.replace(
-            'category = "cap-0083"', 'category = "cap-0083-2"'
-        )
+        other = VALID_XDR.replace('category = "cap-0083"', 'category = "cap-0083-2"')
         report = self.run_validation({"a.toml": VALID_XDR, "b.toml": other})
         self.assertTrue(any("duplicate fixture id" in e for e in report.errors))
 
@@ -540,7 +539,7 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("does not resolve to an existing file" in e for e in report.errors))
 
-    def test_rejects_missing_expected_file(self) -> None:
+    def test_rejects_missing_expected_file_with_xdr_extension(self) -> None:
         bad = VALID_XDR + '\nexpected_file = "does-not-exist.xdr.b64"\n'
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(
@@ -901,7 +900,7 @@ class ValidatorTests(unittest.TestCase):
                 report = self.run_validation({"a.toml": bad})
                 self.assertTrue(any("too vague" in e for e in report.errors), report.errors)
 
-    def test_rejects_missing_description(self) -> None:
+    def test_rejects_missing_description_line(self) -> None:
         bad = VALID_XDR.replace('description = "example"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("description" in e for e in report.errors))
@@ -936,7 +935,7 @@ class ValidatorTests(unittest.TestCase):
             report.errors,
         )
 
-    def test_rejects_empty_id(self) -> None:
+    def test_rejects_empty_id_reports_must_not_be_empty(self) -> None:
         bad = VALID_XDR.replace(
             'id = "p28-xdr-cap83-example"', 'id = ""'
         )
@@ -949,9 +948,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("description" in e for e in report.errors))
 
     def test_rejects_uppercase_id(self) -> None:
-        bad = VALID_XDR.replace(
-            'id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"'
-        )
+        bad = VALID_XDR.replace('id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
 
@@ -1691,7 +1688,7 @@ field = "events"
         self.assertTrue(any("topics has more than 5 entries" in e for e in rep.errors))
 
     def test_rpc_request_structural_edge_cases(self) -> None:
-        from tools.validate.validate import validate_rpc_request, Report
+        from tools.validate.validate import Report, validate_rpc_request
 
         # 1. request is not a dict
         rep = Report()
@@ -1774,7 +1771,7 @@ field = "events"
         self.assertTrue(any("a topics entry must contain only strings" in e for e in rep.errors))
 
     def test_soroban_fixture_requires_expect(self) -> None:
-        bad = VALID_SOROBAN.replace("[expect]\nkind = \"simulation-success\"\n", "")
+        bad = VALID_SOROBAN.replace('[expect]\nkind = "simulation-success"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'expect'" in e for e in report.errors))
 
@@ -2136,14 +2133,20 @@ field = "events"
         self.assertTrue(any("'expect' must be a table" in e for e in report.errors))
 
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
-        bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"')
+        bad = VALID_XDR.replace(
+            'value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"'
+        )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "value_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "value_base64" in e for e in report.errors)
+        )
 
     def test_rejects_malformed_padding_base64(self) -> None:
         bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "AAAAA"')
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "value_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "value_base64" in e for e in report.errors)
+        )
 
     def test_rejects_invalid_base64_in_expected_base64(self) -> None:
         bad = (
@@ -2151,7 +2154,9 @@ field = "events"
             + 'expected_base64 = "not-valid-base64!!!"\n'
         )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "expected_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "expected_base64" in e for e in report.errors)
+        )
 
     def test_accepts_valid_base64_in_encode_equals(self) -> None:
         good = (
@@ -2219,7 +2224,7 @@ class ExpectedBase64KindTests(unittest.TestCase):
             text += f'expected_base64 = "{expected}"\n'
         return text
 
-    def run_validation(self, contents: str) -> "validate.Report":
+    def run_validation(self, contents: str) -> validate.Report:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, "a.toml", contents)
@@ -2333,7 +2338,7 @@ class QuietFlagTests(unittest.TestCase):
         # a warning, giving --quiet something to suppress.
         real = validate.validate_directory
 
-        def wrapper(root: Path, *args, **kwargs) -> "validate.Report":
+        def wrapper(root: Path, *args, **kwargs) -> validate.Report:
             report = real(root, *args, **kwargs)
             report.warning(Path(root) / "injected.toml", "injected warning")
             return report
@@ -2491,7 +2496,7 @@ class JsonFormatTests(unittest.TestCase):
         # what to do with warnings, so the JSON document always carries them.
         real = validate.validate_directory
 
-        def wrapper(root: Path, *args, **kwargs) -> "validate.Report":
+        def wrapper(root: Path, *args, **kwargs) -> validate.Report:
             report = real(root, *args, **kwargs)
             report.warning(Path(root) / "injected.toml", "injected warning")
             return report
@@ -3198,7 +3203,7 @@ class VerificationEvidenceTests(unittest.TestCase):
     # The clock every record in this class is judged against. It is injected
     # rather than read from the machine, so the tests never depend on the
     # date they happen to run on (F-115, issue #397).
-    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=UTC)
 
     LIVE = {
         "verificationVersion": 1,
@@ -3452,7 +3457,7 @@ class FutureCheckedAtTests(unittest.TestCase):
     record would look "verified" for years.
     """
 
-    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=UTC)
 
     def record(self, checked_at: str) -> dict:
         return {
@@ -3557,7 +3562,7 @@ class FutureCheckedAtTests(unittest.TestCase):
                 report.errors,
             )
             # The same file is fine when the record is not in the future.
-            later = datetime(2100, 1, 1, tzinfo=timezone.utc)
+            later = datetime(2100, 1, 1, tzinfo=UTC)
             report = validate.Report()
             self.assertIsNotNone(
                 validate.validate_evidence_file(path, report, now=later)

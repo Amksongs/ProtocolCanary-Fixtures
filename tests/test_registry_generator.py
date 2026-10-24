@@ -99,7 +99,7 @@ def fixture_toml(fixture_id: str, protocol: int = 28, extra: str = "") -> bytes:
         f'category = "cap-0083"\ndescription = "d {fixture_id}"\n'
         f'type = "StellarValue"\nkind = "decode-success"\nvalue_base64 = "AAAAAA=="\n'
         f"{extra}"
-    ).encode("utf-8")
+    ).encode()
 
 
 class PackCase(unittest.TestCase):

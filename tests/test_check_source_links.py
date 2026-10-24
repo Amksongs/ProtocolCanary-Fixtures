@@ -13,23 +13,22 @@ environment variable that could weaken the policy used in CI.
 from __future__ import annotations
 
 import io
-import os
 import socket
 import tempfile
 import threading
 import time
-import urllib.error
 import unittest
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tools.validate.check_source_links import (
+    DEFAULT_MAX_REDIRECTS,
     AddressPolicy,
     CheckResult,
-    clean_comment_url,
     check_link,
-    DEFAULT_MAX_REDIRECTS,
+    clean_comment_url,
     extract_links_from_file,
     generate_markdown_table,
     main,

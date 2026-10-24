@@ -78,7 +78,7 @@ class ReplayServer:
             self._served += 1
             return step
 
-    def __enter__(self) -> "ReplayServer":
+    def __enter__(self) -> ReplayServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):

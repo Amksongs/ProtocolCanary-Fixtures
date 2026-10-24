@@ -23,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.common.atomic_write import write_bytes_atomic
 
-
 # Resolve paths relative to the repository root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 

@@ -385,7 +385,6 @@ class ValidatorNegativeTests(unittest.TestCase):
         # schemas/fixture-v1.schema.json closes [expect] with
         # additionalProperties: false; the validator's allow-list must name the
         # same two keys or the two will drift.
-        import json
 
         schema = json.loads(
             (REPO_ROOT / "schemas" / "fixture-v1.schema.json").read_text(encoding="utf-8")

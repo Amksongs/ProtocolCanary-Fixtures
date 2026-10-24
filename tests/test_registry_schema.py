@@ -25,6 +25,10 @@ _ENTRY_FIELDS = set(SCHEMA["properties"]["fixtures"]["items"]["properties"])
 _PAYLOAD_FIELDS = {"path", "sha256"}
 
 
+# What the mirror checks raise: failed asserts, absent keys, unparsable values.
+_VIOLATION = (AssertionError, KeyError, ValueError)
+
+
 def check_manifest(record: dict) -> None:
     """Mirror of registry-v1.schema.json; raises AssertionError on violation."""
     assert set(record) <= _TOP_FIELDS, f"undeclared: {set(record) - _TOP_FIELDS}"
@@ -95,25 +99,25 @@ class RegistrySchemaTest(unittest.TestCase):
     def test_bad_digest_rejected(self) -> None:
         record = copy.deepcopy(MANIFEST)
         record["packDigest"] = SHA
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_manifest(record)
 
     def test_missing_required_field_rejected(self) -> None:
         record = copy.deepcopy(MANIFEST)
         del record["fixtures"]
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_manifest(record)
 
     def test_unsupported_version_rejected(self) -> None:
         record = copy.deepcopy(MANIFEST)
         record["registryVersion"] = 2
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_manifest(record)
 
     def test_undeclared_property_rejected(self) -> None:
         record = copy.deepcopy(MANIFEST)
         record["fixtures"][0]["bogus"] = 1
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_manifest(record)
 
     def test_invalid_registry_vectors_name_the_failed_rule(self) -> None:

@@ -52,6 +52,7 @@ at a later instant; a record dated 2099 would otherwise look "verified"
 for 73 years. A record may be up to five minutes ahead of this run's clock,
 the tolerance for skew between the verifier's machine and this one.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,7 +69,7 @@ import tomllib
 import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -428,7 +429,7 @@ class Report:
     ) -> None:
         self.warning_entries.append(self._diagnostic(path, message, fixture_id, line))
 
-    def merge(self, other: "Report") -> None:
+    def merge(self, other: Report) -> None:
         """Absorb another report's diagnostics (used to combine per-root reports)."""
         self.error_entries.extend(other.error_entries)
         self.warning_entries.extend(other.warning_entries)
@@ -502,7 +503,7 @@ def find_unsafe_characters(text: str) -> list[UnsafeCharacter]:
     return findings
 
 
-def report_unsafe_characters(path: Path, text: str, report: "Report") -> None:
+def report_unsafe_characters(path: Path, text: str, report: Report) -> None:
     """Report every forbidden code point in ``text`` (F-048)."""
     for finding in find_unsafe_characters(text):
         character = chr(finding.codepoint)
@@ -1418,7 +1419,7 @@ def validate_rpc_request(method: str, data: dict, path: Path, report: Report) ->
                             line=_field_line(path, "request"),
                         )
                     else:
-                        for row_idx, row in enumerate(topics):
+                        for row in topics:
                             if not isinstance(row, list):
                                 report.error(
                                     path,
@@ -2302,12 +2303,12 @@ def _parse_instant(value: str) -> datetime:
         )
     else:
         parsed = datetime.strptime(head, "%Y-%m-%dT%H:%M:%S")
-    return parsed.replace(tzinfo=timezone.utc)
+    return parsed.replace(tzinfo=UTC)
 
 
 def _format_instant(value: datetime) -> str:
     """A datetime as an RFC 3339 UTC instant, the form ``checkedAt`` uses."""
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _check_not_future(value: str, now: datetime) -> str | None:
@@ -2325,7 +2326,7 @@ def _check_not_future(value: str, now: datetime) -> str | None:
         raise ValueError("now must be a timezone-aware datetime")
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be a timezone-aware datetime")
-    if _parse_instant(value) > now.astimezone(timezone.utc) + CLOCK_SKEW_TOLERANCE:
+    if _parse_instant(value) > now.astimezone(UTC) + CLOCK_SKEW_TOLERANCE:
         return (
             f"checkedAt {value!r} is later than the current time "
             f"{_format_instant(now)} (allowed clock skew "
@@ -2363,7 +2364,7 @@ def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
         return ["a verification record must be a JSON object"]
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     problems: list[str] = []
     allowed = set(EVIDENCE_REQUIRED_FIELDS) | set(EVIDENCE_OPTIONAL_FIELDS)
@@ -2662,7 +2663,7 @@ def main(argv: list[str]) -> int:
         # One clock for the whole run: every record is judged against the
         # same instant, so two records cannot disagree because the run
         # straddled a second boundary.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for path in evidence_files:
             record = validate_evidence_file(path, combined, now=now)
             if record is not None:
