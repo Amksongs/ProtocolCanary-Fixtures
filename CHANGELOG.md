@@ -12,6 +12,45 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/validate/check_source_links.py` escapes every value it writes into the
+  Markdown job summary (F-107). The URL, the fixture file name and the result
+  detail come from fixture content, file names and exception text, so a fixture
+  author could add table cells, split a row across lines or smuggle a live link
+  or raw HTML into the summary maintainers read; even a plain `|` in a URL broke
+  the table. Line breaks now become a space, `&`, `<`, `>`, `[`, `]`, backticks
+  and backslashes become HTML entities, and `|` becomes `\|`, so every row keeps
+  exactly three cells and nothing in a cell can form a link, tag or code span.
+  Ordinary URLs contain none of those characters and are unchanged. Five new
+  tests in `tests/test_check_source_links.py`. Closes
+  [issue #389](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/389).
+  ([PR #435](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/435))
+
+- `tools/validate/jsonschema_lite.py` supports the `allOf` keyword (F-113): the
+  instance is checked against every subschema in order and each failure is
+  reported, with the subschema's location in a schema error such as
+  `$.allOf[1]`. Sibling keywords are still applied next to `allOf` (including
+  when the instance has the wrong type), an empty or non-list `allOf` and an
+  entry that is not a schema are schema errors, and a local `$ref` inside a
+  subschema resolves as before. A schema that uses an unsupported keyword
+  such as `if` is still rejected, which keeps the fixture schema's behavior in
+  `tests/test_validate.py` unchanged. Eight new tests in
+  `tests/test_jsonschema_lite.py`. Closes
+  [issue #395](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/395).
+  ([PR #417](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/417))
+
+- `tools/validate/check_root_files.py` (F-054): a CI guard, run by the validate
+  workflow, that fails when a file or directory outside an explicit allow-list
+  appears in the repository root (`protocol-NN/` packs are always allowed), so a
+  stray scratch file can no longer be committed unnoticed. It reads the root
+  from `git ls-files` (falling back to a directory scan outside a git
+  checkout), exits 1 and names each unexpected entry, and uses only the
+  standard library. The same change removes the three stray root files it
+  would have caught: `PR_DESCRIPTION.md`, `diff.txt` and `main_CONTRIBUTING.md`.
+  `tests/test_check_root_files.py` covers the allow-list, path normalization,
+  the git and fallback listings and the exit codes. Closes
+  [issue #328](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/328).
+  ([PR #399](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/399))
+
 - Protocol 29 coverage now includes a Protocol 28-versus-29 RPC mismatch
   fixture, with separate Testnet and Futurenet verification records whose
   passphrases are validated against their network names. The release pack
