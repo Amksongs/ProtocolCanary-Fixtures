@@ -64,6 +64,22 @@ near a day boundary ambiguous by up to a day, defeating that purpose.
    `stellar-xdr` 28.0.0 crate against the CAP-0083 `StellarValue` type",
    not "looks right". If the header comment records *when* an observation
    was made, use the [date convention above](#recording-verification-dates).
+
+   The validator also rejects non-public URL hosts in `source_reference` and
+   non-public `endpointHost` values in verification evidence. It rejects
+   localhost and common local-only suffixes, explicitly denied IPv4 ranges,
+   and ambiguous noncanonical numeric IPv4 forms; bracketed IPv6 literals are
+   not accepted in `source_reference` URLs. This policy is checked offline
+   and does not resolve DNS, so it cannot detect a public-looking name such as
+   `127.0.0.1.nip.io` that resolves to a private address. DNS, redirect, and
+   runtime protections are outside this issue and belong to issue #390.
+   One exception keeps the capture tool's dry run working: a verification
+   record whose `network.name` is `local-mock` (what
+   `tools/evidence/capture_live.py --local-endpoint` writes when it is pointed
+   at the loopback mock server) may name `127.0.0.1` or `localhost` as its
+   `endpointHost`. No other non-public host is accepted, with or without that
+   label, and a record for a real network (`testnet`, `mainnet`, `futurenet`)
+   may never name a loopback host.
 3. **Define a stable ID.** Follow `p<protocol>-<surface>-<slug>` (e.g.
    `p28-xdr-cap85-external-ref-roundtrip`). IDs are lowercase, unique
    across the *entire* repository (the loader validates this across all

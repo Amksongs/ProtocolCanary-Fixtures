@@ -59,6 +59,7 @@ import base64
 import binascii
 import hashlib
 import importlib.util
+import ipaddress
 import json
 import math
 import re
@@ -521,6 +522,63 @@ def _is_pinned_ref(ref: str) -> bool:
     return bool(_COMMIT_REF_RE.fullmatch(ref) or _TAG_REF_RE.fullmatch(ref))
 
 
+_NON_PUBLIC_HOST_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".home.arpa",
+)
+_NON_PUBLIC_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+    )
+)
+
+
+def non_public_host_problem(host: str) -> str | None:
+    """Describe a host rejected by the offline non-public host policy.
+
+    Hostname checks are deterministic and do not resolve DNS. Only the
+    explicitly listed IPv4 networks are denied; other canonical IPv4 literals
+    are permitted.
+    """
+    normalized = host.lower()
+    if normalized.endswith("."):
+        normalized = normalized[:-1]
+
+    if normalized == "localhost" or normalized.endswith(_NON_PUBLIC_HOST_SUFFIXES):
+        return "uses a local or internal hostname"
+
+    try:
+        address = ipaddress.IPv4Address(normalized)
+    except ipaddress.AddressValueError:
+        address = None
+    if address is not None:
+        if any(address in network for network in _NON_PUBLIC_IPV4_NETWORKS):
+            return "uses an IPv4 address in a non-public range"
+        return None
+
+    final_label = normalized.rsplit(".", 1)[-1]
+    if final_label.isdecimal() or final_label.startswith("0x"):
+        return "uses an ambiguous noncanonical numeric host"
+    return None
+
+
 def check_source_reference(value: str) -> str | None:
     """Return a message describing why ``value`` is not an acceptable
     ``source_reference``, or ``None`` when it is.
@@ -555,6 +613,16 @@ def check_source_reference(value: str) -> str | None:
         return f"has no valid host name in {value!r}"
     if parts.username is not None or parts.password is not None:
         return "must not embed credentials (user@host) in the URL"
+    if parts.netloc.startswith("["):
+        try:
+            ipaddress.IPv6Address(raw_host)
+        except ipaddress.AddressValueError:
+            pass
+        else:
+            return "must not use a bracketed IPv6 literal as the URL host"
+    host_problem = non_public_host_problem(raw_host)
+    if host_problem:
+        return f"uses a non-public host: {host_problem}"
 
     lower_host = raw_host.lower()
     if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for ch in lower_host):
@@ -2168,6 +2236,23 @@ KNOWN_NETWORK_PASSPHRASES = {
 }
 _EVIDENCE_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _EVIDENCE_HOST_RE = re.compile(r"[^/:?#@\s\\]+")
+
+# tools/evidence/capture_live.py --local-endpoint writes dry-run records from a
+# loopback mock server and labels their network "local-mock". Those records are
+# scratch output for exercising the tool without a network, so under that label
+# (and only for these two loopback names) a loopback endpointHost is accepted.
+# Every other non-public host stays an error, with or without the label.
+_LOCAL_MOCK_NETWORK = "local-mock"
+_LOCAL_MOCK_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _is_local_mock_dry_run(record: dict, host: str) -> bool:
+    network = record.get("network")
+    return (
+        isinstance(network, dict)
+        and network.get("name") == _LOCAL_MOCK_NETWORK
+        and host.lower() in _LOCAL_MOCK_HOSTS
+    )
 _EVIDENCE_INSTANT_RE = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z"
 )
@@ -2352,11 +2437,16 @@ def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
                 problems.append(f"unknown field {name!r} in network")
 
     host = record.get("endpointHost")
-    if host is not None and not (isinstance(host, str) and _EVIDENCE_HOST_RE.fullmatch(host)):
-        problems.append(
-            "endpointHost must be a host name only: no scheme, port, path, query, "
-            "credentials or whitespace"
-        )
+    if host is not None:
+        if not (isinstance(host, str) and _EVIDENCE_HOST_RE.fullmatch(host)):
+            problems.append(
+                "endpointHost must be a host name only: no scheme, port, path, query, "
+                "credentials or whitespace"
+            )
+        else:
+            host_problem = non_public_host_problem(host)
+            if host_problem and not _is_local_mock_dry_run(record, host):
+                problems.append(f"endpointHost uses a non-public host: {host_problem}")
 
     reference = record.get("evidenceRef")
     if reference is not None:
