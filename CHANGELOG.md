@@ -12,6 +12,27 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/validate/check_source_links.py` only contacts publicly routable
+  destinations (F-108). Fixture content is contributor-controlled, but the
+  scheduled job runs on the repository runner's network, so a `source_reference`
+  such as `https://169.254.169.254/`, `https://localhost/` or a public URL that
+  redirects to a private one could make the runner request an internal endpoint
+  and report its reachability in the job summary. The destination is now vetted
+  before every request, including each redirect hop and the empty-POST fallback
+  after an HTTP 405: IP literals (including the decimal, hexadecimal and octal
+  IPv4 forms and IPv6) are judged without DNS, a name is refused if any
+  resolved address is loopback, private, link-local, unique-local,
+  carrier-grade NAT, multicast, reserved or unspecified (IPv4-mapped IPv6 is
+  unwrapped first), and the socket dials the exact address that was validated
+  while TLS keeps using the original host name, so a changed DNS answer cannot
+  move the connection. A refusal reads `Failed (refused: non-public address)`
+  and never names the resolved address. There is no flag or environment
+  variable to weaken the policy; tests inject one. Documented in
+  `CONTRIBUTING.md`; the tests replace DNS and the socket layer with fakes.
+  Closes
+  [issue #390](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/390).
+  ([PR #436](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/436))
+
 - `tools/validate/check_source_links.py` escapes every value it writes into the
   Markdown job summary (F-107). The URL, the fixture file name and the result
   detail come from fixture content, file names and exception text, so a fixture
