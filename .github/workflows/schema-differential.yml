@@ -1,0 +1,47 @@
+name: schema-differential
+
+on:
+  # The differential test needs a third-party package that the default CI
+  # install deliberately does not have, so it runs on demand and on a
+  # schedule rather than on every pull request. The default `validate` job
+  # stays dependency-free and continues to run the whole suite.
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  differential:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Same interpreter pin as the validate workflow, so the differential
+          # comparison runs against the interpreter the default suite uses.
+          python-version: "3.11.16"
+
+      - name: Install pinned differential dependencies
+        # --require-hashes makes pip verify every downloaded artifact against
+        # the SHA-256 in requirements-differential.txt, so a compromised or
+        # substituted wheel cannot be installed here.
+        run: >
+          python3 -m pip install --disable-pip-version-check
+          --require-hashes -r requirements-differential.txt
+
+      - name: Run the differential test
+        # The test skips itself with a clear message when jsonschema is
+        # missing, so it also passes in an environment without the optional
+        # dependency. Here the dependency is installed, so it must run.
+        run: python3 -m unittest tests.test_jsonschema_differential -v
+
+      - name: Confirm the default suite still passes without the dependency
+        # The reference package must not leak into the default suite: the
+        # tools and the other tests never import a third-party package.
+        run: python3 -m pip uninstall --yes jsonschema
+
+      - name: Default test suite without third-party packages
+        run: python3 -m unittest discover tests

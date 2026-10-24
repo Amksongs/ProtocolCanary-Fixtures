@@ -637,3 +637,27 @@ The script prints a markdown table with `URL`, `Fixture File`, and `Result`
 (`OK`, `Failed`, or `Inconclusive`). HTTP 429 rate limits are classified as
 inconclusive and do not trigger a non-zero exit code.
 
+### Address policy: public destinations only
+
+Fixture files are contributor-controlled content, but the scheduled job runs
+with the repository runner's network, so the checker only ever contacts
+publicly routable internet hosts. Before **every** request -- the first URL,
+every redirect hop, and the empty-POST fallback used after an HTTP 405 -- the
+destination's host is resolved with `socket.getaddrinfo` and the request is
+refused (`Failed (refused: non-public address)`) if **any** answer is not
+globally routable. Refused categories: loopback, private, link-local
+(`169.254.0.0/16`, `fe80::/10`), unique-local (`fc00::/7`), carrier-grade NAT
+(`100.64.0.0/10`), multicast, reserved and unspecified addresses, after
+unwrapping IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`). IP literals in all
+supported notations are recognised without any DNS query, including decimal,
+ hexadecimal and octal IPv4 forms (`http://2130706433/`, `http://0x7f.1/`,
+`http://0177.0.0.1/`) and bracketed IPv6 (`http://[::1]/`).
+
+The socket then dials the exact address that was validated, under the
+original host name (so TLS server name indication and certificate
+verification are unaffected); the name is never resolved a second time, so a
+changed DNS answer cannot redirect the connection after validation. The
+policy is enforced in code and defaults to strict: there is no command-line
+flag or environment variable that can weaken the job's policy -- tests that
+need to reach a loopback test server inject a permissive policy in-process.
+

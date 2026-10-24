@@ -31,7 +31,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPARE_PATH = REPO_ROOT / "tools" / "inventory" / "compare.py"
-EMPTY_REGISTRY = REPO_ROOT / "protocol-29" / "registry-v1.json"
+PROTOCOL29_REGISTRY = REPO_ROOT / "protocol-29" / "registry-v1.json"
 
 _spec = importlib.util.spec_from_file_location("inventory_compare", COMPARE_PATH)
 compare = importlib.util.module_from_spec(_spec)
@@ -717,7 +717,7 @@ class CommandLineTests(unittest.TestCase):
 
 
 class EmptyBaselineTests(unittest.TestCase):
-    """The committed empty protocol-29 registry is a real, empty inventory."""
+    """The committed Protocol 29 registry is compared with engine inventories."""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="inventory-empty-"))
@@ -735,12 +735,15 @@ class EmptyBaselineTests(unittest.TestCase):
             self.tmp / "inventory.json", inventory([], protocol=protocol)
         )
 
-    def test_the_committed_empty_baseline_matches_an_empty_inventory(self) -> None:
-        code, out, err = self.run_tool(str(self.empty_inventory()), str(EMPTY_REGISTRY))
-        self.assertEqual(code, 0, err)
-        self.assertIn("the same 0 fixture(s)", out)
+    def test_empty_inventory_reports_fixture_in_committed_registry(self) -> None:
+        code, out, _ = self.run_tool(
+            str(self.empty_inventory()), str(PROTOCOL29_REGISTRY)
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("missing from the engine inventory (1)", out)
+        self.assertIn("p29-rpc-network-mismatch", out)
 
-    def test_an_engine_fixture_absent_from_the_empty_baseline_is_extra(self) -> None:
+    def test_an_engine_fixture_absent_from_the_registry_is_extra(self) -> None:
         path = write_json(
             self.tmp / "inventory.json",
             inventory(
@@ -748,7 +751,7 @@ class EmptyBaselineTests(unittest.TestCase):
                 protocol=29,
             ),
         )
-        code, out, _ = self.run_tool(str(path), str(EMPTY_REGISTRY))
+        code, out, _ = self.run_tool(str(path), str(PROTOCOL29_REGISTRY))
         self.assertEqual(code, 1)
         self.assertIn("extra in the engine inventory (1)", out)
         self.assertIn("p29-rpc-health", out)

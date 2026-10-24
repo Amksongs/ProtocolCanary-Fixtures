@@ -70,6 +70,10 @@ JAVASCRIPT_LITE_SCOPE = {
     "proposed/simulation-resource-estimate.expect.json": (
         "tests/test_sim_resource_fixtures.py"
     ),
+    # tests/test_run_record_schema.py validates every run record against the
+    # run-record schema with jsonschema_lite, so the reader and the schema
+    # stay pinned together (issue #367).
+    "run-record-v1.schema.json": "tests/test_run_record_schema.py",
 }
 
 # The schemas jsonschema_lite is never used with as-is, and what validates

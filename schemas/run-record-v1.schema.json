@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/ProtocolCanary-Fixtures/main/schemas/run-record-v1.schema.json",
+  "title": "Protocol Canary pack-by-engine run record (runRecordVersion 1)",
+  "description": "A record of one exact engine version being run against one exact pack (issue #367). The release manifest sets compatibleEngines[].verified to true only from a record like this one: a record is written by whoever actually ran the pair, never by the manifest tool.",
+  "type": "object",
+  "required": [
+    "runRecordVersion",
+    "engineVersion",
+    "packDigest",
+    "checkedAt",
+    "verifier",
+    "outcome"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "runRecordVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "engineVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "packDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "checkedAt": {
+      "type": "string",
+      "description": "The instant the run happened: RFC 3339 UTC with a Z. A date alone is not an instant and is refused.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "verifier": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["passed", "failed"]
+    },
+    "evidenceRef": {
+      "type": ["string", "null"],
+      "minLength": 1
+    }
+  }
+}
