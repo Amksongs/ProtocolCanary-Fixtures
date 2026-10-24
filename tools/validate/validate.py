@@ -2236,6 +2236,23 @@ KNOWN_NETWORK_PASSPHRASES = {
 }
 _EVIDENCE_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _EVIDENCE_HOST_RE = re.compile(r"[^/:?#@\s\\]+")
+
+# tools/evidence/capture_live.py --local-endpoint writes dry-run records from a
+# loopback mock server and labels their network "local-mock". Those records are
+# scratch output for exercising the tool without a network, so under that label
+# (and only for these two loopback names) a loopback endpointHost is accepted.
+# Every other non-public host stays an error, with or without the label.
+_LOCAL_MOCK_NETWORK = "local-mock"
+_LOCAL_MOCK_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _is_local_mock_dry_run(record: dict, host: str) -> bool:
+    network = record.get("network")
+    return (
+        isinstance(network, dict)
+        and network.get("name") == _LOCAL_MOCK_NETWORK
+        and host.lower() in _LOCAL_MOCK_HOSTS
+    )
 _EVIDENCE_INSTANT_RE = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z"
 )
@@ -2428,7 +2445,7 @@ def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
             )
         else:
             host_problem = non_public_host_problem(host)
-            if host_problem:
+            if host_problem and not _is_local_mock_dry_run(record, host):
                 problems.append(f"endpointHost uses a non-public host: {host_problem}")
 
     reference = record.get("evidenceRef")

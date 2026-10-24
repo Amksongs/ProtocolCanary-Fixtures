@@ -3384,6 +3384,25 @@ class VerificationEvidenceTests(unittest.TestCase):
         self.assertTrue(any("host name only" in p for p in found), found)
         self.assertFalse(any("non-public host" in p for p in found), found)
 
+    def test_a_local_mock_dry_run_may_name_a_loopback_endpoint_host(self) -> None:
+        # capture_live.py --local-endpoint records the loopback mock under the
+        # network name "local-mock"; that is the one place a loopback host is
+        # accepted, and the exemption does not stretch to other hosts or labels.
+        mock_network = dict(self.LIVE["network"], name="local-mock")
+        for host in ("127.0.0.1", "localhost", "LOCALHOST"):
+            with self.subTest(host=host):
+                self.assertEqual(self.problems(network=mock_network, endpointHost=host), [])
+        for host in ("10.0.0.5", "169.254.169.254", "192.168.1.1", "127.0.0.2", "service.local", "2130706433"):
+            with self.subTest(still_rejected=host):
+                found = self.problems(network=mock_network, endpointHost=host)
+                self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+        for name in ("testnet", "mainnet", "futurenet", "LOCAL-MOCK", "local-mock "):
+            with self.subTest(other_network=name):
+                found = self.problems(network=dict(self.LIVE["network"], name=name), endpointHost="127.0.0.1")
+                self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+        found = self.problems(network=None, endpointHost="127.0.0.1")
+        self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+
     def test_evidence_ref_must_stay_inside_the_repository(self) -> None:
         for bad in ("/etc/passwd", "../outside.json", "a/../b.json", "a\\b.json", "a//b.json"):
             with self.subTest(bad):

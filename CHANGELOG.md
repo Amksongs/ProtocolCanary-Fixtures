@@ -22,7 +22,10 @@ discussion and diff. New entries must include that link; see
   deterministic (`non_public_host_problem` in `tools/validate/validate.py`); it
   does not resolve DNS, so a public-looking name such as `127.0.0.1.nip.io`
   that resolves to a private address is out of its reach. DNS, redirect and
-  runtime protection is the link checker's job (F-108). Documented in
+  runtime protection is the link checker's job (F-108). The one exception is
+  a dry-run record whose `network.name` is `local-mock` (written by
+  `capture_live.py --local-endpoint`), which may name `127.0.0.1` or
+  `localhost`. Documented in
   `CONTRIBUTING.md`; `tests/test_validate.py` covers each range and form. Closes
   [issue #396](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/396).
   ([PR #414](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/414))
