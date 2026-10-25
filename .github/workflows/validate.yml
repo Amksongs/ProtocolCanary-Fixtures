@@ -86,7 +86,17 @@ jobs:
           git diff --exit-code -- protocol-28/registry-v1.json protocol-29/registry-v1.json
 
       - name: Repository tests
-        run: python3 -m unittest discover tests -v
+        run: |
+          set +e
+          python3 -m unittest discover tests -v > tests.log 2>&1
+          status=$?
+          cat tests.log
+          if [ "$status" -ne 0 ]; then
+            grep -E "^(FAIL|ERROR):" tests.log | while IFS= read -r line; do
+              echo "::error title=unittest::$line"
+            done
+          fi
+          exit "$status"
 
   coverage:
     # Branch coverage of tools/ on a single operating system (ubuntu-latest),
