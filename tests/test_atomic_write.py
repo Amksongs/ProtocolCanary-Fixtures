@@ -350,18 +350,14 @@ class BaselineHashTest(unittest.TestCase):
     """The release artifacts must stay byte-for-byte identical (F-081).
 
     These are the SHA-256 hashes the four protocol-28 release artifacts had
-    when the baselines were last recorded. The atomic write must not alter a
+    *before* the atomic-write change. The atomic write must not alter a
     single byte of any of them: it changes how the bytes reach the disk, not
     which bytes they are. A change here is a release-integrity regression --
     a consumer pinning these hashes would break, and a consumer verifying a
-    checksum against a half-written archive would be defeated -- so a change
-    is only legitimate when the pack itself changed deliberately (here, the
-    two cap-0083/cap-0085 v2 fixtures) and the baselines are recomputed with
-    the commands below.
+    checksum against a half-written archive would be defeated.
 
-    The values were originally recorded by building the same four artifacts
-    from ``upstream/main`` at ec10f95, before the atomic-write change, and
-    were recomputed when the v2 fixtures were added.
+    The values were recorded by building the same four artifacts from
+    ``upstream/main`` at ec10f95, before this branch changed any tool.
 
     Recompute them with:
         python3 tools/pack/pack.py protocol-28 --version 1.0.0 --output-dir D
@@ -374,13 +370,13 @@ class BaselineHashTest(unittest.TestCase):
 
     BASELINE = {
         "protocolcanary-fixtures-1.0.0.tar.gz":
-            "7291a84f3447bb48608139da1561ef87e0028ac07f40735bd1d23e2de18a8f0e",
+            "9d551563c6387ca7806b4166bef0b5215064390303676627b0a4b276ff3efbdc",
         "protocolcanary-fixtures-1.0.0.manifest.json":
-            "eb313f3c7511926b6daedfb0c4cc670a183a8c1585de04140c207c86f653d8aa",
+            "e1d2095ffbab8dfe2ac8b6b8d4e24c9ef7d3c791251e8d2b3bc7717789cf0398",
         "protocolcanary-fixtures-1.0.0.tar.gz.sha256":
-            "40c82e968b55c1dedb0ae5b3c18adb60d107557d5b0f60edd8b4a0e7fc9c7d1d",
+            "2b3c13610def028942c7df70628788f692c57a7b31d275bcf23e1a6073c5f7fc",
         "registry-v1.json":
-            "f2bf42a7c94574db8bdb04e434f55faff323d11dfbe03b372be69bf43ba9d8be",
+            "ebe8f2ab39ed8ac9267444b111d12dca435ec52cd38c4b3ae53e8b205ddc23f8",
     }
 
     def setUp(self) -> None:

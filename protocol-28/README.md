@@ -1,6 +1,6 @@
 # Protocol 28 compatibility pack
 
-This pack contains **92 fixtures**.
+This pack contains **90 fixtures**.
 
 Implemented in Stellar Core 28.0.0, Stellar RPC 28.0.0 (integration-tested
 against Soroban host 28.0.1), and the official `stellar-xdr` 28.0.0 crate.
@@ -23,10 +23,8 @@ enumeration.
 |---|---|---|---|
 | [`xdr/cap-0083/p28-xdr-cap83-empty-tx-set.toml`](xdr/cap-0083/p28-xdr-cap83-empty-tx-set.toml) | xdr | CAP-0083 | A `StellarValue` using `STELLAR_VALUE_EMPTY_TX_SET` round-trips byte-for-byte. |
 | [`xdr/cap-0083/p28-xdr-cap83-empty-tx-set-malformed.toml`](xdr/cap-0083/p28-xdr-cap83-empty-tx-set-malformed.toml) | xdr | CAP-0083 | A truncated `StellarValue` using `STELLAR_VALUE_EMPTY_TX_SET` is correctly rejected, not silently accepted. |
-| [`xdr/cap-0083/p28-xdr-cap83-empty-tx-set-v2.toml`](xdr/cap-0083/p28-xdr-cap83-empty-tx-set-v2.toml) | xdr | CAP-0083 | A `StellarValue` using `STELLAR_VALUE_EMPTY_TX_SET` with different hash values round-trips byte-for-byte. |
 | [`xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml`](xdr/cap-0085/p28-xdr-cap85-external-ref-roundtrip.toml) | xdr | CAP-0085 | A `ContractExecutable` using `CONTRACT_EXECUTABLE_EXTERNAL_REF` round-trips byte-for-byte. |
 | [`xdr/cap-0085/p28-xdr-cap85-external-ref-malformed.toml`](xdr/cap-0085/p28-xdr-cap85-external-ref-malformed.toml) | xdr | CAP-0085 | A truncated `ContractExecutable::ExternalRef` encoding is correctly rejected, not silently accepted. |
-| [`xdr/cap-0085/p28-xdr-cap85-external-ref-malformed-v2.toml`](xdr/cap-0085/p28-xdr-cap85-external-ref-malformed-v2.toml) | xdr | CAP-0085 | A truncated `ContractExecutable::ExternalRef` encoding is correctly rejected, not silently accepted (v2). |
 | [`xdr/contract-executable/p28-xdr-contract-executable-wasm-roundtrip.toml`](xdr/contract-executable/p28-xdr-contract-executable-wasm-roundtrip.toml) | xdr | — | A `ContractExecutable` using the `CONTRACT_EXECUTABLE_WASM` case round-trips byte-for-byte. |
 | [`xdr/contract-executable/p28-xdr-contract-executable-wasm-decode-success.toml`](xdr/contract-executable/p28-xdr-contract-executable-wasm-decode-success.toml) | xdr | — | A well-formed `ContractExecutable` using the `CONTRACT_EXECUTABLE_WASM` case decodes successfully. |
 | [`xdr/contract-executable/p28-xdr-contract-executable-wasm-decode-failure.toml`](xdr/contract-executable/p28-xdr-contract-executable-wasm-decode-failure.toml) | xdr | — | A truncated `ContractExecutable::Wasm` encoding is correctly rejected, not silently accepted. |

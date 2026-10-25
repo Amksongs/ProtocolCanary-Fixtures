@@ -32,10 +32,8 @@ EXPECTED_IDS_BY_SURFACE = {
     "xdr": {
         "p28-xdr-cap83-empty-tx-set",
         "p28-xdr-cap83-empty-tx-set-malformed",
-        "p28-xdr-cap83-empty-tx-set-v2",
         "p28-xdr-cap85-external-ref-roundtrip",
         "p28-xdr-cap85-external-ref-malformed",
-        "p28-xdr-cap85-external-ref-malformed-v2",
         "p28-xdr-contract-executable-wasm-roundtrip",
         "p28-xdr-contract-executable-wasm-decode-success",
         "p28-xdr-contract-executable-wasm-decode-failure",
