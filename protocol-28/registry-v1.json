@@ -95,7 +95,7 @@
     {
       "id": "p28-xdr-cap83-empty-tx-set-v2",
       "path": "xdr/cap-0083/p28-xdr-cap83-empty-tx-set-v2.toml",
-      "sha256": "8a632541e5ce70a154dd68d83b31441d27acadc8932675f592b2e5b737848b65",
+      "sha256": "a1caa42fbf7c1355c0e61ca1cf839682b6d5b8555818be7498134e980718d032",
       "surface": "xdr",
       "category": "cap-0083",
       "description": "STELLAR_VALUE_EMPTY_TX_SET case with different hash values",
@@ -115,7 +115,7 @@
     {
       "id": "p28-xdr-cap85-external-ref-malformed-v2",
       "path": "xdr/cap-0085/p28-xdr-cap85-external-ref-malformed-v2.toml",
-      "sha256": "a8011481300ce9945f3165400dc121a4215fd3d09849c248eeecdc5f84dc6e90",
+      "sha256": "3326766aa7ccc433363de6b724b15a114e6d150dc73e4721837e6acda4a38aaa",
       "surface": "xdr",
       "category": "cap-0085",
       "description": "A truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected (v2)",
@@ -923,5 +923,5 @@
       "payloads": []
     }
   ],
-  "packDigest": "sha256:5fea8d84d00cb3b1ade9ccb0fb4ccdd9063baf0858a079f8839072234705dc0d"
+  "packDigest": "sha256:01149d2727f4f48a65e56d134f15a4d818ed241fd2e56a23677f2588f68f7a94"
 }
