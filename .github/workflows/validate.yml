@@ -19,6 +19,8 @@ jobs:
     # structural validation against an unchanged tree.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: the whole workflow has taken at most about two minutes; 10 leaves headroom.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -97,6 +99,8 @@ jobs:
     # and never imported by the tools or the test suite.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: same tooling as validate.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -129,6 +133,8 @@ jobs:
 
   markdown-links:
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: lychee fetches external links; a stuck connection must not hold the runner.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -163,6 +169,8 @@ jobs:
     # routine PRs and pushes are not subject to third-party network flakes.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: fetches every fixture source URL, one request at a time.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -180,6 +188,8 @@ jobs:
     # pushes to main or scheduled runs.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: a git diff and a text check.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
