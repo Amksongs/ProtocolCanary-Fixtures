@@ -93,12 +93,32 @@
       "payloads": []
     },
     {
+      "id": "p28-xdr-cap83-empty-tx-set-v2",
+      "path": "xdr/cap-0083/p28-xdr-cap83-empty-tx-set-v2.toml",
+      "sha256": "8a632541e5ce70a154dd68d83b31441d27acadc8932675f592b2e5b737848b65",
+      "surface": "xdr",
+      "category": "cap-0083",
+      "description": "STELLAR_VALUE_EMPTY_TX_SET case with different hash values",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0083.md",
+      "payloads": []
+    },
+    {
       "id": "p28-xdr-cap85-external-ref-malformed",
       "path": "xdr/cap-0085/p28-xdr-cap85-external-ref-malformed.toml",
       "sha256": "d756a58596726ff6291aeea5f57d768ed18cd7383ac0ff7b13a34d3a5c410ca7",
       "surface": "xdr",
       "category": "cap-0085",
       "description": "A truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-cap85-external-ref-malformed-v2",
+      "path": "xdr/cap-0085/p28-xdr-cap85-external-ref-malformed-v2.toml",
+      "sha256": "a8011481300ce9945f3165400dc121a4215fd3d09849c248eeecdc5f84dc6e90",
+      "surface": "xdr",
+      "category": "cap-0085",
+      "description": "A truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected (v2)",
       "sourceReference": "https://github.com/stellar/stellar-protocol/blob/9cd703075d87a6ce293752b1532e7b68efe12ae1/core/cap-0085.md",
       "payloads": []
     },
@@ -903,5 +923,5 @@
       "payloads": []
     }
   ],
-  "packDigest": "sha256:0509a183c43bd46e3ce59306bf00efabad9f7d8c7769f34a54d1809077bf842a"
+  "packDigest": "sha256:5fea8d84d00cb3b1ade9ccb0fb4ccdd9063baf0858a079f8839072234705dc0d"
 }

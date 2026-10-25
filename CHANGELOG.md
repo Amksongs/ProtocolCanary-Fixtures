@@ -811,9 +811,6 @@ discussion and diff. New entries must include that link; see
 - `protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-malformed-v2.toml`: a truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected. Closes issue #451.
 - `protocol-28/xdr/cap-0083/p28-xdr-cap83-empty-tx-set-v2.toml`: a CAP-0083 empty transaction set fixture with different hash values. Closes issue #445.
 
-- `protocol-28/xdr/cap-0085/p28-xdr-cap85-external-ref-malformed-v2.toml`: a truncated CAP-0085 ContractExecutable::ExternalRef encoding is correctly rejected. Closes issue #451.
-- `protocol-28/xdr/cap-0083/p28-xdr-cap83-empty-tx-set-v2.toml`: a CAP-0083 empty transaction set fixture with different hash values. Closes issue #445.
-
 
 ### Changed
 
