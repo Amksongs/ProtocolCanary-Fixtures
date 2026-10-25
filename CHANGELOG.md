@@ -12,6 +12,13 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Every job in `validate.yml`, `engine-drift.yml` and `live-evidence.yml` now
+  sets `timeout-minutes` (F-133), so a hung connection or a stuck build cannot
+  hold a runner for GitHub's 360-minute default and block the next scheduled
+  run: `validate` 10, `coverage` 10, `changelog` 10, `markdown-links` 15,
+  `source-links` 20, `engine-drift` 30, `capture` 15. Only those lines and a
+  comment above each were added. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
 - Boundary tests for `tools/evidence/capture_live.py` (F-134). They pin
   `field-number-range` at, just inside and just outside both limits (and the
   "not a number" and missing-field reports), `values_equal` for values of
