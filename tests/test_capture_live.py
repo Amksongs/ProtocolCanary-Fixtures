@@ -874,5 +874,163 @@ class CaptureLiveUnitTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
 
 
+class NumberRangeBoundaryTests(unittest.TestCase):
+    """field-number-range at and around its limits (issue #453, F-134)."""
+
+    RANGE = [{"kind": "field-number-range", "field": "n", "min": 5, "max": 10}]
+
+    def problems(self, answer: dict) -> list[str]:
+        return capture_live.evaluate_asserts(self.RANGE, answer)
+
+    def test_values_at_and_inside_the_limits_pass(self) -> None:
+        for value in (5, 7, 10, 5.0, 10.0):
+            with self.subTest(value=value):
+                self.assertEqual(self.problems({"n": value}), [])
+
+    def test_a_value_just_below_the_minimum_is_reported(self) -> None:
+        problems = self.problems({"n": 4})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("below the minimum 5", problems[0])
+
+    def test_a_value_just_above_the_maximum_is_reported(self) -> None:
+        problems = self.problems({"n": 11})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("above the maximum 10", problems[0])
+
+    def test_a_boolean_is_not_a_number(self) -> None:
+        for value in (True, False):
+            with self.subTest(value=value):
+                problems = self.problems({"n": value})
+                self.assertEqual(len(problems), 1)
+                self.assertIn("bool, not a number", problems[0])
+
+    def test_a_string_is_not_a_number(self) -> None:
+        problems = self.problems({"n": "7"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("string, not a number", problems[0])
+
+    def test_a_missing_field_is_reported(self) -> None:
+        problems = self.problems({"other": 7})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("has no 'n' field", problems[0])
+
+    def test_a_missing_bound_leaves_that_side_open(self) -> None:
+        only_min = [{"kind": "field-number-range", "field": "n", "min": 5}]
+        only_max = [{"kind": "field-number-range", "field": "n", "max": 10}]
+        self.assertEqual(capture_live.evaluate_asserts(only_min, {"n": 10**9}), [])
+        self.assertEqual(capture_live.evaluate_asserts(only_max, {"n": -(10**9)}), [])
+
+
+class ValuesEqualTypeMixTests(unittest.TestCase):
+    """values_equal answers False, and never raises, for values of different types."""
+
+    def test_a_list_is_not_equal_to_anything_that_is_not_a_list(self) -> None:
+        for other in ("abc", 1, None, {"a": 1}, True):
+            with self.subTest(other=other):
+                self.assertIs(capture_live.values_equal([1], other), False)
+                self.assertIs(capture_live.values_equal(other, [1]), False)
+
+    def test_a_dict_is_not_equal_to_a_list_or_a_string(self) -> None:
+        for other in ([("a", 1)], "a", 1, None):
+            with self.subTest(other=other):
+                self.assertIs(capture_live.values_equal({"a": 1}, other), False)
+                self.assertIs(capture_live.values_equal(other, {"a": 1}), False)
+
+    def test_a_string_is_not_equal_to_a_number(self) -> None:
+        self.assertIs(capture_live.values_equal("1", 1), False)
+        self.assertIs(capture_live.values_equal(1, "1"), False)
+        self.assertIs(capture_live.values_equal("1.5", 1.5), False)
+
+    def test_equal_values_of_the_same_type_still_match(self) -> None:
+        self.assertIs(capture_live.values_equal([1, "a"], [1, "a"]), True)
+        self.assertIs(capture_live.values_equal({"a": [1]}, {"a": [1]}), True)
+        self.assertIs(capture_live.values_equal(1, 1.0), True)
+
+
+class _NetworkAnswerServer(mock_rpc.MockRpcServer):
+    """A mock endpoint whose getNetwork answer is chosen by the test."""
+
+    def __init__(self, network: dict) -> None:
+        super().__init__(protocol=28)
+        self._network = network
+
+    def result(self, method: str) -> dict:
+        if method == "getNetwork":
+            return dict(self._network)
+        return super().result(method)
+
+
+class NetworkFactsTests(unittest.TestCase):
+    """The passphrase and protocol that become evidence are checked (issue #453)."""
+
+    GOOD = {"passphrase": mock_rpc.TESTNET_PASSPHRASE, "protocolVersion": 28}
+    NOT_RECORDED = "so no record was written"
+
+    def setUp(self) -> None:
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.output = Path(scratch.name) / "live"
+
+    def attempt(self, network: dict) -> None:
+        with _NetworkAnswerServer(network) as server:
+            capture_live.run(PACK, output_dir=self.output, local_endpoint=server.url)
+
+    def assert_refused(self, network: dict, fragment: str) -> None:
+        with self.assertRaises(capture_live.CaptureError) as raised:
+            self.attempt(network)
+        self.assertIn(self.NOT_RECORDED, str(raised.exception))
+        self.assertIn(fragment, str(raised.exception))
+        self.assertFalse(self.output.exists(), "a refused run must write no file")
+
+    def test_a_good_answer_is_recorded(self) -> None:
+        self.attempt(self.GOOD)
+        self.assertTrue((self.output / "records").is_dir())
+
+    def test_an_unusable_passphrase_is_refused(self) -> None:
+        cases = {
+            "empty": {**self.GOOD, "passphrase": ""},
+            "missing": {"protocolVersion": 28},
+            "a number": {**self.GOOD, "passphrase": 7},
+            "null": {**self.GOOD, "passphrase": None},
+        }
+        for label, network in cases.items():
+            with self.subTest(passphrase=label):
+                self.assert_refused(network, "no passphrase")
+
+    def test_an_unusable_protocol_version_is_refused(self) -> None:
+        cases = {
+            "missing": {"passphrase": mock_rpc.TESTNET_PASSPHRASE},
+            "a boolean": {**self.GOOD, "protocolVersion": True},
+            "negative": {**self.GOOD, "protocolVersion": -1},
+            "a string": {**self.GOOD, "protocolVersion": "28"},
+            "a float": {**self.GOOD, "protocolVersion": 28.0},
+        }
+        for label, network in cases.items():
+            with self.subTest(protocolVersion=label):
+                self.assert_refused(network, "no protocolVersion")
+
+    def test_a_protocol_version_of_zero_is_accepted_and_recorded_as_observed(self) -> None:
+        # Current behaviour: the check refuses only a negative number, so 0 is
+        # a usable observation. Every pack fixture then reports "mismatched"
+        # because it targets protocol 28, but the record is written.
+        self.attempt({**self.GOOD, "protocolVersion": 0})
+        records = sorted((self.output / "records").glob("*.json"))
+        self.assertTrue(records)
+        record = json.loads(records[0].read_text(encoding="utf-8"))
+        self.assertEqual(record["network"]["observedProtocol"], 0)
+        self.assertEqual(record["outcome"], "mismatched")
+
+
+class RenderJsonFormatTests(unittest.TestCase):
+    def test_two_space_indent_and_exactly_one_trailing_newline(self) -> None:
+        text = capture_live.render_json({"a": {"b": [1, 2]}})
+        self.assertEqual(text, '{\n  "a": {\n    "b": [\n      1,\n      2\n    ]\n  }\n}\n')
+        self.assertTrue(text.endswith("}\n"))
+        self.assertFalse(text.endswith("\n\n"))
+
+    def test_non_ascii_text_is_written_as_utf8_not_escaped(self) -> None:
+        self.assertIn("é", capture_live.render_json({"name": "é"}))
+
+
 if __name__ == "__main__":
     unittest.main()

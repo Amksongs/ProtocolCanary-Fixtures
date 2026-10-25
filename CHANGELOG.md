@@ -12,6 +12,15 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Boundary tests for `tools/evidence/capture_live.py` (F-134). They pin
+  `field-number-range` at, just inside and just outside both limits (and the
+  "not a number" and missing-field reports), `values_equal` for values of
+  different types, the `getNetwork` facts that become evidence (an empty,
+  missing or non-string passphrase and a missing, boolean or negative
+  `protocolVersion` each refuse the run and write nothing; `0` is accepted),
+  and the two-space, single-trailing-newline output of `render_json`. Tests
+  only; the tool is unchanged. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
 - `tools/scaffold/new_fixture.py` checks its arguments before it writes anything
   (F-126). `--id` must fully match the id pattern in
   `schemas/fixture-v1.schema.json`, so `../../x`, `a/b`, an id ending in a
