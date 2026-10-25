@@ -272,7 +272,7 @@ python3 tools/release/manifest.py --revision REVISION [--engine VERSION] [--runs
 
 | Exit Code | Meaning |
 |---|---|
-| `0` | Success: manifest generated and validated against `schemas/manifest-v1.schema.json`. |
+| `0` | Success: manifest generated and validated against `schemas/release-manifest-v1.schema.json`. |
 | `1` | Manifest error: archive does not exist, revision is not a 40-character commit hash, invalid archive content, cannot write output file, or a run record in `--runs` is unreadable, malformed, describes another pack, or is dated in the future. |
 | `2` | Command-line syntax error: missing required arguments (`archive` or `--revision`), or unrecognized options. |
 

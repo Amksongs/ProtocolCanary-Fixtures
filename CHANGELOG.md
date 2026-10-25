@@ -12,6 +12,14 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- A test keeps `docs/tools.md` honest about repository paths (F-132). Every
+  backtick-quoted path under `tools/`, `tests/`, `schemas/`, `docs/`,
+  `protocol-NN/` or `.github/` must exist (placeholders and globs are skipped),
+  and a miss is reported with its line number. It found the one wrong name, now
+  corrected: the manifest tool's exit-code table pointed at
+  `schemas/manifest-v1.schema.json`, whose real name is
+  `schemas/release-manifest-v1.schema.json`. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
 - Ruff lint check in CI (F-334). `ruff.toml` pins the rule set (`E`, `F`, `W`,
   `I`, `B`, `UP`; `E501` and `E402` ignored with reasons) and the workflow runs
   `ruff check .` with Ruff 0.17.2. The existing findings are fixed in the same
