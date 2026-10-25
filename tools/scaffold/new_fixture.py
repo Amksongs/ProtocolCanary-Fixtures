@@ -22,7 +22,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools.validate import validate
 
-_CAP_RE = re.compile(r"cap-\d{4}")
+# Anchored, and always used with ``fullmatch``: ``fullmatch`` rejects a trailing
+# newline that a bare ``$`` would let through.
+_CAP_RE = re.compile(r"^cap-\d{4}$")
 _SCHEMA_PATH = REPO_ROOT / "schemas" / "fixture-v1.schema.json"
 # Characters a category may not contain: it is written inside a TOML basic
 # string and, for an xdr cap directory, used as a path segment.

@@ -483,6 +483,16 @@ class IdAndCategoryValidationTests(unittest.TestCase):
         code, _out, err = self.run_tool("xdr", "p28-xdr-ok", "cap-0083\n")
         self.assert_refused(code, err)
 
+    def test_only_an_exact_cap_category_gets_a_cap_directory(self) -> None:
+        for category in ("a-cap-0083-b", "cap-0083-b", "xcap-0083", "cap-83", "cap-00834"):
+            with self.subTest(category=category):
+                code, _out, _err = self.run_tool("xdr", "p28-xdr-ok", category)
+                self.assertEqual(code, 0)
+                written = self.out / "protocol-28" / "xdr" / "p28-xdr-ok.toml"
+                self.assertTrue(written.is_file(), "a non-cap category stays in xdr/")
+                self.assertEqual([p.name for p in written.parent.iterdir() if p.is_dir()], [])
+                written.unlink()
+
     def test_valid_requests_are_still_accepted(self) -> None:
         for surface, fixture_id, category in (
             ("rpc", "p28-rpc-ok", "ledger"),
