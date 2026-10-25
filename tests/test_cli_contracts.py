@@ -172,7 +172,7 @@ class CliContractTests(unittest.TestCase):
 
         # Invalid archive missing registry.json (verification failure, exit 1)
         empty_tar = Path(self.temp_dir) / "empty.tar.gz"
-        with tarfile.open(empty_tar, "w:gz") as tar:
+        with tarfile.open(empty_tar, "w:gz"):
             pass
         p_empty = self.run_tool(tool, str(empty_tar))
         self.assertEqual(p_empty.returncode, 1)

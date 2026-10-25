@@ -19,8 +19,8 @@ Run with: python3 -m unittest discover tests
 """
 from __future__ import annotations
 
-import copy
 import contextlib
+import copy
 import hashlib
 import importlib.util
 import io
@@ -30,7 +30,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -148,7 +148,7 @@ class CommittedRecordTests(unittest.TestCase):
                 )
 
     def test_no_record_is_in_the_future(self) -> None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         for name, record in self.records.items():
             with self.subTest(record=name):
                 checked_at = datetime.strptime(record["checkedAt"], "%Y-%m-%dT%H:%M:%SZ")

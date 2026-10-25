@@ -1,0 +1,69 @@
+# Test vector: `get-transactions` with `pagination.limit = 50`, the largest page, the D-06 ceiling of 50 (F-038, issue #295).
+#
+# This is a request-shape vector, kept under `tests/fixtures/rpc/` rather than in
+# a protocol pack, for the same reason as `get-health.toml` (F-017): a pack's
+# RPC fixtures must all be capturable by `tools/evidence/capture_live.py`,
+# whose allowlist is the three read-only methods CF-04 section 8 names, and
+# `getTransactions` is not one of them. It is exercised by
+# `tests/test_rpc_pagination_fixtures.py`, which runs it through
+# `tools/validate/validate.py` and mutates it to prove the D-06 bound.
+#
+# `startLedger` is a capture-time value, not a stable one. getTransactions serves
+# only a bounded recent history (CA-01 section 2: about 120960 ledgers, roughly
+# seven days), so a hard-coded sequence ages out and such a fixture is not
+# durable. That is why this vector is not shipped for a live run.
+#
+# Why the bound is 50: Stellar RPC itself accepts `limit` up to 200. Captured
+# live from https://soroban-testnet.stellar.org on 2026-10-23 (UTC), it
+# answered `limit` 1, 50, 51 and 200 with 1, 50, 51 and 200 entries. The engine
+# bound of 50 is therefore a policy, not an upstream rule: decision D-06 (CA-01
+# section 3, rule 4) approves `pagination.limit` 1..=50, and the fixture loader
+# rejects anything above it as an invalid fixture (engine exit code 4; this
+# repository's validator reports it as an error and exits 1), so an out-of-spec
+# page size never reaches an endpoint.
+#
+# The assertions name only top-level fields the live answer carried on the same
+# date, by type, because every value advances with the chain:
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getTransactions","params":{"startLedger":5349100,"pagination":{"limit":50}}}'
+#   => result keys: transactions (array), latestLedger, latestLedgerCloseTimestamp,
+#      oldestLedger, oldestLedgerCloseTimestamp, cursor (string)
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getTransactions
+
+id = "test-rpc-get-transactions-limit-50"
+protocol = 28
+surface = "rpc"
+category = "pagination"
+description = "getTransactions request with pagination.limit = 50, the upper bound of the approved D-06 range 1..=50"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getTransactions"
+
+method = "get-transactions"
+
+[request]
+startLedger = 5349100
+
+[request.pagination]
+limit = 50
+
+[[assert]]
+kind = "field-type"
+field = "transactions"
+expected_type = "array"
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "number"
+
+[[assert]]
+kind = "field-type"
+field = "oldestLedger"
+expected_type = "number"
+
+[[assert]]
+kind = "field-type"
+field = "cursor"
+expected_type = "string"

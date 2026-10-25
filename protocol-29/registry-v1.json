@@ -1,6 +1,17 @@
 {
   "registryVersion": 1,
   "protocol": 29,
-  "fixtures": [],
-  "packDigest": "sha256:165f4a002a9bb0e1999cb914ab219ec87fa6043e18e51ce0baa3eb91e56d08d7"
+  "fixtures": [
+    {
+      "id": "p29-rpc-network-mismatch",
+      "path": "rpc/p29-rpc-network-mismatch.toml",
+      "sha256": "b5f1f1aaac0ac23292014b7f3174cae1636f26111af50d0708c425ba47e6459d",
+      "surface": "rpc",
+      "category": "protocol-mismatch",
+      "description": "A Protocol 28 target observes Protocol 29 from get-version-info and must report a mismatch.",
+      "sourceReference": "https://developers.stellar.org/docs/data/rpc/api-reference/methods/getVersionInfo",
+      "payloads": []
+    }
+  ],
+  "packDigest": "sha256:d3847555d30ed07b7a9c8f76fc5a0724b9e7360cff08058e9d6a8d02652b2c4c"
 }

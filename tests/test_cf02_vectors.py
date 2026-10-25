@@ -138,7 +138,7 @@ def walk_pack(pack: Path) -> dict[str, bytes]:
             continue
         members[relative.as_posix()] = path.read_bytes()
 
-    for relative, data in list(members.items()):
+    for relative in list(members):
         with (pack / relative).open("rb") as handle:
             fixture = tomllib.load(handle)
         for field in ("input_file", "expected_file"):
@@ -371,7 +371,7 @@ class RecordedValueTests(unittest.TestCase):
             with self.subTest(vector=name):
                 self.assertEqual(lines[0], DIGEST_HEADER)
                 self.assertEqual(len(lines), len(record["packFiles"]) + 1)
-                for line, entry in zip(lines[1:], record["packFiles"]):
+                for line, entry in zip(lines[1:], record["packFiles"], strict=True):
                     self.assertEqual(
                         line,
                         f"{entry['sha256']} {entry['size']} {entry['path']}\n",

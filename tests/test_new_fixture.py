@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import re
 import shutil
 import sys
 import tempfile

@@ -1,0 +1,435 @@
+{
+  "schema": "rpc-error-simulation-vectors/1",
+  "description": "Scripted endpoint behaviors for the failure situations of CA-01 section 5, with the classification the engine gives each (`engine`) and what this repository's own capture tool, tools/evidence/capture_live.py, does with the first reply (`capture_live`). A vector's `responses` are played in order and the last one repeats. These cannot be TOML fixtures: a fixture cannot choose the endpoint or make it fail (CA-01 section 8), and a fixture cannot assert that an error is expected (CA-01 section 5). They are data for tests/test_rpc_error_simulation.py and for the engine's own mock-server tests.",
+  "sources": {
+    "contract": "https://github.com/StellarCanary/Protocol-Canary/blob/e8592c86a54a94db4d0b9933ac3a54403979a420/docs/contracts/ca-01-rpc-requests-and-assertions.md",
+    "engine_client": "https://github.com/StellarCanary/Protocol-Canary/blob/e8592c86a54a94db4d0b9933ac3a54403979a420/crates/canary-rpc/src/client.rs",
+    "engine_commit": "e8592c86a54a94db4d0b9933ac3a54403979a420"
+  },
+  "retry_policy": {
+    "max_attempts": 3,
+    "base_delay_ms": 200,
+    "backoff": "linear",
+    "retried_classes": [
+      "transport"
+    ],
+    "note": "Transport errors, timeouts, HTTP 5xx and HTTP 429 are retried; JSON-RPC errors, invalid JSON and invalid responses are deterministic and are returned on the first attempt."
+  },
+  "vectors": [
+    {
+      "id": "rate-limited-then-recovers",
+      "summary": "HTTP 429 twice, then a normal answer: the engine retries and the check passes on the third attempt.",
+      "ca01_row": "HTTP 429",
+      "responses": [
+        {
+          "http_status": 429,
+          "headers": {
+            "Retry-After": "1"
+          },
+          "body_text": "Too Many Requests"
+        },
+        {
+          "http_status": 429,
+          "headers": {
+            "Retry-After": "1"
+          },
+          "body_text": "Too Many Requests"
+        },
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "friendbotUrl": "https://friendbot.stellar.org/",
+              "passphrase": "Test SDF Network ; September 2015",
+              "protocolVersion": 28
+            }
+          }
+        }
+      ],
+      "engine": {
+        "class": "transport",
+        "result_status": "pass",
+        "exit_code": 0,
+        "attempts": 3,
+        "retried": true
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "HTTP 429"
+        ],
+        "message_excludes": [
+          "JSON-RPC error"
+        ]
+      }
+    },
+    {
+      "id": "rate-limited-exhausted",
+      "summary": "HTTP 429 on every attempt: after three attempts the result is an error, never a pass.",
+      "ca01_row": "HTTP 429",
+      "responses": [
+        {
+          "http_status": 429,
+          "headers": {
+            "Retry-After": "1"
+          },
+          "body_text": "Too Many Requests"
+        }
+      ],
+      "engine": {
+        "class": "transport",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 3,
+        "retried": true,
+        "message_contains": [
+          "rate-limited",
+          "3 attempt(s)"
+        ]
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "HTTP 429"
+        ],
+        "message_excludes": [
+          "JSON-RPC error"
+        ]
+      }
+    },
+    {
+      "id": "server-error-exhausted",
+      "summary": "HTTP 500 on every attempt: a transport error, retried, then an error.",
+      "ca01_row": "Transport error, HTTP 5xx, TLS failure",
+      "responses": [
+        {
+          "http_status": 500,
+          "body_text": "the endpoint could not answer"
+        }
+      ],
+      "engine": {
+        "class": "transport",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 3,
+        "retried": true
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "HTTP 500"
+        ],
+        "message_excludes": [
+          "JSON-RPC error"
+        ]
+      }
+    },
+    {
+      "id": "timeout-exhausted",
+      "summary": "The endpoint never answers in time: a timeout, retried, then an error.",
+      "ca01_row": "Timeout",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "friendbotUrl": "https://friendbot.stellar.org/",
+              "passphrase": "Test SDF Network ; September 2015",
+              "protocolVersion": 28
+            }
+          },
+          "hang_ms": 1500
+        }
+      ],
+      "engine": {
+        "class": "transport",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 3,
+        "retried": true
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "did not answer within"
+        ],
+        "message_excludes": [
+          "JSON-RPC error"
+        ]
+      }
+    },
+    {
+      "id": "method-not-found",
+      "summary": "JSON-RPC -32601: the endpoint answered properly but does not provide the method. A missing capability, not a transport failure, and never retried.",
+      "ca01_row": "JSON-RPC code -32601",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+              "code": -32601,
+              "message": "method not found"
+            }
+          }
+        }
+      ],
+      "engine": {
+        "class": "application",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false,
+        "message_contains": [
+          "not available",
+          "-32601"
+        ]
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "JSON-RPC error",
+          "-32601",
+          "method not found"
+        ],
+        "message_excludes": [
+          "HTTP"
+        ]
+      }
+    },
+    {
+      "id": "jsonrpc-error-other-code",
+      "summary": "Any other JSON-RPC error code (-32602, invalid params): an error whose message carries the code, never retried.",
+      "ca01_row": "JSON-RPC error object, any code",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+              "code": -32602,
+              "message": "invalid params"
+            }
+          }
+        }
+      ],
+      "engine": {
+        "class": "application",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false,
+        "message_contains": [
+          "-32602"
+        ]
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "JSON-RPC error",
+          "-32602"
+        ],
+        "message_excludes": [
+          "HTTP"
+        ]
+      }
+    },
+    {
+      "id": "jsonrpc-error-without-code",
+      "summary": "An error object with no code: still an application error (code reported as 0), never a pass and never retried.",
+      "ca01_row": "JSON-RPC error object, any code",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+              "message": "boom"
+            }
+          }
+        }
+      ],
+      "engine": {
+        "class": "application",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "JSON-RPC error"
+        ],
+        "message_excludes": [
+          "HTTP"
+        ]
+      }
+    },
+    {
+      "id": "jsonrpc-error-not-an-object",
+      "summary": "An error that is a bare string: an unrecognized error format, treated as an application error, never a pass.",
+      "ca01_row": "JSON-RPC error object, any code",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": "boom"
+          }
+        }
+      ],
+      "engine": {
+        "class": "application",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "JSON-RPC error"
+        ],
+        "message_excludes": [
+          "HTTP"
+        ]
+      }
+    },
+    {
+      "id": "jsonrpc-error-null",
+      "summary": "An explicit error: null alongside a result: the presence of the key makes it an error, not a pass.",
+      "ca01_row": "JSON-RPC error object, any code",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": null,
+            "result": {
+              "friendbotUrl": "https://friendbot.stellar.org/",
+              "passphrase": "Test SDF Network ; September 2015",
+              "protocolVersion": 28
+            }
+          }
+        }
+      ],
+      "engine": {
+        "class": "application",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "JSON-RPC error"
+        ],
+        "message_excludes": [
+          "HTTP"
+        ]
+      }
+    },
+    {
+      "id": "body-not-json",
+      "summary": "HTTP 200 with a body that is not JSON: an error, never retried.",
+      "ca01_row": "Body is not JSON, or has neither result nor error, or result is not an object",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_text": "<html>maintenance</html>"
+        }
+      ],
+      "engine": {
+        "class": "protocol",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "not JSON"
+        ],
+        "message_excludes": [
+          "HTTP",
+          "JSON-RPC error"
+        ]
+      }
+    },
+    {
+      "id": "neither-result-nor-error",
+      "summary": "A well-formed JSON-RPC message with neither result nor error: an error, never retried.",
+      "ca01_row": "Body is not JSON, or has neither result nor error, or result is not an object",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1
+          }
+        }
+      ],
+      "engine": {
+        "class": "protocol",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false
+      },
+      "capture_live": {
+        "outcome": "capture-error",
+        "message_contains": [
+          "no result"
+        ],
+        "message_excludes": [
+          "HTTP",
+          "JSON-RPC error"
+        ]
+      }
+    },
+    {
+      "id": "result-not-an-object",
+      "summary": "A result that is not an object: unexpected response shape, an error rather than an assertion failure. The capture tool returns the value and refuses to check any field of it.",
+      "ca01_row": "Body is not JSON, or has neither result nor error, or result is not an object",
+      "responses": [
+        {
+          "http_status": 200,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      ],
+      "engine": {
+        "class": "protocol",
+        "result_status": "error",
+        "exit_code": 3,
+        "attempts": 1,
+        "retried": false
+      },
+      "capture_live": {
+        "outcome": "returned",
+        "evaluate_problem_contains": [
+          "not an object"
+        ]
+      }
+    }
+  ]
+}

@@ -1,10 +1,8 @@
 """Tests for the Protocol 29 baseline directory and registry (F-033, #290).
 
-The ``protocol-29/`` pack ships as an empty scaffold: a ``registry-v1.json``
-with ``protocol = 29`` and ``fixtures: []``, plus ``rpc/``, ``xdr/`` and
-``soroban/`` subdirectories and nothing else. An empty baseline is a
-directory scaffold only and must never be read as established compatibility
-coverage; ``protocol-28/`` stays untouched by this change.
+The ``protocol-29/`` pack ships with a generated registry and fixture files
+under ``rpc/``, ``xdr/`` and ``soroban/``. Its registry must describe the
+current pack exactly, and the fixture count is real compatibility coverage.
 
 Run with: python3 -m unittest discover tests
 """
@@ -39,7 +37,6 @@ sys.modules["lite_for_protocol29"] = lite
 _lite_spec.loader.exec_module(lite)
 
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-EMPTY_FLOOR = "fewer than 1"  # jsonschema_lite's wording for the fixtures minItems rule
 
 
 def check_baseline(record: dict) -> list[str]:
@@ -48,12 +45,9 @@ def check_baseline(record: dict) -> list[str]:
     Everything the schema checks comes from ``jsonschema_lite``; on top of
     it, the pack binding asserts what the schema cannot: the directory name
     and the manifest's ``protocol`` value agree (``protocol-29/`` declares
-    ``protocol = 29``). The schema's floor on a non-empty ``fixtures`` list
-    is filtered out here and pinned separately in
-    ``test_registry_conforms_to_the_registry_schema`` — an empty fixtures
-    array is exactly what this baseline is.
+    ``protocol = 29``).
     """
-    problems = [p for p in lite.validate(record, SCHEMA) if EMPTY_FLOOR not in p]
+    problems = lite.validate(record, SCHEMA)
     version = record.get("registryVersion")
     if type(version) is not int or version != 1:
         problems.append(f"registryVersion must be the integer 1, got {version!r}")
@@ -77,41 +71,40 @@ class Protocol29BaselineTests(unittest.TestCase):
             with self.subTest(directory=name):
                 self.assertTrue((PACK_DIR / name).is_dir())
 
-    def test_registry_is_an_empty_protocol_29_scaffold(self) -> None:
+    def test_registry_describes_the_protocol_29_mismatch_fixture(self) -> None:
         integer_protocol = self.registry["protocol"]
         self.assertIs(type(integer_protocol), int, "protocol must be an integer, not a bool")
         self.assertEqual(integer_protocol, 29)
         self.assertEqual(self.registry["registryVersion"], 1)
-        self.assertEqual(self.registry["fixtures"], [])
+        fixture_ids = [fixture["id"] for fixture in self.registry["fixtures"]]
+        self.assertIn("p29-rpc-network-mismatch", fixture_ids)
 
     def test_registry_conforms_to_the_registry_schema(self) -> None:
         problems = lite.validate(self.registry, SCHEMA)
-        if self.registry["fixtures"]:
-            self.assertEqual(problems, [])
-        else:
-            # Assumption stated in the PR: schemas/registry-v1.schema.json
-            # sets `minItems: 1` on fixtures while the issue requires an
-            # empty baseline; CF-02 section 3 requires the four keys but
-            # does not forbid an empty list. An empty manifest must fail on
-            # that floor — and on nothing else.
-            self.assertEqual(len(problems), 1, problems)
-            self.assertIn(EMPTY_FLOOR, problems[0])
+        self.assertEqual(problems, [])
 
     def test_registry_uses_the_canonical_encoding(self) -> None:
         # CF-02 section 3: UTF-8, LF, two-space indent, one trailing newline.
         expected = json.dumps(self.registry, indent=2, ensure_ascii=False) + "\n"
         self.assertEqual(REGISTRY_PATH.read_text(encoding="utf-8"), expected)
 
-    def test_empty_pack_digest_is_byte_reproducible(self) -> None:
-        # CF-02 section 5: with zero pack members the digest input is only
-        # the ASCII header line, so the value is fully determined by the
-        # contract and not by when or where the file was written.
-        expected = "sha256:" + hashlib.sha256(b"canary-pack-v1\n").hexdigest()
+    def test_pack_digest_matches_the_protocol_29_fixture_files(self) -> None:
+        files = {}
+        for fixture in self.registry["fixtures"]:
+            paths = [fixture["path"]] + [payload["path"] for payload in fixture["payloads"]]
+            for name in paths:
+                files[name] = (PACK_DIR / name).read_bytes()
+        lines = ["canary-pack-v1\n"]
+        for name in sorted(files, key=lambda path: path.encode("utf-8")):
+            data = files[name]
+            lines.append(f"{hashlib.sha256(data).hexdigest()} {len(data)} {name}\n")
+        expected = "sha256:" + hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
         self.assertEqual(self.registry["packDigest"], expected)
 
-    def test_empty_baseline_is_not_reported_as_coverage(self) -> None:
-        self.assertEqual(self.registry["fixtures"], [])
-        self.assertEqual(sorted(PACK_DIR.rglob("*.toml")), [])
+    def test_protocol_29_fixture_is_reported_as_coverage(self) -> None:
+        fixture_paths = {fixture["path"] for fixture in self.registry["fixtures"]}
+        self.assertIn("rpc/p29-rpc-network-mismatch.toml", fixture_paths)
+        self.assertTrue((PACK_DIR / "rpc" / "p29-rpc-network-mismatch.toml").is_file())
 
     def test_baseline_manifest_passes_the_pack_checks(self) -> None:
         self.assertEqual(check_baseline(self.registry), [])
@@ -142,7 +135,7 @@ class Protocol29BaselineTests(unittest.TestCase):
         self.assertIn(PACK_DIR, roots, roots)
 
     def test_generator_tool_reproduces_protocol_29_registry_byte_for_byte(self) -> None:
-        # F-098 (issue #370): --allow-empty generates protocol-29 byte for byte
+        # The generator output must reproduce the committed registry byte for byte.
         generate_path = REPO_ROOT / "tools" / "registry" / "generate.py"
         spec = importlib.util.spec_from_file_location("generate_for_protocol29", generate_path)
         gen = importlib.util.module_from_spec(spec)
@@ -152,7 +145,7 @@ class Protocol29BaselineTests(unittest.TestCase):
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = gen.main([str(PACK_DIR), "--allow-empty", "--protocol", "29", "--stdout"])
+            code = gen.main([str(PACK_DIR), "--stdout"])
         self.assertEqual(code, 0, stderr.getvalue())
         committed = REGISTRY_PATH.read_text(encoding="utf-8")
         self.assertEqual(stdout.getvalue(), committed)

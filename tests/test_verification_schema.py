@@ -26,6 +26,10 @@ _OUTCOMES = ("matched", "mismatched")
 _TOP_FIELDS = set(SCHEMA["properties"])
 
 
+# What the mirror checks raise: failed asserts, absent keys, unparsable values.
+_VIOLATION = (AssertionError, KeyError, ValueError)
+
+
 def check_record(record: dict) -> None:
     """Mirror of verification-v1.schema.json; raises AssertionError on violation."""
     assert set(record) <= _TOP_FIELDS, f"undeclared: {set(record) - _TOP_FIELDS}"
@@ -101,29 +105,29 @@ class VerificationSchemaTest(unittest.TestCase):
     def test_live_missing_network_fails(self) -> None:
         record = copy.deepcopy(LIVE_RECORD)
         del record["network"]
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_record(record)
 
     def test_live_missing_endpoint_host_fails(self) -> None:
         record = copy.deepcopy(LIVE_RECORD)
         del record["endpointHost"]
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_record(record)
 
     def test_undeclared_property_rejected(self) -> None:
         record = copy.deepcopy(LIVE_RECORD)
         record["surprise"] = 1
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_record(record)
 
     def test_bad_sha_and_version_rejected(self) -> None:
         record = copy.deepcopy(LIVE_RECORD)
         record["fixtureSha256"] = "XYZ"
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_record(record)
         record = copy.deepcopy(LIVE_RECORD)
         record["verificationVersion"] = 2
-        with self.assertRaises(Exception):
+        with self.assertRaises(_VIOLATION):
             check_record(record)
 
 

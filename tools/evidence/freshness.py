@@ -16,10 +16,10 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -59,10 +59,10 @@ def parse_checked_at(value: object, now: datetime | None = None) -> datetime:
     except ValueError as exc:
         raise FreshnessFormatError(f"unparseable date string: {exc}") from exc
 
-    dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.replace(tzinfo=UTC)
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     if dt > now:
         raise FreshnessFormatError(
@@ -86,7 +86,7 @@ def calculate_record_freshness(
 ) -> RecordFreshness:
     """Compute freshness for a single parsed record."""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     if "checkedAt" not in data:
         raise FreshnessFormatError(f"missing 'checkedAt' field in {record_path}")
@@ -129,7 +129,7 @@ def scan_freshness(
 ) -> tuple[list[RecordFreshness], list[tuple[Path, str]]]:
     """Scan evidence records and return classified records and format errors."""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     results: list[RecordFreshness] = []
     errors: list[tuple[Path, str]] = []

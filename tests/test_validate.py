@@ -2,6 +2,7 @@
 
 Run with: python3 -m unittest discover tests
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -15,7 +16,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -131,7 +132,7 @@ def run_main(argv: list[str]) -> tuple[int, str, str]:
 
 
 class ValidatorTests(unittest.TestCase):
-    def run_validation(self, files: dict[str, str]) -> "validate.Report":
+    def run_validation(self, files: dict[str, str]) -> validate.Report:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name, contents in files.items():
@@ -177,9 +178,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(report.errors, [])
 
     def test_rejects_duplicate_ids(self) -> None:
-        other = VALID_XDR.replace(
-            'category = "cap-0083"', 'category = "cap-0083-2"'
-        )
+        other = VALID_XDR.replace('category = "cap-0083"', 'category = "cap-0083-2"')
         report = self.run_validation({"a.toml": VALID_XDR, "b.toml": other})
         self.assertTrue(any("duplicate fixture id" in e for e in report.errors))
 
@@ -540,7 +539,7 @@ class ValidatorTests(unittest.TestCase):
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("does not resolve to an existing file" in e for e in report.errors))
 
-    def test_rejects_missing_expected_file(self) -> None:
+    def test_rejects_missing_expected_file_with_xdr_extension(self) -> None:
         bad = VALID_XDR + '\nexpected_file = "does-not-exist.xdr.b64"\n'
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(
@@ -901,7 +900,7 @@ class ValidatorTests(unittest.TestCase):
                 report = self.run_validation({"a.toml": bad})
                 self.assertTrue(any("too vague" in e for e in report.errors), report.errors)
 
-    def test_rejects_missing_description(self) -> None:
+    def test_rejects_missing_description_line(self) -> None:
         bad = VALID_XDR.replace('description = "example"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("description" in e for e in report.errors))
@@ -936,7 +935,7 @@ class ValidatorTests(unittest.TestCase):
             report.errors,
         )
 
-    def test_rejects_empty_id(self) -> None:
+    def test_rejects_empty_id_reports_must_not_be_empty(self) -> None:
         bad = VALID_XDR.replace(
             'id = "p28-xdr-cap83-example"', 'id = ""'
         )
@@ -949,9 +948,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("description" in e for e in report.errors))
 
     def test_rejects_uppercase_id(self) -> None:
-        bad = VALID_XDR.replace(
-            'id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"'
-        )
+        bad = VALID_XDR.replace('id = "p28-xdr-cap83-example"', 'id = "P28-XDR-CAP83-EXAMPLE"')
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("lowercase" in e for e in report.errors))
 
@@ -1691,7 +1688,7 @@ field = "events"
         self.assertTrue(any("topics has more than 5 entries" in e for e in rep.errors))
 
     def test_rpc_request_structural_edge_cases(self) -> None:
-        from tools.validate.validate import validate_rpc_request, Report
+        from tools.validate.validate import Report, validate_rpc_request
 
         # 1. request is not a dict
         rep = Report()
@@ -1774,7 +1771,7 @@ field = "events"
         self.assertTrue(any("a topics entry must contain only strings" in e for e in rep.errors))
 
     def test_soroban_fixture_requires_expect(self) -> None:
-        bad = VALID_SOROBAN.replace("[expect]\nkind = \"simulation-success\"\n", "")
+        bad = VALID_SOROBAN.replace('[expect]\nkind = "simulation-success"\n', "")
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("'expect'" in e for e in report.errors))
 
@@ -2136,14 +2133,20 @@ field = "events"
         self.assertTrue(any("'expect' must be a table" in e for e in report.errors))
 
     def test_rejects_invalid_base64_in_value_base64(self) -> None:
-        bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"')
+        bad = VALID_XDR.replace(
+            'value_base64 = "AAAAAA=="', 'value_base64 = "not-valid-base64!!!"'
+        )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "value_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "value_base64" in e for e in report.errors)
+        )
 
     def test_rejects_malformed_padding_base64(self) -> None:
         bad = VALID_XDR.replace('value_base64 = "AAAAAA=="', 'value_base64 = "AAAAA"')
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "value_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "value_base64" in e for e in report.errors)
+        )
 
     def test_rejects_invalid_base64_in_expected_base64(self) -> None:
         bad = (
@@ -2151,7 +2154,9 @@ field = "events"
             + 'expected_base64 = "not-valid-base64!!!"\n'
         )
         report = self.run_validation({"a.toml": bad})
-        self.assertTrue(any("not valid base64" in e and "expected_base64" in e for e in report.errors))
+        self.assertTrue(
+            any("not valid base64" in e and "expected_base64" in e for e in report.errors)
+        )
 
     def test_accepts_valid_base64_in_encode_equals(self) -> None:
         good = (
@@ -2219,7 +2224,7 @@ class ExpectedBase64KindTests(unittest.TestCase):
             text += f'expected_base64 = "{expected}"\n'
         return text
 
-    def run_validation(self, contents: str) -> "validate.Report":
+    def run_validation(self, contents: str) -> validate.Report:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, "a.toml", contents)
@@ -2333,7 +2338,7 @@ class QuietFlagTests(unittest.TestCase):
         # a warning, giving --quiet something to suppress.
         real = validate.validate_directory
 
-        def wrapper(root: Path, *args, **kwargs) -> "validate.Report":
+        def wrapper(root: Path, *args, **kwargs) -> validate.Report:
             report = real(root, *args, **kwargs)
             report.warning(Path(root) / "injected.toml", "injected warning")
             return report
@@ -2491,7 +2496,7 @@ class JsonFormatTests(unittest.TestCase):
         # what to do with warnings, so the JSON document always carries them.
         real = validate.validate_directory
 
-        def wrapper(root: Path, *args, **kwargs) -> "validate.Report":
+        def wrapper(root: Path, *args, **kwargs) -> validate.Report:
             report = real(root, *args, **kwargs)
             report.warning(Path(root) / "injected.toml", "injected warning")
             return report
@@ -2867,6 +2872,86 @@ class SourceReferenceFormatTests(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertIn("host", message)
 
+    def test_rejects_non_public_ipv4_networks(self) -> None:
+        # Exercise both ends of each explicitly denied CIDR.
+        denied_ranges = (
+            ("0.0.0.0", "0.255.255.255"),
+            ("10.0.0.0", "10.255.255.255"),
+            ("100.64.0.0", "100.127.255.255"),
+            ("127.0.0.0", "127.255.255.255"),
+            ("169.254.0.0", "169.254.255.255"),
+            ("172.16.0.0", "172.31.255.255"),
+            ("192.0.0.0", "192.0.0.255"),
+            ("192.0.2.0", "192.0.2.255"),
+            ("192.168.0.0", "192.168.255.255"),
+            ("198.18.0.0", "198.19.255.255"),
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.0", "203.0.113.255"),
+            ("224.0.0.0", "239.255.255.255"),
+            ("240.0.0.0", "255.255.255.255"),
+        )
+        for first, last in denied_ranges:
+            for address in (first, last):
+                with self.subTest(address=address):
+                    self.assertIsNotNone(validate.non_public_host_problem(address))
+
+    def test_non_public_host_policy_normalizes_local_names(self) -> None:
+        for host in (
+            "localhost",
+            "api.localhost",
+            "router.local",
+            "printer.localdomain",
+            "db.internal",
+            "device.home.arpa",
+        ):
+            with self.subTest(host=host):
+                self.assertIsNotNone(validate.non_public_host_problem(host))
+        self.assertIsNotNone(validate.non_public_host_problem("LOCALHOST"))
+        self.assertIsNotNone(validate.non_public_host_problem("LOCALHOST."))
+        # Normalize exactly one trailing dot; do not strip repeatedly.
+        self.assertIsNone(validate.non_public_host_problem("localhost.."))
+        self.assertIsNone(validate.non_public_host_problem("example.org.."))
+
+    def test_rejects_noncanonical_numeric_hosts(self) -> None:
+        for host in (
+            "2130706433",
+            "0x7f000001",
+            "0177.0.0.1",
+            "127.1",
+            "127.0.1",
+            "127.0.0x1",
+            "example.123",
+            "example.0x10",
+        ):
+            with self.subTest(host=host):
+                self.assertIsNotNone(validate.non_public_host_problem(host))
+
+    def test_accepts_public_host_policy_cases(self) -> None:
+        for host in (
+            "example.org",
+            "developers.stellar.org",
+            "soroban-testnet.stellar.org",
+            "rpc.example.invalid",
+            "8.8.8.8",
+            "notlocalhost.example.org",
+            "internal.example.org",
+        ):
+            with self.subTest(host=host):
+                self.assertIsNone(validate.non_public_host_problem(host))
+
+    def test_rejects_bracketed_ipv6_source_reference_hosts(self) -> None:
+        for host in ("[2001:4860:4860::8888]", "[::1]", "[::ffff:8.8.8.8]"):
+            value = f"https://{host}/docs/reference"
+            with self.subTest(host=host):
+                message = self.problem(value)
+                self.assertIsNotNone(message)
+                if host == "[::ffff:8.8.8.8]":
+                    self.assertIn("IPv6", message)
+
+    def test_accepts_bracketed_ipvfuture_source_reference_host(self) -> None:
+        value = "https://[v1.foo]/docs/reference"
+        self.assertIsNone(self.problem(value))
+
     def test_rejects_embedded_credentials(self) -> None:
         for value in (
             f"https://user:secret@github.com/stellar/stellar-protocol/blob/{self.SHA}/core/cap-0083.md",
@@ -3084,7 +3169,10 @@ class SourceReferenceFormatTests(unittest.TestCase):
         self.assertTrue(any("source_reference" in e and "'see issue'" in e for e in report.errors))
 
     def test_every_shipped_fixture_reference_passes(self) -> None:
-        for path in sorted((REPO_ROOT).glob("protocol-*/**/*.toml")):
+        paths = sorted((REPO_ROOT).glob("protocol-*/**/*.toml"))
+        # Guard against the glob matching nothing, which would pass vacuously.
+        self.assertGreater(len(paths), 0)
+        for path in paths:
             data = tomllib.loads(path.read_text(encoding="utf-8"))
             reference = data.get("source_reference")
             self.assertIsInstance(reference, str, path)
@@ -3115,7 +3203,7 @@ class VerificationEvidenceTests(unittest.TestCase):
     # The clock every record in this class is judged against. It is injected
     # rather than read from the machine, so the tests never depend on the
     # date they happen to run on (F-115, issue #397).
-    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=UTC)
 
     LIVE = {
         "verificationVersion": 1,
@@ -3284,6 +3372,42 @@ class VerificationEvidenceTests(unittest.TestCase):
             with self.subTest(bad):
                 self.assertTrue(self.problems(endpointHost=bad))
 
+    def test_endpoint_host_rejects_non_public_hosts_after_shape_validation(self) -> None:
+        for host in (
+            "localhost",
+            "service.local",
+            "10.1.2.3",
+            "127.1",
+            "2130706433",
+        ):
+            with self.subTest(host=host):
+                found = self.problems(endpointHost=host)
+                self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+
+        # Shape errors retain precedence and do not also receive host-policy errors.
+        found = self.problems(endpointHost="127.0.0.1:443")
+        self.assertTrue(any("host name only" in p for p in found), found)
+        self.assertFalse(any("non-public host" in p for p in found), found)
+
+    def test_a_local_mock_dry_run_may_name_a_loopback_endpoint_host(self) -> None:
+        # capture_live.py --local-endpoint records the loopback mock under the
+        # network name "local-mock"; that is the one place a loopback host is
+        # accepted, and the exemption does not stretch to other hosts or labels.
+        mock_network = dict(self.LIVE["network"], name="local-mock")
+        for host in ("127.0.0.1", "localhost", "LOCALHOST"):
+            with self.subTest(host=host):
+                self.assertEqual(self.problems(network=mock_network, endpointHost=host), [])
+        for host in ("10.0.0.5", "169.254.169.254", "192.168.1.1", "127.0.0.2", "service.local", "2130706433"):
+            with self.subTest(still_rejected=host):
+                found = self.problems(network=mock_network, endpointHost=host)
+                self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+        for name in ("testnet", "mainnet", "futurenet", "LOCAL-MOCK", "local-mock "):
+            with self.subTest(other_network=name):
+                found = self.problems(network=dict(self.LIVE["network"], name=name), endpointHost="127.0.0.1")
+                self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+        found = self.problems(network=None, endpointHost="127.0.0.1")
+        self.assertTrue(any("endpointHost uses a non-public host" in p for p in found), found)
+
     def test_evidence_ref_must_stay_inside_the_repository(self) -> None:
         for bad in ("/etc/passwd", "../outside.json", "a/../b.json", "a\\b.json", "a//b.json"):
             with self.subTest(bad):
@@ -3333,7 +3457,7 @@ class FutureCheckedAtTests(unittest.TestCase):
     record would look "verified" for years.
     """
 
-    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 10, 21, 10, 0, 0, tzinfo=UTC)
 
     def record(self, checked_at: str) -> dict:
         return {
@@ -3438,7 +3562,7 @@ class FutureCheckedAtTests(unittest.TestCase):
                 report.errors,
             )
             # The same file is fine when the record is not in the future.
-            later = datetime(2100, 1, 1, tzinfo=timezone.utc)
+            later = datetime(2100, 1, 1, tzinfo=UTC)
             report = validate.Report()
             self.assertIsNotNone(
                 validate.validate_evidence_file(path, report, now=later)

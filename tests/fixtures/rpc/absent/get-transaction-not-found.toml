@@ -1,0 +1,73 @@
+# Test vector: `get-transaction` for a hash that is not a transaction (F-039, issue #296).
+#
+# Stellar RPC answers an unknown transaction hash with `status = "NOT_FOUND"`
+# rather than a JSON-RPC error. Captured live from
+# https://soroban-testnet.stellar.org on 2026-10-23 (UTC):
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getTransaction","params":{"hash":"0000000000000000000000000000000000000000000000000000000000000000"}}'
+#   => {"jsonrpc":"2.0","id":1,"result":{
+#        "latestLedger":5349346,
+#        "latestLedgerCloseTime":"1792770317",
+#        "oldestLedger":5228387,
+#        "oldestLedgerCloseTime":"1792165522",
+#        "status":"NOT_FOUND",
+#        "txHash":"0000000000000000000000000000000000000000000000000000000000000000",
+#        "applicationOrder":0,"feeBump":false,"events":{},"ledger":0,"createdAt":"0"}}
+#
+# The same answer came back for `ab` x 32. The hash is 64 lowercase hex
+# characters, the only form the fixture loader accepts (CA-01 section 3, rule
+# 3). All zeroes is used because it is the hash of no transaction, on any
+# network, so the result does not depend on ledger state or retention, which
+# makes this a durable fixture: unlike a hash of a real transaction, it cannot
+# age out of the endpoint's history (CA-01 section 2).
+#
+# What is asserted, and what is deliberately not:
+#   - `status` equals "NOT_FOUND" and `txHash` echoes the requested hash.
+#   - `latestLedger` and `oldestLedger` are numbers, by type only.
+#   - The fields CA-01 lists as "present only for SUCCESS or FAILED" are NOT
+#     asserted absent. The live answer above still carries `ledger`,
+#     `applicationOrder`, `feeBump`, `events` and `createdAt` (zero or empty
+#     values) for NOT_FOUND, so a `field-absent` on them would fail against the
+#     real endpoint. Absence of the transaction is what `status` asserts.
+#
+# Kept under `tests/fixtures/rpc/` and not in a protocol pack: `getTransaction`
+# is not on `tools/evidence/capture_live.py`'s read-only allowlist, and the
+# engine does not run it yet (Protocol-Canary E-026, issue #421, is open), so a
+# pack carrying it would be an invalid fixture for every released engine. It is
+# exercised by `tests/test_rpc_absent_fixtures.py`.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getTransaction
+
+id = "test-rpc-tx-not-found"
+protocol = 28
+surface = "rpc"
+category = "absent-entity"
+description = "getTransaction for an unknown 64-hex hash reports status NOT_FOUND"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getTransaction"
+
+method = "get-transaction"
+
+[request]
+hash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[assert]]
+kind = "field-equals"
+field = "status"
+value = "NOT_FOUND"
+
+[[assert]]
+kind = "field-equals"
+field = "txHash"
+value = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "number"
+
+[[assert]]
+kind = "field-type"
+field = "oldestLedger"
+expected_type = "number"
