@@ -6,6 +6,7 @@ import io
 import shutil
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -428,6 +429,92 @@ class NewFixtureSkeletonAndPathTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("category must not be empty", err)
         self.assertEqual(list(self.temp_dir.iterdir()), [])
+
+
+class IdAndCategoryValidationTests(unittest.TestCase):
+    """The id and category are checked before anything is written (issue #445)."""
+
+    def setUp(self) -> None:
+        self.out = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.out, ignore_errors=True)
+
+    def run_tool(self, surface: str, fixture_id: str, category: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [
+            "--surface", surface,
+            "--protocol", "28",
+            f"--id={fixture_id}",
+            "--category", category,
+            "--output-dir", str(self.out),
+        ]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = new_fixture.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def assert_refused(self, code: int, err: str) -> None:
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith("error: "), err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(list(self.out.iterdir()), [], "nothing may be created")
+
+    def test_ids_the_schema_does_not_allow_are_refused_and_create_nothing(self) -> None:
+        for bad in (
+            "../../x",
+            "a/b",
+            "p28-rpc-nl\n",
+            "p28_rpc_under",
+            "-lead",
+            "P28-UPPER",
+            "has space",
+            "",
+        ):
+            with self.subTest(fixture_id=bad):
+                code, _out, err = self.run_tool("rpc", bad, "ledger")
+                self.assert_refused(code, err)
+
+    def test_categories_that_break_the_toml_or_the_path_are_refused(self) -> None:
+        for bad in ('a"b', "a\\b", "a/b", "ledger\n", "led\tger", "led\x00ger", ""):
+            with self.subTest(category=bad):
+                code, _out, err = self.run_tool("rpc", "p28-rpc-ok", bad)
+                self.assert_refused(code, err)
+
+    def test_a_cap_category_with_a_trailing_newline_makes_no_directory(self) -> None:
+        code, _out, err = self.run_tool("xdr", "p28-xdr-ok", "cap-0083\n")
+        self.assert_refused(code, err)
+
+    def test_valid_requests_are_still_accepted(self) -> None:
+        for surface, fixture_id, category in (
+            ("rpc", "p28-rpc-ok", "ledger"),
+            ("xdr", "p28-xdr-ok", "cap-0083"),
+            ("soroban", "p28-soroban-ok", "smoke"),
+        ):
+            with self.subTest(surface=surface, category=category):
+                code, _out, err = self.run_tool(surface, fixture_id, category)
+                self.assertEqual((code, err), (0, ""))
+
+    def test_a_written_skeleton_parses_as_toml(self) -> None:
+        code, _out, _err = self.run_tool("rpc", "p28-rpc-ok", "ledger")
+        self.assertEqual(code, 0)
+        written = self.out / "protocol-28" / "rpc" / "p28-rpc-ok.toml"
+        with written.open("rb") as handle:
+            record = tomllib.load(handle)
+        self.assertEqual(record["id"], "p28-rpc-ok")
+        self.assertEqual(record["category"], "ledger")
+
+    def test_a_target_that_resolves_outside_the_pack_is_refused(self) -> None:
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        pack = self.out / "protocol-28"
+        pack.mkdir()
+        try:
+            (pack / "rpc").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are not available here")
+        code, _out, err = self.run_tool("rpc", "p28-rpc-ok", "ledger")
+        self.assertEqual(code, 1)
+        self.assertIn("outside", err)
+        self.assertEqual(list(outside.iterdir()), [], "nothing may be written outside the pack")
 
 
 if __name__ == "__main__":

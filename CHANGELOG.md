@@ -12,6 +12,17 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- `tools/scaffold/new_fixture.py` checks its arguments before it writes anything
+  (F-126). `--id` must fully match the id pattern in
+  `schemas/fixture-v1.schema.json`, so `../../x`, `a/b`, an id ending in a
+  newline and `p28_rpc_under` are refused; `--category` may not be empty or
+  contain a control character, a double quote, a backslash or a path separator,
+  and the cap-directory rule uses a full match, so `cap-0083` followed by a
+  newline no longer creates a directory. As a last defence the target must
+  resolve inside `<output-dir>/protocol-<N>/`. Each refusal exits 1 with one
+  line on stderr and leaves no file or directory behind; valid requests produce
+  the same paths and content as before. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
 - A test keeps `docs/tools.md` honest about repository paths (F-132). Every
   backtick-quoted path under `tools/`, `tests/`, `schemas/`, `docs/`,
   `protocol-NN/` or `.github/` must exist (placeholders and globs are skipped),
