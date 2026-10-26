@@ -80,6 +80,7 @@ IN_SCOPE_SCHEMAS = {
         REPO_ROOT / "schemas" / "proposed" / "simulation-resource-estimate.expect.json"
     ),
     "run-record-v1": REPO_ROOT / "schemas" / "run-record-v1.schema.json",
+    "validator-report-v1": REPO_ROOT / "schemas" / "validator-report-v1.schema.json",
 }
 
 

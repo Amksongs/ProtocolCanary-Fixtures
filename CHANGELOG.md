@@ -12,6 +12,18 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- A JSON Schema for the `--format json` report the validator prints (#333).
+  `schemas/validator-report-v1.schema.json` describes the F-023 document --
+  the `valid` flag, the `errors` and `warnings` diagnostics (`path`, `id`,
+  `line`, `message`) and the derived `summary` counters -- and
+  `tests/test_schema.py` validates real output from passing, failing and
+  warning runs of `python3 tools/validate/validate.py --format json` against
+  it with `tools/validate/jsonschema_lite.py`, together with negative cases
+  for a
+  missing required field, a wrong type, an incomplete diagnostic and an
+  unknown extra property. See
+  [PR #477](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/477).
+
 - Every job in `validate.yml`, `engine-drift.yml` and `live-evidence.yml` now
   sets `timeout-minutes` (F-133), so a hung connection or a stuck build cannot
   hold a runner for GitHub's 360-minute default and block the next scheduled

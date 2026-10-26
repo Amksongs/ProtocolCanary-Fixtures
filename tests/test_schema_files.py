@@ -74,6 +74,9 @@ JAVASCRIPT_LITE_SCOPE = {
     # run-record schema with jsonschema_lite, so the reader and the schema
     # stay pinned together (issue #367).
     "run-record-v1.schema.json": "tests/test_run_record_schema.py",
+    # tests/test_schema.py validates real `validate.py --format json` output
+    # against the validator-report schema with jsonschema_lite.
+    "validator-report-v1.schema.json": "tests/test_schema.py",
 }
 
 # The schemas jsonschema_lite is never used with as-is, and what validates
