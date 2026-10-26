@@ -19,6 +19,8 @@ jobs:
     # structural validation against an unchanged tree.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: the whole workflow has taken at most about two minutes; 10 leaves headroom.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -30,6 +32,21 @@ jobs:
           # target without any commit in this repository. Bump this
           # deliberately when a new patch release is wanted.
           python-version: "3.11.16"
+
+      - name: Install Ruff
+        run: |
+          pip install ruff==0.17.2
+          # Ruff is pinned to 0.17.2 to match the version validated against
+          # the ruff.toml configuration. Bump both together when upgrading.
+
+      - name: Ruff lint check
+        # Lint only. `ruff format --check` is not enforced: it would reformat
+        # most of the repository, which belongs in a PR of its own.
+        run: ruff check .
+
+      - name: Check root files
+        # Guard against stray files committed to the repository root (issue #328).
+        run: python3 tools/validate/check_root_files.py
 
       - name: Structural fixture validation
         run: python3 tools/validate/validate.py
@@ -82,6 +99,8 @@ jobs:
     # and never imported by the tools or the test suite.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: same tooling as validate.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -114,6 +133,8 @@ jobs:
 
   markdown-links:
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: lychee fetches external links; a stuck connection must not hold the runner.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -148,6 +169,8 @@ jobs:
     # routine PRs and pushes are not subject to third-party network flakes.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: fetches every fixture source URL, one request at a time.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -165,6 +188,8 @@ jobs:
     # pushes to main or scheduled runs.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: a git diff and a text check.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

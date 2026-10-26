@@ -74,7 +74,7 @@ class MockRpcServer:
     def url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
-    def __enter__(self) -> "MockRpcServer":
+    def __enter__(self) -> MockRpcServer:
         server = self
 
         class Handler(BaseHTTPRequestHandler):

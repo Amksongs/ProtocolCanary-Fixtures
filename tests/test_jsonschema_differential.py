@@ -42,14 +42,14 @@ import importlib.util
 import json
 import random
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LITE_RELATIVE = "tools/validate/jsonschema_lite.py"

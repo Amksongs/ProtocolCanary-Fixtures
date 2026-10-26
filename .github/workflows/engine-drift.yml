@@ -36,6 +36,8 @@ permissions:
 jobs:
   engine-drift:
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: clones and builds the engine; the bound is for a stuck clone or build.
+    timeout-minutes: 30
     # `inputs` is empty on schedule events, so the expression resolves to
     # `main` there and to the dispatch input on a manual run.
     env:

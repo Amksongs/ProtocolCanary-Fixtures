@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tools.evidence import freshness
@@ -12,7 +12,7 @@ from tools.evidence import freshness
 
 class TestVerificationFreshness(unittest.TestCase):
     def setUp(self) -> None:
-        self.now = datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)
+        self.now = datetime(2026, 10, 22, 12, 0, 0, tzinfo=UTC)
 
     def test_parse_checked_at_valid(self) -> None:
         valid_ts = "2026-10-22T08:00:00Z"
@@ -21,7 +21,7 @@ class TestVerificationFreshness(unittest.TestCase):
         self.assertEqual(dt.month, 10)
         self.assertEqual(dt.day, 22)
         self.assertEqual(dt.hour, 8)
-        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.tzinfo, UTC)
 
     def test_parse_checked_at_with_fractions(self) -> None:
         valid_ts = "2026-10-22T08:00:00.123456Z"
@@ -118,7 +118,7 @@ class TestVerificationFreshness(unittest.TestCase):
                 json.dumps({
                     "verificationVersion": 1,
                     "fixtureId": "test-fresh",
-                    "checkedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "checkedAt": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }),
                 encoding="utf-8",
             )
@@ -148,7 +148,7 @@ class TestVerificationFreshness(unittest.TestCase):
 
     def test_additional_coverage_paths(self) -> None:
         # parse_checked_at with now=None
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         parsed = freshness.parse_checked_at(now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
         self.assertIsNotNone(parsed)
 

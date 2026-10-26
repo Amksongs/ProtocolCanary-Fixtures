@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime
-import gzip
 import hashlib
 import io
 import json
@@ -34,7 +33,7 @@ class Scratch(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
 
-    def build(self, name: str = "out", version: str = "1.0.0") -> "pack.ArchiveInfo":
+    def build(self, name: str = "out", version: str = "1.0.0") -> pack.ArchiveInfo:
         pack_dir = self.root / "pack"
         if not pack_dir.exists():
             support.write_pack(self.root)
@@ -356,7 +355,7 @@ class VerifiedPackTests(Scratch):
                 "fixtureId": fixture["id"],
                 "fixtureSha256": digest,
                 "method": "structural",
-                "checkedAt": datetime.datetime.now(datetime.timezone.utc).strftime(
+                "checkedAt": datetime.datetime.now(datetime.UTC).strftime(
                     "%Y-%m-%dT%H:%M:%SZ"
                 ),
                 "verifier": {"name": "test", "version": "1"},

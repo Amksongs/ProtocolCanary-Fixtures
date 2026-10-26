@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -21,7 +22,31 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools.validate import validate
 
+# Anchored, and always used with ``fullmatch``: ``fullmatch`` rejects a trailing
+# newline that a bare ``$`` would let through.
 _CAP_RE = re.compile(r"^cap-\d{4}$")
+_SCHEMA_PATH = REPO_ROOT / "schemas" / "fixture-v1.schema.json"
+# Characters a category may not contain: it is written inside a TOML basic
+# string and, for an xdr cap directory, used as a path segment.
+_CATEGORY_FORBIDDEN = frozenset('"\\/')
+
+
+def _schema_id_pattern() -> re.Pattern[str]:
+    """The id rule of schemas/fixture-v1.schema.json, read from the schema."""
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return re.compile(schema["properties"]["id"]["pattern"])
+
+
+def validate_category_rule(category: str) -> str | None:
+    """Reject a category that would break the TOML text or the path."""
+    if not category:
+        return "category must not be empty"
+    for char in category:
+        if ord(char) < 0x20 or ord(char) == 0x7F:
+            return "category must not contain control characters"
+        if char in _CATEGORY_FORBIDDEN:
+            return f"category must not contain {char!r}"
+    return None
 
 
 def validate_id_rule(fixture_id: str) -> str | None:
@@ -32,6 +57,10 @@ def validate_id_rule(fixture_id: str) -> str | None:
         return "id must be lowercase"
     if " " in fixture_id:
         return "id must not contain spaces"
+    # Full match, not ``$``: Python's ``$`` also matches before a trailing
+    # newline, which would let ``p28-rpc-nl\n`` through.
+    if _schema_id_pattern().fullmatch(fixture_id) is None:
+        return f"id must match {_schema_id_pattern().pattern} (schemas/fixture-v1.schema.json)"
     filename = f"{fixture_id}.toml"
     try:
         validate.portable_names.check_segment(filename)
@@ -145,17 +174,24 @@ def main(argv: list[str]) -> int:
         print(f"error: {id_err}", file=sys.stderr)
         return 1
 
-    if not args.category:
-        print("error: category must not be empty", file=sys.stderr)
+    category_err = validate_category_rule(args.category)
+    if category_err:
+        print(f"error: {category_err}", file=sys.stderr)
         return 1
 
     base_dir = Path(args.output_dir)
-    if args.surface == "xdr" and _CAP_RE.match(args.category):
+    if args.surface == "xdr" and _CAP_RE.fullmatch(args.category):
         target_dir = base_dir / f"protocol-{args.protocol}" / "xdr" / args.category
     else:
         target_dir = base_dir / f"protocol-{args.protocol}" / args.surface
 
     target_file = target_dir / f"{args.id}.toml"
+    # Last defence: whatever the checks above allowed, never write outside
+    # <output-dir>/protocol-<N>/.
+    pack_dir = (base_dir / f"protocol-{args.protocol}").resolve()
+    if not target_file.resolve().is_relative_to(pack_dir):
+        print(f"error: {target_file} is outside {pack_dir}", file=sys.stderr)
+        return 1
     content = render_skeleton(args.surface, args.protocol, args.id, args.category)
     created_dirs: list[Path] = []
     missing: list[Path] = []

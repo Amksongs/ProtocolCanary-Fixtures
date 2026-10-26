@@ -12,6 +12,127 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Every job in `validate.yml`, `engine-drift.yml` and `live-evidence.yml` now
+  sets `timeout-minutes` (F-133), so a hung connection or a stuck build cannot
+  hold a runner for GitHub's 360-minute default and block the next scheduled
+  run: `validate` 10, `coverage` 10, `changelog` 10, `markdown-links` 15,
+  `source-links` 20, `engine-drift` 30, `capture` 15. Only those lines and a
+  comment above each were added. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
+- Boundary tests for `tools/evidence/capture_live.py` (F-134). They pin
+  `field-number-range` at, just inside and just outside both limits (and the
+  "not a number" and missing-field reports), `values_equal` for values of
+  different types, the `getNetwork` facts that become evidence (an empty,
+  missing or non-string passphrase and a missing, boolean or negative
+  `protocolVersion` each refuse the run and write nothing; `0` is accepted),
+  and the two-space, single-trailing-newline output of `render_json`. Tests
+  only; the tool is unchanged. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
+- `tools/scaffold/new_fixture.py` checks its arguments before it writes anything
+  (F-126). `--id` must fully match the id pattern in
+  `schemas/fixture-v1.schema.json`, so `../../x`, `a/b`, an id ending in a
+  newline and `p28_rpc_under` are refused; `--category` may not be empty or
+  contain a control character, a double quote, a backslash or a path separator,
+  and the cap-directory rule uses a full match, so `cap-0083` followed by a
+  newline no longer creates a directory. As a last defence the target must
+  resolve inside `<output-dir>/protocol-<N>/`. Each refusal exits 1 with one
+  line on stderr and leaves no file or directory behind; valid requests produce
+  the same paths and content as before. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
+- A test keeps `docs/tools.md` honest about repository paths (F-132). Every
+  backtick-quoted path under `tools/`, `tests/`, `schemas/`, `docs/`,
+  `protocol-NN/` or `.github/` must exist (placeholders and globs are skipped),
+  and a miss is reported with its line number. It found the one wrong name, now
+  corrected: the manifest tool's exit-code table pointed at
+  `schemas/manifest-v1.schema.json`, whose real name is
+  `schemas/release-manifest-v1.schema.json`. See
+  [PR #475](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/475).
+- Ruff lint check in CI (F-334). `ruff.toml` pins the rule set (`E`, `F`, `W`,
+  `I`, `B`, `UP`; `E501` and `E402` ignored with reasons) and the workflow runs
+  `ruff check .` with Ruff 0.17.2. The existing findings are fixed in the same
+  change: unused imports and variables, import order, quoted annotations,
+  `assertRaises(Exception)` narrowed to the errors the schema mirrors raise,
+  and three tests in `tests/test_validate.py` that a later test of the same
+  name was silently replacing now run under their own names. See
+  [PR #476](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/476).
+- The validator rejects non-public hosts (F-114). A `source_reference` URL or a
+  verification record's `endpointHost` that names `localhost`, a local-only
+  suffix (`.localhost`, `.local`, `.localdomain`, `.internal`, `.home.arpa`),
+  an IPv4 address in a private, loopback, link-local, carrier-grade NAT,
+  documentation, benchmarking, multicast or reserved range, or an ambiguous
+  numeric host such as `2130706433` or `0x7f.1`, is now an error, and so is a
+  bracketed IPv6 literal in a `source_reference` URL. The check is offline and
+  deterministic (`non_public_host_problem` in `tools/validate/validate.py`); it
+  does not resolve DNS, so a public-looking name such as `127.0.0.1.nip.io`
+  that resolves to a private address is out of its reach. DNS, redirect and
+  runtime protection is the link checker's job (F-108). The one exception is
+  a dry-run record whose `network.name` is `local-mock` (written by
+  `capture_live.py --local-endpoint`), which may name `127.0.0.1` or
+  `localhost`. Documented in
+  `CONTRIBUTING.md`; `tests/test_validate.py` covers each range and form. Closes
+  [issue #396](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/396).
+  ([PR #414](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/414))
+
+- `tools/validate/check_source_links.py` only contacts publicly routable
+  destinations (F-108). Fixture content is contributor-controlled, but the
+  scheduled job runs on the repository runner's network, so a `source_reference`
+  such as `https://169.254.169.254/`, `https://localhost/` or a public URL that
+  redirects to a private one could make the runner request an internal endpoint
+  and report its reachability in the job summary. The destination is now vetted
+  before every request, including each redirect hop and the empty-POST fallback
+  after an HTTP 405: IP literals (including the decimal, hexadecimal and octal
+  IPv4 forms and IPv6) are judged without DNS, a name is refused if any
+  resolved address is loopback, private, link-local, unique-local,
+  carrier-grade NAT, multicast, reserved or unspecified (IPv4-mapped IPv6 is
+  unwrapped first), and the socket dials the exact address that was validated
+  while TLS keeps using the original host name, so a changed DNS answer cannot
+  move the connection. A refusal reads `Failed (refused: non-public address)`
+  and never names the resolved address. There is no flag or environment
+  variable to weaken the policy; tests inject one. Documented in
+  `CONTRIBUTING.md`; the tests replace DNS and the socket layer with fakes.
+  Closes
+  [issue #390](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/390).
+  ([PR #436](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/436))
+
+- `tools/validate/check_source_links.py` escapes every value it writes into the
+  Markdown job summary (F-107). The URL, the fixture file name and the result
+  detail come from fixture content, file names and exception text, so a fixture
+  author could add table cells, split a row across lines or smuggle a live link
+  or raw HTML into the summary maintainers read; even a plain `|` in a URL broke
+  the table. Line breaks now become a space, `&`, `<`, `>`, `[`, `]`, backticks
+  and backslashes become HTML entities, and `|` becomes `\|`, so every row keeps
+  exactly three cells and nothing in a cell can form a link, tag or code span.
+  Ordinary URLs contain none of those characters and are unchanged. Five new
+  tests in `tests/test_check_source_links.py`. Closes
+  [issue #389](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/389).
+  ([PR #435](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/435))
+
+- `tools/validate/jsonschema_lite.py` supports the `allOf` keyword (F-113): the
+  instance is checked against every subschema in order and each failure is
+  reported, with the subschema's location in a schema error such as
+  `$.allOf[1]`. Sibling keywords are still applied next to `allOf` (including
+  when the instance has the wrong type), an empty or non-list `allOf` and an
+  entry that is not a schema are schema errors, and a local `$ref` inside a
+  subschema resolves as before. A schema that uses an unsupported keyword
+  such as `if` is still rejected, which keeps the fixture schema's behavior in
+  `tests/test_validate.py` unchanged. Eight new tests in
+  `tests/test_jsonschema_lite.py`. Closes
+  [issue #395](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/395).
+  ([PR #417](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/417))
+
+- `tools/validate/check_root_files.py` (F-054): a CI guard, run by the validate
+  workflow, that fails when a file or directory outside an explicit allow-list
+  appears in the repository root (`protocol-NN/` packs are always allowed), so a
+  stray scratch file can no longer be committed unnoticed. It reads the root
+  from `git ls-files` (falling back to a directory scan outside a git
+  checkout), exits 1 and names each unexpected entry, and uses only the
+  standard library. The same change removes the three stray root files it
+  would have caught: `PR_DESCRIPTION.md`, `diff.txt` and `main_CONTRIBUTING.md`.
+  `tests/test_check_root_files.py` covers the allow-list, path normalization,
+  the git and fallback listings and the exit codes. Closes
+  [issue #328](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/328).
+  ([PR #399](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/399))
+
 - Protocol 29 coverage now includes a Protocol 28-versus-29 RPC mismatch
   fixture, with separate Testnet and Futurenet verification records whose
   passphrases are validated against their network names. The release pack

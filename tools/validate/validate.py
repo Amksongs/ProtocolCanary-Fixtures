@@ -52,6 +52,7 @@ at a later instant; a record dated 2099 would otherwise look "verified"
 for 73 years. A record may be up to five minutes ahead of this run's clock,
 the tolerance for skew between the verifier's machine and this one.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -59,6 +60,7 @@ import base64
 import binascii
 import hashlib
 import importlib.util
+import ipaddress
 import json
 import math
 import re
@@ -67,7 +69,7 @@ import tomllib
 import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -427,7 +429,7 @@ class Report:
     ) -> None:
         self.warning_entries.append(self._diagnostic(path, message, fixture_id, line))
 
-    def merge(self, other: "Report") -> None:
+    def merge(self, other: Report) -> None:
         """Absorb another report's diagnostics (used to combine per-root reports)."""
         self.error_entries.extend(other.error_entries)
         self.warning_entries.extend(other.warning_entries)
@@ -501,7 +503,7 @@ def find_unsafe_characters(text: str) -> list[UnsafeCharacter]:
     return findings
 
 
-def report_unsafe_characters(path: Path, text: str, report: "Report") -> None:
+def report_unsafe_characters(path: Path, text: str, report: Report) -> None:
     """Report every forbidden code point in ``text`` (F-048)."""
     for finding in find_unsafe_characters(text):
         character = chr(finding.codepoint)
@@ -519,6 +521,63 @@ def report_unsafe_characters(path: Path, text: str, report: "Report") -> None:
 
 def _is_pinned_ref(ref: str) -> bool:
     return bool(_COMMIT_REF_RE.fullmatch(ref) or _TAG_REF_RE.fullmatch(ref))
+
+
+_NON_PUBLIC_HOST_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".home.arpa",
+)
+_NON_PUBLIC_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+    )
+)
+
+
+def non_public_host_problem(host: str) -> str | None:
+    """Describe a host rejected by the offline non-public host policy.
+
+    Hostname checks are deterministic and do not resolve DNS. Only the
+    explicitly listed IPv4 networks are denied; other canonical IPv4 literals
+    are permitted.
+    """
+    normalized = host.lower()
+    if normalized.endswith("."):
+        normalized = normalized[:-1]
+
+    if normalized == "localhost" or normalized.endswith(_NON_PUBLIC_HOST_SUFFIXES):
+        return "uses a local or internal hostname"
+
+    try:
+        address = ipaddress.IPv4Address(normalized)
+    except ipaddress.AddressValueError:
+        address = None
+    if address is not None:
+        if any(address in network for network in _NON_PUBLIC_IPV4_NETWORKS):
+            return "uses an IPv4 address in a non-public range"
+        return None
+
+    final_label = normalized.rsplit(".", 1)[-1]
+    if final_label.isdecimal() or final_label.startswith("0x"):
+        return "uses an ambiguous noncanonical numeric host"
+    return None
 
 
 def check_source_reference(value: str) -> str | None:
@@ -555,6 +614,16 @@ def check_source_reference(value: str) -> str | None:
         return f"has no valid host name in {value!r}"
     if parts.username is not None or parts.password is not None:
         return "must not embed credentials (user@host) in the URL"
+    if parts.netloc.startswith("["):
+        try:
+            ipaddress.IPv6Address(raw_host)
+        except ipaddress.AddressValueError:
+            pass
+        else:
+            return "must not use a bracketed IPv6 literal as the URL host"
+    host_problem = non_public_host_problem(raw_host)
+    if host_problem:
+        return f"uses a non-public host: {host_problem}"
 
     lower_host = raw_host.lower()
     if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for ch in lower_host):
@@ -1350,7 +1419,7 @@ def validate_rpc_request(method: str, data: dict, path: Path, report: Report) ->
                             line=_field_line(path, "request"),
                         )
                     else:
-                        for row_idx, row in enumerate(topics):
+                        for row in topics:
                             if not isinstance(row, list):
                                 report.error(
                                     path,
@@ -2168,6 +2237,23 @@ KNOWN_NETWORK_PASSPHRASES = {
 }
 _EVIDENCE_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _EVIDENCE_HOST_RE = re.compile(r"[^/:?#@\s\\]+")
+
+# tools/evidence/capture_live.py --local-endpoint writes dry-run records from a
+# loopback mock server and labels their network "local-mock". Those records are
+# scratch output for exercising the tool without a network, so under that label
+# (and only for these two loopback names) a loopback endpointHost is accepted.
+# Every other non-public host stays an error, with or without the label.
+_LOCAL_MOCK_NETWORK = "local-mock"
+_LOCAL_MOCK_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _is_local_mock_dry_run(record: dict, host: str) -> bool:
+    network = record.get("network")
+    return (
+        isinstance(network, dict)
+        and network.get("name") == _LOCAL_MOCK_NETWORK
+        and host.lower() in _LOCAL_MOCK_HOSTS
+    )
 _EVIDENCE_INSTANT_RE = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z"
 )
@@ -2217,12 +2303,12 @@ def _parse_instant(value: str) -> datetime:
         )
     else:
         parsed = datetime.strptime(head, "%Y-%m-%dT%H:%M:%S")
-    return parsed.replace(tzinfo=timezone.utc)
+    return parsed.replace(tzinfo=UTC)
 
 
 def _format_instant(value: datetime) -> str:
     """A datetime as an RFC 3339 UTC instant, the form ``checkedAt`` uses."""
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _check_not_future(value: str, now: datetime) -> str | None:
@@ -2240,7 +2326,7 @@ def _check_not_future(value: str, now: datetime) -> str | None:
         raise ValueError("now must be a timezone-aware datetime")
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be a timezone-aware datetime")
-    if _parse_instant(value) > now.astimezone(timezone.utc) + CLOCK_SKEW_TOLERANCE:
+    if _parse_instant(value) > now.astimezone(UTC) + CLOCK_SKEW_TOLERANCE:
         return (
             f"checkedAt {value!r} is later than the current time "
             f"{_format_instant(now)} (allowed clock skew "
@@ -2278,7 +2364,7 @@ def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
         return ["a verification record must be a JSON object"]
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     problems: list[str] = []
     allowed = set(EVIDENCE_REQUIRED_FIELDS) | set(EVIDENCE_OPTIONAL_FIELDS)
@@ -2352,11 +2438,16 @@ def validate_evidence(record: object, now: datetime | None = None) -> list[str]:
                 problems.append(f"unknown field {name!r} in network")
 
     host = record.get("endpointHost")
-    if host is not None and not (isinstance(host, str) and _EVIDENCE_HOST_RE.fullmatch(host)):
-        problems.append(
-            "endpointHost must be a host name only: no scheme, port, path, query, "
-            "credentials or whitespace"
-        )
+    if host is not None:
+        if not (isinstance(host, str) and _EVIDENCE_HOST_RE.fullmatch(host)):
+            problems.append(
+                "endpointHost must be a host name only: no scheme, port, path, query, "
+                "credentials or whitespace"
+            )
+        else:
+            host_problem = non_public_host_problem(host)
+            if host_problem and not _is_local_mock_dry_run(record, host):
+                problems.append(f"endpointHost uses a non-public host: {host_problem}")
 
     reference = record.get("evidenceRef")
     if reference is not None:
@@ -2572,7 +2663,7 @@ def main(argv: list[str]) -> int:
         # One clock for the whole run: every record is judged against the
         # same instant, so two records cannot disagree because the run
         # straddled a second boundary.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for path in evidence_files:
             record = validate_evidence_file(path, combined, now=now)
             if record is not None:

@@ -40,7 +40,6 @@ class PackXdrIndependentTests(unittest.TestCase):
 
         tested_count = 0
         for fixture_path in xdr_fixtures:
-            content = fixture_path.read_text(encoding="utf-8")
             with open(fixture_path, "rb") as f:
                 data = tomllib.load(f)
 

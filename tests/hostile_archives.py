@@ -17,9 +17,9 @@ import gzip
 import io
 import sys
 import tarfile
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -134,7 +134,7 @@ def fix_checksum(raw: bytearray, offset: int = 0) -> None:
     """
     block = bytearray(raw[offset : offset + 512])
     block[148:156] = b"        "
-    raw[offset + 148 : offset + 156] = ("%06o\x00 " % sum(block)).encode("ascii")
+    raw[offset + 148 : offset + 156] = (f"{sum(block):06o}\x00 ").encode("ascii")
 
 
 # ---------------------------------------------------------------- builders

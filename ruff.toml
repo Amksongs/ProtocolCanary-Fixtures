@@ -1,0 +1,66 @@
+# Ruff configuration for ProtocolCanary-Fixtures
+# https://docs.astral.sh/ruff/
+#
+# Target Python 3.11 (the version pinned in CI).
+# Line length matches the existing code style (99 characters).
+#
+# Rule selection:
+#   E  - pycodestyle errors
+#   F  - Pyflakes (undefined names, unused imports, etc.)
+#   W  - pycodestyle warnings
+#   I  - isort (import sorting)
+#   B  - flake8-bugbear (common bugs, e.g. mutable default args, unused variables)
+#   UP - pyupgrade (modernize syntax, e.g. remove quotes from type annotations)
+#
+# Pinned Ruff version: 0.17.2
+# Pinning avoids surprise failures when rule behavior or defaults change.
+# Bump deliberately when a new version is wanted; see .github/workflows/validate.yml.
+
+target-version = "py311"
+line-length = 99
+
+[lint]
+# Start with the core rule sets: errors, warnings, imports, bugbear, pyupgrade.
+# We select specific rules rather than enabling everything, so the config stays
+# readable and intentional.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+# Ignore rules that don't apply to this repository's Python code.
+# Each ignore has a one-line reason.
+#
+# E501 - Line too long. We use line-length as a soft guide, not a hard error,
+#        because the existing test fixtures and long string literals would
+#        produce noisy diffs for little value. Ruff's formatter already handles
+#        line wrapping; the check is redundant with format --check.
+#
+# E402 - Module level import not at top of file. Scripts under tools/ and the
+#        tests put the repository root or a sibling directory on sys.path
+#        before importing the modules they share, so the imports cannot move.
+ignore = [
+    "E501",  # line-too-long: let the formatter handle wrapping, not the linter
+    "E402",  # imports that follow the sys.path bootstrap
+]
+
+[lint.isort]
+# This repo has no third-party imports beyond the standard library, so keep
+# the simple default layout.
+known-first-party = []
+
+[lint.per-file-ignores]
+# validate.py is a CLI script with a shebang; EXE001 (shebang on non-executable)
+# is not useful here because the file is invoked via `python3 tools/validate/validate.py`,
+# not executed directly.
+"tools/validate/validate.py" = ["EXE001"]
+
+
+[lint.mccabe]
+# McCabe complexity threshold. The existing code is straightforward; this is
+# a future-proofing default in case complexity grows.
+max-complexity = 10
