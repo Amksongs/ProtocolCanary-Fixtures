@@ -79,6 +79,22 @@ the crate-produced value — for BASIC the first 40 of 48 bytes (the
 `upgrades` vector and ext discriminant missing), for SIGNED the first
 100 of 152 bytes (the 64-byte signature cut after 12 bytes).
 
+**Boundary fixtures.** Three decode-failures under
+[`protocol-28/xdr/boundaries/`](../protocol-28/xdr/boundaries/) cover the
+three standard ways a decoder is expected to reject a value, applied to
+the `STELLAR_VALUE_BASIC` encoding above: a truncation at 44 of its 48
+bytes — only the ext discriminant word missing
+(`p28-xdr-stellar-value-boundary-truncated`), the complete value with one
+4-byte zero word appended (`p28-xdr-stellar-value-boundary-trailing-bytes`),
+and the same 48 bytes with the ext discriminant changed from 0 to the
+undefined 3 (`p28-xdr-stellar-value-boundary-unknown-ext-discriminant`).
+Each payload is derived from the crate-produced value by the byte rule its
+header records — never hand-assembled — and each header records the exact
+`cargo` generation command and the crate version. The `stellar-xdr` 28.0.1
+crate rejects all three ("failed to fill whole buffer" for the truncation,
+"xdr value invalid" for the other two), and `stellar-canary` 0.2.0 reports
+all three as correctly rejected (3 of 3 pass, checked 2026-10-26 UTC).
+
 **How the payloads were made.** Every `value_base64` is the output of a
 program that builds the typed value with the official `stellar-xdr`
 28.0.1 crate (features `base64` and `alloc` — the version pinned for

@@ -1,0 +1,69 @@
+# Protocol 28 / StellarValue boundary: trailing bytes after a valid value.
+#
+# Trailing bytes are one of the three standard ways an XDR decoder is
+# expected to fail (alongside truncation and an undefined union
+# discriminant), and none of the pack's StellarValue fixtures covered
+# them: a decoder that accepts extra data after a complete value would
+# treat a malformed ledger value as valid and could mis-read a stream
+# that carries a second, undecodable payload behind the first. This
+# fixture's payload is the complete 48-byte STELLAR_VALUE_BASIC encoding
+# followed by one 4-byte word of zeros, so the leading value is perfectly
+# well formed and the rejection can only come from the trailing data
+# (Stellar-ledger.x at stellar/stellar-xdr tag v28.0, commit
+# 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694, lines 41-56).
+#
+# Malformation rule (documented, deterministic): this value_base64 is the
+# base64 of the 48-byte crate-produced encoding
+# EREREREREREREREREREREREREREREREREREREREREREAAAAAaOd4AAAAAAAAAAAA
+# recorded in p28-xdr-stellar-value-basic-decode-success.toml with four
+# 0x00 bytes appended. Appending that single zero word is the only
+# mutation; the first 48 bytes are untouched.
+#
+# Produced with the official `stellar-xdr` crate — the exact command,
+# run in an empty directory on 2026-10-26 (UTC):
+#
+#   cargo new svgen --bin && cd svgen
+#   cargo add stellar-xdr@28.0.1 --features base64,alloc
+#   cargo run --release
+#
+# with main.rs building, encoding and extending
+#
+#   let valid = StellarValue {
+#       tx_set_hash: Hash([0x11; 32]),
+#       close_time: TimePoint(1760000000),
+#       upgrades: VecM::default(),
+#       ext: StellarValueExt::Basic,
+#   };
+#   let mut bytes = valid.to_xdr(Limits::none())?;
+#   bytes.extend_from_slice(&[0, 0, 0, 0]);
+#
+# The same run verified the bytes: the unmodified 48-byte encoding decodes
+# (StellarValue::from_xdr returns Ok), while this 52-byte input is
+# rejected with "xdr value invalid".
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13);
+# generated 2026-10-26 (UTC).
+#
+# Verified with the engine on 2026-10-26 (UTC): `stellar-canary` 0.2.0
+# rejects this payload — `stellar-canary check --fixtures-dir
+# protocol-28/xdr/boundaries --protocol 28 --json --no-cache` reports
+# pass, "StellarValue was correctly rejected", for this fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a
+# real network object: the 0x11-filled txSetHash is not the hash of any
+# real transaction set, close_time is an arbitrary fixed uint64 (not an
+# observed ledger close time), and the upgrades vector is empty. Nothing
+# here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x
+
+id = "p28-xdr-stellar-value-boundary-trailing-bytes"
+protocol = 28
+surface = "xdr"
+category = "stellar-value"
+description = "A complete StellarValue followed by four trailing bytes is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x"
+
+type = "StellarValue"
+kind = "decode-failure"
+value_base64 = "EREREREREREREREREREREREREREREREREREREREREREAAAAAaOd4AAAAAAAAAAAAAAAAAA=="
