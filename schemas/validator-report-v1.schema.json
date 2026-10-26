@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProtocolCanary-Fixtures Validator Report",
+  "description": "Schema for the JSON report produced by `python3 tools/validate/validate.py --format json`.",
+  "type": "object",
+  "version": 1,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Schema version. Currently always 1.",
+      "enum": [1]
+    },
+    "status": {
+      "type": "string",
+      "description": "Overall validation status: 'ok' if there are no errors, 'failed' otherwise.",
+      "enum": ["ok", "failed"]
+    },
+    "roots": {
+      "type": "array",
+      "description": "The root directories that were validated.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute or relative path to the validated root directory."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "Whether the root was a valid directory that could be scanned."
+          },
+          "fixture_count": {
+            "type": "integer",
+            "description": "Number of .toml fixture files found under this root."
+          }
+        },
+        "required": ["path", "valid", "fixture_count"],
+        "additionalProperties": true
+      }
+    },
+    "total_fixture_files": {
+      "type": "integer",
+      "description": "Total number of fixture files validated across all roots."
+    },
+    "errors": {
+      "type": "array",
+      "description": "Validation errors, if any. Empty when status is 'ok'.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the file or directory that produced the error."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message."
+          }
+        },
+        "required": ["path", "message"],
+        "additionalProperties": true
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Validation warnings. May be present even when status is 'ok'.",
+      "items": {
+        "type": "string",
+        "description": "Human-readable warning message."
+      }
+    }
+  },
+  "required": ["version", "status", "roots", "total_fixture_files", "errors", "warnings"],
+  "additionalProperties": true
+}

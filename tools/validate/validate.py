@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import tomli as tomllib
 
 SURFACES = {"xdr", "rpc", "soroban"}
 XDR_TYPES = {"StellarValue", "ContractExecutable"}
@@ -306,7 +308,24 @@ def validate_directory(root: Path) -> Report:
 
 
 def main(argv: list[str]) -> int:
-    roots = [Path(a) for a in argv] if argv else None
+    format_json = False
+    roots_args: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--format":
+            format_json = True
+            i += 2  # skip both --format and its value
+            continue
+        elif arg.startswith("--format="):
+            format_json = arg.split("=", 1)[1] == "json"
+            i += 1
+            continue
+        else:
+            roots_args.append(arg)
+        i += 1
+
+    roots = [Path(a) for a in roots_args] if roots_args else None
     if roots is None:
         repo_root = Path(__file__).resolve().parents[2]
         roots = sorted(p for p in repo_root.glob("protocol-*") if p.is_dir())
@@ -324,16 +343,60 @@ def main(argv: list[str]) -> int:
         combined.errors.extend(sub_report.errors)
         combined.warnings.extend(sub_report.warnings)
 
+    if combined.errors:
+        for error in combined.errors:
+            print(f"error: {error}", file=sys.stderr)
+        print(f"FAILED: {len(combined.errors)} error(s)", file=sys.stderr)
+        if format_json:
+            # Emit a structured JSON report even on failure so callers that rely on
+            # --format json still get a parseable document (with errors populated).
+            report_obj = {
+                "version": 1,
+                "status": "failed",
+                "roots": [
+                    {
+                        "path": str(root),
+                        "valid": root.is_dir(),
+                        "fixture_count": len(find_fixture_files(root)),
+                    }
+                    for root in roots
+                ],
+                "total_fixture_files": total_files,
+                "errors": [
+                    {"path": err.split(":", 1)[0], "message": err.split(":", 1)[1].strip()}
+                    for err in combined.errors
+                ],
+                "warnings": combined.warnings,
+            }
+            sys.stdout.write(json.dumps(report_obj, indent=2, ensure_ascii=False) + "\n")
+        return 1
+
+    if format_json:
+        report_obj = {
+            "version": 1,
+            "status": "ok",
+            "roots": [
+                {
+                    "path": str(root),
+                    "valid": root.is_dir(),
+                    "fixture_count": len(find_fixture_files(root)),
+                }
+                for root in roots
+            ],
+            "total_fixture_files": total_files,
+            "errors": [],
+            "warnings": combined.warnings,
+        }
+        sys.stdout.write(json.dumps(report_obj, indent=2, ensure_ascii=False) + "\n")
+        if combined.warnings:
+            print("\n".join(f"warning: {w}" for w in combined.warnings), file=sys.stderr)
+        return 0
+
     for warning in combined.warnings:
         print(f"warning: {warning}")
-    for error in combined.errors:
-        print(f"error: {error}", file=sys.stderr)
 
-    if combined.ok:
-        print(f"OK: {total_files} fixture file(s) valid across {len(roots)} root(s)")
-        return 0
-    print(f"FAILED: {len(combined.errors)} error(s)", file=sys.stderr)
-    return 1
+    print(f"OK: {total_files} fixture file(s) valid across {len(roots)} root(s)")
+    return 0
 
 
 if __name__ == "__main__":
