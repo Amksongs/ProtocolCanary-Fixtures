@@ -793,6 +793,36 @@
       "payloads": []
     },
     {
+      "id": "p28-xdr-stellar-value-boundary-trailing-bytes",
+      "path": "xdr/boundaries/p28-xdr-stellar-value-boundary-trailing-bytes.toml",
+      "sha256": "d9b655d760eaf5df8a5ff3b10247873ee473ff06b7b4c24e7832204804a1ef33",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A complete StellarValue followed by four trailing bytes is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-boundary-truncated",
+      "path": "xdr/boundaries/p28-xdr-stellar-value-boundary-truncated.toml",
+      "sha256": "824f2fc93e74a7cb0dfc9203037fcdffce1058406c9876475675bf50cc583449",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A StellarValue truncated to 44 of 48 bytes, cutting off its ext discriminant, is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
+      "id": "p28-xdr-stellar-value-boundary-unknown-ext-discriminant",
+      "path": "xdr/boundaries/p28-xdr-stellar-value-boundary-unknown-ext-discriminant.toml",
+      "sha256": "188f4860b1fa6370c654897580ca186ebe0f7e7105177cd200930b892f310fba",
+      "surface": "xdr",
+      "category": "stellar-value",
+      "description": "A StellarValue whose ext union uses the undefined discriminant 3 is correctly rejected",
+      "sourceReference": "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x",
+      "payloads": []
+    },
+    {
       "id": "p28-xdr-stellar-value-signed-decode-failure",
       "path": "xdr/stellar-value/p28-xdr-stellar-value-signed-decode-failure.toml",
       "sha256": "32100a4841b9300656b312f5f5b27e38067f6f0018fe1a2811d77a0d1d752ea2",
@@ -903,5 +933,5 @@
       "payloads": []
     }
   ],
-  "packDigest": "sha256:0509a183c43bd46e3ce59306bf00efabad9f7d8c7769f34a54d1809077bf842a"
+  "packDigest": "sha256:7bfce5afab4874b3e1622ef313dc4c398193d037d80fda306129677e556f1750"
 }

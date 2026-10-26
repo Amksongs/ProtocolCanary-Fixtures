@@ -1,6 +1,6 @@
 # Protocol 28 compatibility pack
 
-This pack contains **90 fixtures**.
+This pack contains **93 fixtures**.
 
 Implemented in Stellar Core 28.0.0, Stellar RPC 28.0.0 (integration-tested
 against Soroban host 28.0.1), and the official `stellar-xdr` 28.0.0 crate.
@@ -37,6 +37,9 @@ enumeration.
 | [`xdr/stellar-value/p28-xdr-stellar-value-signed-roundtrip.toml`](xdr/stellar-value/p28-xdr-stellar-value-signed-roundtrip.toml) | xdr | — | A `StellarValue` using the `STELLAR_VALUE_SIGNED` ext arm round-trips byte-for-byte. |
 | [`xdr/stellar-value/p28-xdr-stellar-value-signed-decode-success.toml`](xdr/stellar-value/p28-xdr-stellar-value-signed-decode-success.toml) | xdr | — | A well-formed `StellarValue` using the `STELLAR_VALUE_SIGNED` ext arm decodes successfully. |
 | [`xdr/stellar-value/p28-xdr-stellar-value-signed-decode-failure.toml`](xdr/stellar-value/p28-xdr-stellar-value-signed-decode-failure.toml) | xdr | — | A truncated `STELLAR_VALUE_SIGNED` `StellarValue` encoding is correctly rejected, not silently accepted. |
+| [`xdr/boundaries/p28-xdr-stellar-value-boundary-truncated.toml`](xdr/boundaries/p28-xdr-stellar-value-boundary-truncated.toml) | xdr | — | A `StellarValue` truncated to 44 of 48 bytes, cutting off its ext discriminant, is correctly rejected, not silently accepted. |
+| [`xdr/boundaries/p28-xdr-stellar-value-boundary-trailing-bytes.toml`](xdr/boundaries/p28-xdr-stellar-value-boundary-trailing-bytes.toml) | xdr | — | A complete `StellarValue` followed by four trailing bytes is correctly rejected, not silently accepted. |
+| [`xdr/boundaries/p28-xdr-stellar-value-boundary-unknown-ext-discriminant.toml`](xdr/boundaries/p28-xdr-stellar-value-boundary-unknown-ext-discriminant.toml) | xdr | — | A `StellarValue` whose ext union uses the undefined discriminant 3 is correctly rejected, not silently accepted. |
 | [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-roundtrip.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-roundtrip.toml) | xdr | — | A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX_V0` arm round-trips byte-for-byte. |
 | [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-decode-failure.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v0-decode-failure.toml) | xdr | — | A `TransactionEnvelope` whose signature is truncated mid-signature is correctly rejected, not silently accepted. |
 | [`xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-roundtrip.toml`](xdr/transaction-envelope/p28-xdr-transaction-envelope-v1-roundtrip.toml) | xdr | — | A `TransactionEnvelope` using the `ENVELOPE_TYPE_TX` arm round-trips byte-for-byte. |

@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-stellar-value-boundary-trailing-bytes",
+  "fixtureSha256": "d9b655d760eaf5df8a5ff3b10247873ee473ff06b7b4c24e7832204804a1ef33",
+  "method": "structural",
+  "checkedAt": "2026-10-26T10:16:29Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "27c7e637d68e456f260253646702d1ccb6290bf0"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

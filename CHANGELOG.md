@@ -12,6 +12,23 @@ discussion and diff. New entries must include that link; see
 
 ### Added
 
+- Three StellarValue decode-failure boundary fixtures (#340), in the new
+  `protocol-28/xdr/boundaries/` directory:
+  `p28-xdr-stellar-value-boundary-truncated` (a truncation at 44 of 48 bytes,
+  cutting off the ext discriminant),
+  `p28-xdr-stellar-value-boundary-trailing-bytes` (a complete value with one
+  4-byte zero word appended) and
+  `p28-xdr-stellar-value-boundary-unknown-ext-discriminant` (the ext
+  discriminant changed from 0 to the undefined 3) — the three standard ways
+  an XDR decoder is expected to fail, none of which the pack's StellarValue
+  fixtures covered. Every payload is derived from a crate-produced encoding
+  by the byte rule its header records, with the exact `cargo` generation
+  command and the `stellar-xdr` 28.0.1 crate version stated in each header;
+  the crate rejects all three, and `stellar-canary` 0.2.0 reports 3 of 3
+  correctly rejected (2026-10-26 UTC). Pack README table, fixture-count
+  badge and `docs/protocol-28.md` updated. See
+  [#340](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/340).
+
 - Every job in `validate.yml`, `engine-drift.yml` and `live-evidence.yml` now
   sets `timeout-minutes` (F-133), so a hung connection or a stuck build cannot
   hold a runner for GitHub's 360-minute default and block the next scheduled

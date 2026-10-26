@@ -17,6 +17,7 @@ import gzip
 import io
 import sys
 import tarfile
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -375,9 +376,38 @@ def _case_truncated_header(directory: Path) -> Path:
 
 
 def _case_truncated_gzip(directory: Path) -> Path:
-    data = gzip_bytes(tar_bytes(base_entries()))
+    tar = tar_bytes(base_entries())
+    compressed = gzip_bytes(tar)
+    # Cut the compressed stream inside a member's data, not at a guessed
+    # fraction of the file. The cut has to land mid-member: a cut that
+    # lands exactly on a member boundary, or inside the next member's
+    # header, makes tarfile stop the stream cleanly and the verifier would
+    # then classify the truncated stream as a complete one -- and whether
+    # a plain "half" lands there depends on the pack's size, so halving
+    # was fragile. The cut is found by feeding the gzip one compressed byte
+    # at a time and stopping as soon as the decompressed prefix reaches
+    # the middle of a member's data: one byte of deflate input yields at
+    # most one match (258 bytes) of output, so the step that crosses a
+    # member's data start always lands inside that data (members are
+    # bigger than that), where a short data read raises "unexpected end of
+    # data". The result depends only on the pack's membership, so the case
+    # keeps its meaning as the pack grows.
+    with tarfile.open(fileobj=io.BytesIO(tar)) as archive:
+        target = next(member for member in archive if member.size > 300)
+    start = target.offset_data
+    stop = target.offset_data + target.size
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    produced = 0
+    cut = None
+    for index in range(len(compressed)):
+        produced += len(decompressor.decompress(compressed[index : index + 1]))
+        if start < produced < stop:
+            cut = index + 1
+            break
+    if cut is None:
+        raise AssertionError("no cut point inside a member's data was found")
     path = directory / "truncated-gzip.tar.gz"
-    path.write_bytes(data[: len(data) // 2])
+    path.write_bytes(compressed[:cut])
     return path
 
 
@@ -644,7 +674,7 @@ CASES: tuple[HostileCase, ...] = (
     ),
     HostileCase(
         name="truncated-gzip",
-        description="a gzip stream cut in half",
+        description="the compressed stream cut inside a member's data",
         clauses=("CF-06 section 6",),
         classification=REJECTED,
         exit_code=EXIT_UNREADABLE,
