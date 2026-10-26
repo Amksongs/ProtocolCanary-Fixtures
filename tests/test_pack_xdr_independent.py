@@ -91,9 +91,10 @@ class PackXdrIndependentTests(unittest.TestCase):
                         xdr_codec.decode_xdr(type_name, raw_bytes)
 
                     err_msg = str(caught.exception).lower()
-                    # Assert structural reason matches header comment (truncation, length, etc.)
+                    # Assert structural reason matches header comment (truncation, length,
+                    # discriminant, padding, or trailing bytes after a complete value)
                     self.assertTrue(
-                        any(term in err_msg for term in ("truncated", "need", "length", "discriminant", "padding")),
+                        any(term in err_msg for term in ("truncated", "need", "length", "discriminant", "padding", "trailing")),
                         f"Unexpected error reason for {fixture_id}: {caught.exception}",
                     )
                 else:

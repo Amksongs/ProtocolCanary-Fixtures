@@ -1,0 +1,69 @@
+# Protocol 28 / StellarValue boundary: undefined ext union discriminant.
+#
+# An undefined union discriminant is one of the three standard ways an XDR
+# decoder is expected to fail (alongside truncation and trailing bytes),
+# and none of the pack's StellarValue fixtures covered it: a decoder that
+# accepts an unknown discriminant would treat a malformed ledger value as
+# valid and could silently reinterpret a future ext arm as a present one.
+# The StellarValue ext union has exactly three arms — STELLAR_VALUE_BASIC
+# (0), STELLAR_VALUE_SIGNED (1) and STELLAR_VALUE_EMPTY_TX_SET (2),
+# StellarValueType at Stellar-ledger.x at stellar/stellar-xdr tag v28.0,
+# commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694, lines 14-19 — so this
+# fixture's discriminant 3 is not defined for the union (lines 41-56).
+#
+# Malformation rule (documented, deterministic): this value_base64 is the
+# 48-byte crate-produced encoding
+# EREREREREREREREREREREREREREREREREREREREREREAAAAAaOd4AAAAAAAAAAAA
+# recorded in p28-xdr-stellar-value-basic-decode-success.toml with only
+# its final 4 bytes — the ext union discriminant at bytes 44..48 —
+# replaced by the big-endian encoding of 3. Every other byte is
+# untouched; changing that one word is the only mutation.
+#
+# Produced with the official `stellar-xdr` crate — the exact command,
+# run in an empty directory on 2026-10-26 (UTC):
+#
+#   cargo new svgen --bin && cd svgen
+#   cargo add stellar-xdr@28.0.1 --features base64,alloc
+#   cargo run --release
+#
+# with main.rs building, encoding and patching
+#
+#   let valid = StellarValue {
+#       tx_set_hash: Hash([0x11; 32]),
+#       close_time: TimePoint(1760000000),
+#       upgrades: VecM::default(),
+#       ext: StellarValueExt::Basic,
+#   };
+#   let mut bytes = valid.to_xdr(Limits::none())?;
+#   bytes[44..48].copy_from_slice(&3u32.to_be_bytes());
+#
+# The same run verified the bytes: the unmodified 48-byte encoding decodes
+# (StellarValue::from_xdr returns Ok), while this input is rejected with
+# "xdr value invalid".
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13);
+# generated 2026-10-26 (UTC).
+#
+# Verified with the engine on 2026-10-26 (UTC): `stellar-canary` 0.2.0
+# rejects this payload — `stellar-canary check --fixtures-dir
+# protocol-28/xdr/boundaries --protocol 28 --json --no-cache` reports
+# pass, "StellarValue was correctly rejected", for this fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a
+# real network object: the 0x11-filled txSetHash is not the hash of any
+# real transaction set, close_time is an arbitrary fixed uint64 (not an
+# observed ledger close time), and the upgrades vector is empty. Nothing
+# here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x
+
+id = "p28-xdr-stellar-value-boundary-unknown-ext-discriminant"
+protocol = 28
+surface = "xdr"
+category = "stellar-value"
+description = "A StellarValue whose ext union uses the undefined discriminant 3 is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x"
+
+type = "StellarValue"
+kind = "decode-failure"
+value_base64 = "EREREREREREREREREREREREREREREREREREREREREREAAAAAaOd4AAAAAAAAAAAD"

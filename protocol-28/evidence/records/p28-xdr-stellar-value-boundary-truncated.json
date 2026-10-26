@@ -1,0 +1,13 @@
+{
+  "verificationVersion": 1,
+  "fixtureId": "p28-xdr-stellar-value-boundary-truncated",
+  "fixtureSha256": "824f2fc93e74a7cb0dfc9203037fcdffce1058406c9876475675bf50cc583449",
+  "method": "structural",
+  "checkedAt": "2026-10-26T10:16:29Z",
+  "verifier": {
+    "name": "protocolcanary-fixtures-validate",
+    "version": "27c7e637d68e456f260253646702d1ccb6290bf0"
+  },
+  "outcome": "matched",
+  "evidenceRef": null
+}

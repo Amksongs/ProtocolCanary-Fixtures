@@ -1,0 +1,69 @@
+# Protocol 28 / StellarValue boundary: truncation before the ext discriminant.
+#
+# Truncated input is one of the three standard ways an XDR decoder is
+# expected to fail (alongside trailing bytes and an undefined union
+# discriminant), and this is the StellarValue cut the pack did not yet
+# cover: p28-xdr-stellar-value-basic-decode-failure stops at 40 bytes,
+# before the upgrades vector's length prefix, while this fixture stops at
+# 44 of the 48 bytes — the complete 32-byte txSetHash, the complete
+# 8-byte closeTime and the complete 4-byte upgrades length prefix (0),
+# and nothing else — so only the 4-byte ext union discriminant of the
+# StellarValue ext union is missing (Stellar-ledger.x at stellar/stellar-xdr
+# tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694, lines 41-56).
+# A correct XDR decoder must reject this as truncated input rather than
+# defaulting an absent union discriminant to STELLAR_VALUE_BASIC.
+#
+# Malformation rule (documented, deterministic): this value_base64 is the
+# base64 of bytes[0..44] of the 48-byte crate-produced encoding
+# EREREREREREREREREREREREREREREREREREREREREREAAAAAaOd4AAAAAAAAAAAA
+# recorded in p28-xdr-stellar-value-basic-decode-success.toml. Truncation
+# at that single offset is the only mutation.
+#
+# Produced with the official `stellar-xdr` crate — the exact command,
+# run in an empty directory on 2026-10-26 (UTC):
+#
+#   cargo new svgen --bin && cd svgen
+#   cargo add stellar-xdr@28.0.1 --features base64,alloc
+#   cargo run --release
+#
+# with main.rs building, encoding and slicing
+#
+#   let valid = StellarValue {
+#       tx_set_hash: Hash([0x11; 32]),
+#       close_time: TimePoint(1760000000),
+#       upgrades: VecM::default(),
+#       ext: StellarValueExt::Basic,
+#   };
+#   let bytes = valid.to_xdr(Limits::none())?;
+#   let truncated = &bytes[..44];
+#
+# The same run verified the bytes: the unmodified 48-byte encoding decodes
+# (StellarValue::from_xdr returns Ok), while this 44-byte slice is rejected
+# with "failed to fill whole buffer".
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13);
+# generated 2026-10-26 (UTC).
+#
+# Verified with the engine on 2026-10-26 (UTC): `stellar-canary` 0.2.0
+# rejects this payload — `stellar-canary check --fixtures-dir
+# protocol-28/xdr/boundaries --protocol 28 --json --no-cache` reports
+# pass, "StellarValue was correctly rejected", for this fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a
+# real network object: the 0x11-filled txSetHash is not the hash of any
+# real transaction set, close_time is an arbitrary fixed uint64 (not an
+# observed ledger close time), and the upgrades vector is empty. Nothing
+# here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x
+
+id = "p28-xdr-stellar-value-boundary-truncated"
+protocol = 28
+surface = "xdr"
+category = "stellar-value"
+description = "A StellarValue truncated to 44 of 48 bytes, cutting off its ext discriminant, is correctly rejected"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger.x"
+
+type = "StellarValue"
+kind = "decode-failure"
+value_base64 = "EREREREREREREREREREREREREREREREREREREREREREAAAAAaOd4AAAAAAA="
