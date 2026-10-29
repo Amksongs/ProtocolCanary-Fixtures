@@ -11,6 +11,7 @@ discussion and diff. New entries must include that link; see
 ## [Unreleased]
 
 ### Added
+
 - Protocol 27 pack `protocol-27/` is now documented instead of silently empty:
   `protocol-27/README.md` and `docs/protocol-27.md` explain why the pack has
   no fixtures yet (CAP-0071-01 and CAP-0071-02 are authorization-semantics
