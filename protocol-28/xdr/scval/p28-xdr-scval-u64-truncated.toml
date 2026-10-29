@@ -1,0 +1,44 @@
+# Protocol 28 / ScVal: a truncated `SCV_U64` payload is rejected.
+#
+# Complements p28-xdr-scval-u64-max.toml: a decoder that accepts malformed
+# input is as much of a compatibility break as one that rejects valid input,
+# because two different byte strings would then decode to the same value and
+# "roundtrip byte identity" would stop meaning anything.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `case SCV_U64: uint64 u64;` — Stellar-contract.x lines 267-268.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced 12-byte `ScVal::U64(u64::MAX)` encoding with its last 3
+# bytes removed (the first 9 bytes are kept), leaving the 8-byte uint64
+# payload 3 bytes short.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): ScVal::from_xdr_base64 returns Err ("failed to fill whole
+# buffer") for this input, while the unmodified crate-produced encoding it was
+# derived from decodes and round-trips successfully with the same crate. The
+# source value was built by a program using the pinned crate, with the
+# expression recorded in p28-xdr-scval-u64-max.toml's header; the mutation
+# above is the only change. The discriminant is intact; the decoder must fail
+# while filling the 8-byte payload, not read a partial word.
+#
+# Every byte is a synthetic structural value, not a capture of a real network
+# object, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-u64-truncated"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "A truncated `ScVal::U64` payload is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "decode-failure"
+value_base64 = "AAAABf//////"

@@ -1,0 +1,65 @@
+# Protocol 28 / LedgerEntry: a `CONTRACT_DATA` entry round-trips.
+#
+# What this tests:
+# a `CONTRACT_DATA` ledger entry: `lastModifiedLedgerSeq` 1_234_569, the
+# `CONTRACT_DATA` discriminant (6), and a `ContractDataEntry` with a V0
+# `ExtensionPoint`, a synthetic contract `SCAddress`, the `ScVal` key
+# `Symbol("counter")`, `PERSISTENT` durability and the `ScVal` value
+# `U32(42)`.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `struct ContractDataEntry` — Stellar-ledger-entries.x lines 490-497; `enum
+#     ContractDataDurability` — lines 485-488; `union SCAddress` — Stellar-
+#     contract.x lines 206-222; `union SCVal` — Stellar-contract.x lines
+#     254-316.
+#   * `enum LedgerEntryType` — Stellar-ledger-entries.x lines 92-104;
+#   * `struct LedgerEntry` (lastModifiedLedgerSeq, the data union and the ext
+#     union) — lines 548-586.
+#
+# Why it matters:
+# Contract data is the storage a Soroban contract reads and writes. The entry
+# nests an `SCAddress` and two `ScVal`s inside a ledger entry, so a decoder
+# must carry the full contract encoding through the ledger layer; a mistake
+# here silently changes a contract's storage key or value.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this entry and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   LedgerEntry { last_modified_ledger_seq: 1_234_569, data: LedgerEntryData::ContractData(ContractDataEntry { ext: ExtensionPoint::V0, contract: ScAddress::Contract(ContractId(Hash([0x22; 32]))), key: ScVal::Symbol(ScSymbol::try_from(b"counter".to_vec()).unwrap()), durability: ContractDataDurability::Persistent, val: ScVal::U32(42) }), ext: LedgerEntryExt::V0 }
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# ledger entry and not an account, trustline, contract or balance that exists
+# on any network: the 0x11/0x33-filled account ids, the 0x44-filled issuer,
+# the 0x22-filled contract id, the 0x55-filled code hash and the 0x66-filled
+# TTL key hash are fixed placeholders, no secret key is used or represented
+# anywhere, and the balances, sequence numbers and ledger numbers are
+# arbitrary constants. The contract-code bytes are opaque synthetic bytes, not
+# a real WASM module. Nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x
+
+id = "p28-xdr-ledger-entry-contract-data"
+protocol = 28
+surface = "xdr"
+category = "ledger-entry"
+description = "A `CONTRACT_DATA` `LedgerEntry` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x"
+
+type = "LedgerEntry"
+kind = "roundtrip"
+value_base64 = "ABLWiQAAAAYAAAAAAAAAASIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAAADwAAAAdjb3VudGVyAAAAAAEAAAADAAAAKgAAAAA="

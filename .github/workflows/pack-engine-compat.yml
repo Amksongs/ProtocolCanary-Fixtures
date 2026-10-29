@@ -1,0 +1,68 @@
+name: pack-engine-compat
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pack-engine-compat:
+    runs-on: ubuntu-latest
+    env:
+      ENGINE_COMMIT: 91bea52da2f40632116d6a271d4579ab433a5a2a
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11.16"
+
+      - name: Check out pinned Protocol-Canary source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: StellarCanary/Protocol-Canary
+          ref: 91bea52da2f40632116d6a271d4579ab433a5a2a
+          path: engine
+          persist-credentials: false
+
+      - name: Build pinned stellar-canary v0.2.0
+        working-directory: engine
+        run: |
+          set -euo pipefail
+          actual_commit=$(git rev-parse HEAD)
+          if [ "$actual_commit" != "$ENGINE_COMMIT" ]; then
+            echo "::error::Expected engine commit $ENGINE_COMMIT, checked out $actual_commit"
+            exit 1
+          fi
+          cargo build --release --locked
+          engine="$GITHUB_WORKSPACE/engine/target/release/stellar-canary"
+          echo "STELLAR_CANARY_BIN=$engine" >> "$GITHUB_ENV"
+
+      - name: Run archive compatibility test
+        run: |
+          set -o pipefail
+          STELLAR_CANARY_REQUIRED=1 python3 -m unittest tests/test_engine_compat.py 2>&1 | tee "$RUNNER_TEMP/engine-compat.log"
+
+      - name: Add failure details to job summary
+        if: failure()
+        run: |
+          {
+            echo "## Pinned engine compatibility check failed"
+            echo
+            echo "- Engine: stellar-canary v0.2.0 at commit $ENGINE_COMMIT"
+            echo "- Check: build archive, verify and safely extract it, then run the offline XDR report."
+            echo
+            echo '```text'
+            if [ -f "$RUNNER_TEMP/engine-compat.log" ]; then
+              cat "$RUNNER_TEMP/engine-compat.log"
+            else
+              echo "Failure occurred before the test runner produced output; inspect the failed workflow step above."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

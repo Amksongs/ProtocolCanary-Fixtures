@@ -1,0 +1,61 @@
+# Protocol 28 / ScVal: a small `SCV_BYTES` value with padding round-trips.
+#
+# What this tests:
+# `SCV_BYTES` carrying five bytes `00 01 02 03 fe`: the discriminant 13, a
+# length prefix of 5, the five payload bytes and three zero pad bytes to the
+# next 4-byte boundary. The 0xfe byte is deliberately above 0x7f so a decoder
+# that treats the payload as text would be wrong.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `typedef opaque SCBytes<>;` — Stellar-contract.x line 9; `case SCV_BYTES:
+#     SCBytes bytes;` — lines 296-297; RFC 4506 section 4.9 for the zero padding
+#     rule (XDR's normative definition of variable-length opaque).
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Why it matters:
+# Padding is where variable-length encodings most often drift: a decoder that
+# ignores the pad bytes, or that re-encodes them non-zero, no longer round-
+# trips byte-for-byte. A length that is not a multiple of four forces the
+# padding path.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this value and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   ScVal::Bytes(ScBytes::try_from(vec![0x00, 0x01, 0x02, 0x03, 0xfe]).unwrap())
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: Yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes, which are quoted
+# in full in the fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# network object: the number, boolean, symbol or string is an arbitrary fixed
+# value chosen by the generator, no account key, contract id, signature or
+# secret key appears anywhere, and nothing here was observed on a network.
+#
+# The XDR definition cited below is the pinned file, not a moving branch.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-bytes-small"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "A five-byte `ScVal::Bytes` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "roundtrip"
+value_base64 = "AAAADQAAAAUAAQID/gAAAA=="

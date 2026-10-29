@@ -1,0 +1,61 @@
+# Protocol 28 / LedgerEntry: a `TTL` entry round-trips.
+#
+# What this tests:
+# a `TTL` ledger entry: `lastModifiedLedgerSeq` 1_234_571, the `TTL`
+# discriminant (9), a synthetic 32-byte `keyHash` and `liveUntilLedgerSeq`
+# 999_999.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `struct TTLEntry` — Stellar-ledger-entries.x lines 530-534; `struct
+#     LedgerEntry` ext union — lines 575-585.
+#   * `enum LedgerEntryType` — Stellar-ledger-entries.x lines 92-104;
+#   * `struct LedgerEntry` (lastModifiedLedgerSeq, the data union and the ext
+#     union) — lines 548-586.
+#
+# Why it matters:
+# TTL entries decide when contract data and code expire. The entry is only 48
+# bytes and has no union body, so a decoder that lost the final `uint32` would
+# still look plausible; the companion decode-failure fixture makes that loss
+# fail loudly.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this entry and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   LedgerEntry { last_modified_ledger_seq: 1_234_571, data: LedgerEntryData::Ttl(TtlEntry { key_hash: Hash([0x66; 32]), live_until_ledger_seq: 999_999 }), ext: LedgerEntryExt::V0 }
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# ledger entry and not an account, trustline, contract or balance that exists
+# on any network: the 0x11/0x33-filled account ids, the 0x44-filled issuer,
+# the 0x22-filled contract id, the 0x55-filled code hash and the 0x66-filled
+# TTL key hash are fixed placeholders, no secret key is used or represented
+# anywhere, and the balances, sequence numbers and ledger numbers are
+# arbitrary constants. The contract-code bytes are opaque synthetic bytes, not
+# a real WASM module. Nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x
+
+id = "p28-xdr-ledger-entry-ttl"
+protocol = 28
+surface = "xdr"
+category = "ledger-entry"
+description = "A `TTL` `LedgerEntry` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x"
+
+type = "LedgerEntry"
+kind = "roundtrip"
+value_base64 = "ABLWiwAAAAlmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgAPQj8AAAAA"

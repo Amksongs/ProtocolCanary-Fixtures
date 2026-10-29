@@ -1,0 +1,68 @@
+# Protocol 28 / RPC latest-ledger shape.
+#
+# Calls the real Stellar RPC `getLatestLedger` method and checks that the
+# response carries a ledger hash, a numeric sequence, and protocol 28. This is
+# a network-identity check like `p28-rpc-network`: it is meant to fail,
+# honestly, the moment a configured RPC endpoint stops reporting protocol 28,
+# rather than silently continuing to report success.
+#
+# Verified live against https://soroban-testnet.stellar.org on 2026-09-28 UTC:
+#
+#   curl -s -X POST https://soroban-testnet.stellar.org \
+#     -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'
+#   => {"jsonrpc":"2.0","id":1,"result":{
+#        "id":"b14f99c1c9240f28649e681a70eb8d690d660103f384d142aaaf20ea09ef479b",
+#        "protocolVersion":28,
+#        "sequence":4919600,
+#        "closeTime":"1790621587",
+#        "headerXdr":"AAAAHM5QXeK0Jm8nCQqJ…",
+#        "metadataXdr":"AAAAAgAAAACxT5nBySQPKGSeaBpw…"}}
+#
+# Only `id`, `protocolVersion` and `sequence` are asserted, because that is all
+# a fixture can see: `canary-rpc` serializes the response into its typed
+# `LatestLedger` model (`crates/canary-rpc/src/models.rs`) before evaluating
+# assertions, so raw response fields such as `closeTime`, `headerXdr` and
+# `metadataXdr` are not present in the object the asserts run against. An
+# `field-absent` assertion naming one of those would pass for the wrong reason,
+# so `friendbotUrl` — a `getNetwork` field that this method must never report —
+# is used instead, and it is the pack's only use of that assert kind.
+#
+# `sequence` is deliberately asserted only by type, never by value: it advances
+# with every new ledger. This fixture is a live-network check and is expected to
+# pass against any endpoint currently on protocol 28; it asserts no specific
+# ledger.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger
+
+id = "p28-rpc-latest-ledger"
+protocol = 28
+surface = "rpc"
+category = "ledger"
+description = "getLatestLedger reports protocol 28 with a ledger hash and a numeric sequence"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger"
+
+method = "get-latest-ledger"
+
+[[assert]]
+kind = "field-exists"
+field = "sequence"
+
+[[assert]]
+kind = "field-type"
+field = "sequence"
+expected_type = "number"
+
+[[assert]]
+kind = "field-equals"
+field = "protocolVersion"
+value = 28
+
+[[assert]]
+kind = "field-type"
+field = "id"
+expected_type = "string"
+
+[[assert]]
+kind = "field-absent"
+field = "friendbotUrl"

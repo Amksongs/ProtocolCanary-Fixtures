@@ -1,0 +1,44 @@
+# Protocol 28 / LedgerEntry: a truncated `TRUSTLINE` entry is rejected.
+#
+# Complements p28-xdr-ledger-entry-trustline.toml: a decoder that accepts a
+# truncated or mis-tagged entry is as much of a compatibility break as one
+# that rejects a valid one, because a partial entry would be stored or read as
+# if it were whole.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `struct TrustLineEntry` — Stellar-ledger-entries.x lines 276-307.
+#   * `enum LedgerEntryType` — Stellar-ledger-entries.x lines 92-104;
+#   * `struct LedgerEntry` (lastModifiedLedgerSeq, the data union and the ext
+#     union) — lines 548-586.
+#
+# Malformation rule (documented, deterministic):
+# the crate-produced 116-byte `TRUSTLINE` entry with its final 4 bytes
+# removed: the trustline ext discriminant is missing.
+#
+# Generated and checked on 2026-10-22 (UTC) with the official `stellar-xdr
+# 28.0.1` crate (features base64 and alloc — the crate version Protocol-
+# Canary's canary-xdr pins for Protocol 28; rustc 1.99.1 (58cf8f9c3
+# 2026-10-13)): LedgerEntry::from_xdr_base64 returns Err ("failed to fill
+# whole buffer") for this input, while the unmodified crate-produced encoding
+# it was derived from decodes and round-trips successfully with the same
+# crate. The source value was built by a program using the pinned crate, with
+# the expression recorded in p28-xdr-ledger-entry-trustline.toml's header; the
+# mutation above is the only change. As with the account entry, the missing
+# bytes are the ext discriminant at the very end of the structure.
+#
+# Every byte is a synthetic structural value, not a capture of a real ledger
+# entry, and nothing here was observed on a network.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x
+
+id = "p28-xdr-ledger-entry-trustline-truncated"
+protocol = 28
+surface = "xdr"
+category = "ledger-entry"
+description = "A truncated `TRUSTLINE` `LedgerEntry` is correctly rejected, not silently accepted"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-ledger-entries.x"
+
+type = "LedgerEntry"
+kind = "decode-failure"
+value_base64 = "ABLWiAAAAAEAAAAAMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMAAAABVVNEAAAAAABERERERERERERERERERERERERERERERERERERERERERAAAAAABfXhAf/////////8AAAABAAAAAA=="

@@ -1,0 +1,60 @@
+# Protocol 28 / ScVal: a small `SCV_SYMBOL` value round-trips.
+#
+# What this tests:
+# `SCV_SYMBOL` carrying `transfer`: eight bytes, a length prefix of 8 and no
+# padding (8 is already a multiple of four). Every byte is in the
+# `[A-Za-z0-9_]` alphabet the Soroban symbol restriction allows.
+#
+# Definitions (stellar/stellar-xdr at tag v28.0, commit 9c9c145953e80990d6ff1ae3a6a973a0ce6d0694):
+#
+#   * `const SCSYMBOL_LIMIT = 32;` — Stellar-contract.x line 11; `typedef string
+#     SCSymbol<SCSYMBOL_LIMIT>;` — line 12; `case SCV_SYMBOL: SCSymbol sym;` —
+#     lines 300-301.
+#   * `enum SCValType` — Stellar-contract.x lines 26-81;
+#   * `union SCVal` — Stellar-contract.x lines 254-316.
+#
+# Why it matters:
+# `transfer` is the canonical Soroban entry-point name, so it is the symbol
+# most implementations will be exercised with. It is evidence that the
+# ordinary path works, before the 32-byte boundary and the invalid 33-byte
+# value.
+#
+# Expected result and where it comes from: kind = "roundtrip" means a
+# decoder must accept this value and re-encoding it must reproduce
+# value_base64 byte for byte, not merely an equal value. The payload was
+# produced by a program that builds the typed value with the official
+# `stellar-xdr 28.0.1` crate (features base64 and alloc — the crate version
+# Protocol-Canary's canary-xdr pins for Protocol 28) and serialises it
+# with to_xdr_base64(Limits::none()), never hand-assembled. Generation
+# expression, recorded verbatim:
+#
+#   ScVal::Symbol(ScSymbol::try_from(b"transfer".to_vec()).unwrap())
+#
+# Crate: stellar-xdr 28.0.1; rustc 1.99.1 (58cf8f9c3 2026-10-13); generated 2026-10-22 (UTC). The
+# same program asserted the crate's own round trip: from_xdr_base64
+# returned Ok and re-encoding the decoded value reproduced the encoding
+# exactly.
+#
+# Is it deterministic: Yes. The generator uses no randomness, clock or
+# network; the same expression always yields the same bytes, which are quoted
+# in full in the fixture.
+#
+# Every payload byte is a synthetic structural value, not a capture of a real
+# network object: the number, boolean, symbol or string is an arbitrary fixed
+# value chosen by the generator, no account key, contract id, signature or
+# secret key appears anywhere, and nothing here was observed on a network.
+#
+# The XDR definition cited below is the pinned file, not a moving branch.
+#
+# Definition: https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x
+
+id = "p28-xdr-scval-symbol-small"
+protocol = 28
+surface = "xdr"
+category = "scval"
+description = "An eight-byte `ScVal::Symbol` round-trips byte-for-byte"
+source_reference = "https://github.com/stellar/stellar-xdr/blob/9c9c145953e80990d6ff1ae3a6a973a0ce6d0694/Stellar-contract.x"
+
+type = "ScVal"
+kind = "roundtrip"
+value_base64 = "AAAADwAAAAh0cmFuc2Zlcg=="

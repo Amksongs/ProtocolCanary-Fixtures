@@ -4,13 +4,23 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Documentation links (to CAP text, upstream docs, and this repository's own
+  # files) can rot without any change here, so recheck them on a schedule in
+  # addition to every push and pull request.
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
 
 jobs:
   validate:
+    # A scheduled run exists to recheck documentation links, not to re-run
+    # structural validation against an unchanged tree.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: the whole workflow has taken at most about two minutes; 10 leaves headroom.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -23,8 +33,178 @@ jobs:
           # deliberately when a new patch release is wanted.
           python-version: "3.11.16"
 
+      - name: Install Ruff
+        run: |
+          pip install ruff==0.17.2
+          # Ruff is pinned to 0.17.2 to match the version validated against
+          # the ruff.toml configuration. Bump both together when upgrading.
+
+      - name: Ruff lint check
+        # Lint only. `ruff format --check` is not enforced: it would reformat
+        # most of the repository, which belongs in a PR of its own.
+        run: ruff check .
+
+      - name: Check root files
+        # Guard against stray files committed to the repository root (issue #328).
+        run: python3 tools/validate/check_root_files.py
+
       - name: Structural fixture validation
         run: python3 tools/validate/validate.py
 
+      - name: Verification records are valid
+        # The CF-04 records in protocol-28/evidence/records/ are checked
+        # against the record rules and against the fixture files that are
+        # there now (issue #366). A record whose fixtureSha256 no longer
+        # matches describes an earlier version of the fixture and has to be
+        # regenerated: `python3 tools/evidence/record_structural.py
+        # protocol-28`.
+        run: python3 tools/validate/validate.py --evidence protocol-28/evidence/records
+
+      - name: Fixtures badge is current
+        # README.md's fixture-count badge is generated from the fixture tree
+        # by tools/badge/badge.py. Fail if a fixture was added or removed
+        # without regenerating it, so the count cannot silently drift.
+        run: python3 tools/badge/badge.py --check
+
+      - name: check-registry
+        # Each pack's registry-v1.json is generated from the pack by
+        # tools/registry/generate.py (CF-02, issue #269). Regenerate both
+        # committed registries and fail if the result differs from what is
+        # committed: a fixture or payload edited without rerunning the
+        # generator shows up as a changed sha256, and `git diff --exit-code`
+        # prints that diff before exiting non-zero, so the log names the stale
+        # entries. protocol-29 is an empty baseline, hence --allow-empty with
+        # its matching --protocol (docs/releasing.md step 2.4).
+        #
+        # `git add --intent-to-add` runs first so a registry file that a
+        # commit deleted (or any not-yet-tracked registry) is shown by
+        # `git diff` as an added file instead of being invisible as untracked.
+        # It only records the path in the local index; nothing is committed or
+        # pushed. Runs on every push and pull request, like the steps above.
+        run: |
+          python3 tools/registry/generate.py protocol-28
+          python3 tools/registry/generate.py protocol-29 --allow-empty --protocol 29
+          git add --intent-to-add protocol-28/registry-v1.json protocol-29/registry-v1.json
+          git diff --exit-code -- protocol-28/registry-v1.json protocol-29/registry-v1.json
+
       - name: Repository tests
         run: python3 -m unittest discover tests -v
+
+  coverage:
+    # Branch coverage of tools/ on a single operating system (ubuntu-latest),
+    # so the number is comparable between runs (#337). The threshold lives in
+    # .coveragerc (`fail_under`, measured against the baseline documented
+    # there); this job fails when the report drops below it. Coverage is a
+    # development-only dependency: it is installed here in its pinned version
+    # and never imported by the tools or the test suite.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: same tooling as validate.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Same interpreter pin as the validate job; see its comment.
+          python-version: "3.11.16"
+
+      - name: Install pinned coverage
+        run: python3 -m pip install --disable-pip-version-check coverage==7.16.2
+
+      - name: Run tests under coverage
+        # branch=True and source=tools come from .coveragerc, so this matches
+        # the documented local command:
+        #   coverage run --branch --source=tools -m unittest discover tests
+        run: coverage run -m unittest discover tests
+
+      - name: Coverage report (fails below .coveragerc fail_under)
+        # No pipe here: the group's exit status is `coverage report`'s, so a
+        # result below the threshold fails this step. The per-file table is
+        # appended to the job summary either way.
+        run: |
+          {
+            echo "## Branch coverage of tools/"
+            echo
+            echo '```'
+            coverage report -m
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  markdown-links:
+    runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: lychee fetches external links; a stuck connection must not hold the runner.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check markdown links
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          # Covers external links and, because lychee resolves relative paths
+          # on disk, this repository's own inter-file links too. Retries and
+          # the 429 allowance keep transient host/rate-limit responses from
+          # failing an otherwise healthy tree.
+          #
+          # 502/503/504 is the same allowance for server errors: lychee
+          # 0.24.2 (the version this action installs) retries only 429, not
+          # 5xx at any --max-retries (lycheeverse/lychee#2319), and github.com
+          # intermittently answers 503 to CI runners for commit links that
+          # return 200 from everywhere else. Such a response says GitHub was
+          # unavailable at that moment, not that the link is broken. 404, 500
+          # and every other status still fails the job, and the trade-off is
+          # the one 429 already makes: a host that is genuinely down for the
+          # whole run passes too.
+          args: >-
+            --verbose
+            --no-progress
+            --max-retries 2
+            --accept 200,206,429,502,503,504
+            --exclude 'https://www\.contributor-covenant\.org/.*'
+            './**/*.md'
+          fail: true
+
+  source-links:
+    # Fixture source reference links are checked on schedule only, so
+    # routine PRs and pushes are not subject to third-party network flakes.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: fetches every fixture source URL, one request at a time.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11.16"
+
+      - name: Check fixture source reference links
+        run: python3 tools/validate/check_source_links.py --summary-file "$GITHUB_STEP_SUMMARY"
+
+  changelog:
+    # A CHANGELOG entry under ## [Unreleased] is required for pull requests that
+    # modify fixtures, schemas, or tools (rule [F-055]). Exempt PRs can use
+    # the 'no-changelog' label. This check runs on pull requests only, never on
+    # pushes to main or scheduled runs.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # Bounded so a stuck step cannot hold a runner for the 360-minute default: a git diff and a text check.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11.16"
+
+      - name: Validate CHANGELOG entry
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: >-
+          python3 tools/validate/check_changelog.py
+          --base "origin/${{ github.base_ref }}"
+          --event-path "$GITHUB_EVENT_PATH"
+          --summary-file "$GITHUB_STEP_SUMMARY"
+
