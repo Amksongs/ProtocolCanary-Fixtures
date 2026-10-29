@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Protocol 27 pack `protocol-27/` is now documented instead of silently empty:
+  `protocol-27/README.md` and `docs/protocol-27.md` explain why the pack has
+  no fixtures yet (CAP-0071-01 and CAP-0071-02 are authorization-semantics
+  changes, not new top-level XDR types, and no fixture has yet been verified
+  against an authoritative upstream source for this repository's evidence
+  standard). Tests asserting the gap live in `tests/test_pack_protocol_27.py`.
+
+### Changed
 
 - Repository scaffold: `schemas/`, `tools/validate/`, `tests/`, `docs/`,
   CI validation workflow.
@@ -32,6 +40,14 @@ All notable changes to this project are documented in this file.
 - `docs/protocol-28.md` documenting exactly what this pack checks, what it
   does not, and why.
 
+### Changed
+- `protocol-27/` is no longer a bare placeholder: its README and
+  `docs/protocol-27.md` now explicitly enumerate CAP-0071-01 and
+  CAP-0071-02 and state why the pack is not populated, rather than leaving
+  a silent empty directory. No fixture has been added: the pack remains
+  intentionally empty until its behavior is verified against an authoritative
+  upstream source.
+
 ### Known gaps
 
 - **CAP-0086 is not covered.** CAP-0086 (sparse-map host functions) has no
@@ -49,7 +65,7 @@ All notable changes to this project are documented in this file.
   do not exercise an actual deployed externally-managed-executable
   contract fleet end-to-end, which would require deploying and verifying a
   real Protocol 28 contract using this brand-new executable type.
-- `protocol-27/` is intentionally empty; see `protocol-27/README.md`.
+- `protocol-27/` remains intentionally empty; see `protocol-27/README.md`.
 
 ### Upstream dependency change
 

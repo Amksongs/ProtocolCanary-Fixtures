@@ -91,6 +91,11 @@ class Protocol28PackTests(unittest.TestCase):
     def test_protocol_27_pack_has_no_fixtures_yet(self) -> None:
         p27 = REPO_ROOT / "protocol-27"
         self.assertEqual(validate.find_fixture_files(p27), [])
+        readme = p27 / "README.md"
+        self.assertTrue(
+            readme.is_file() and "intentionally empty" in readme.read_text(encoding="utf-8").lower(),
+            "protocol-27/README.md must state the pack is intentionally empty",
+        )
 
 
 if __name__ == "__main__":
