@@ -1,15 +1,30 @@
 # Protocol 27
 
-Implemented by Stellar Core 27.x, Stellar RPC 27.x, Soroban host 27.x, and
-the corresponding `stellar-xdr` and `soroban-sdk` releases. Protocol 27
-("Zipper") shipped in 2026 with the following Core Advancement Proposals:
+Protocol 27 ("Zipper") is implemented by Stellar Core 27.x, Stellar RPC
+27.x, Soroban host 27.x, and the corresponding `stellar-xdr` and
+`soroban-sdk` releases. This pack is intentionally empty.
 
-Per [this repository's contribution policy](../CONTRIBUTING.md), a
-protocol pack is populated only after its fixture inventory has been
-independently verified against authoritative upstream sources — CAP
-text, upstream XDR, or official release notes — for that specific
-protocol version. No placeholder or dummy fixtures are added merely to
-fill this directory.
+The Protocol 27 changes this repository would test, if they were verified,
+are the two Core Advancement Proposals that introduce Protocol-version-
+specific Soroban authorization behavior:
+
+- [CAP-0071-01](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071-01.md)
+  — Authentication delegation for custom (smart-contract) accounts, including
+  the `SOROBAN_CREDENTIALS_ADDRESS_WITH_DELEGATES` credential type and the
+  `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS` signature envelope.
+- [CAP-0071-02](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071-02.md)
+  — `SOROBAN_CREDENTIALS_ADDRESS_V2`, an address-bound credential type that
+  uses the same new envelope payload to close a narrow cross-account replay
+  window.
+
+Both are described in the
+[Stellar Zipper, Protocol 27 Upgrade Guide](https://stellar.org/blog/foundation-news/stellar-zipper-protocol-27-upgrade-guide).
+
+Per [this repository's contribution policy](../CONTRIBUTING.md), a protocol
+pack is populated only after its fixture inventory has been independently
+verified against authoritative upstream sources — CAP text, upstream XDR, or
+official release notes — for that specific protocol version. No placeholder or
+dummy fixtures are added merely to fill this directory.
 
 Together, CAP-0071-01 and CAP-0071-02 are the protocol-version-specific
 Soroban authorization changes in Protocol 27. They are **authorization
