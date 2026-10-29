@@ -7,13 +7,12 @@ documentation files describe the gap rather than fabricating coverage.
 """
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-from tools.validate.validate import validate_directory, find_fixture_files
+from tools.validate.validate import find_fixture_files
 
 PACK = REPO_ROOT / "protocol-27"
 README = PACK / "README.md"
