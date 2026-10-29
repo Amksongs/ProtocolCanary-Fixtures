@@ -53,12 +53,7 @@ alone. For Protocol 27 that means:
    official `stellar-xdr` / `stellar-base` crate or the official CLI, not
    assembled by hand. Producing that is possible; the repository has not yet
    done it for Protocol 27.
-2. **The surface that can observe it is clear.** CAP-0071-01/02 is not an
-   XDR union change like CAP-0083/CAP-0085; it is best tested through the
-   RPC `getLatestLedger` credential-shape observations or through a Soroban
-   simulation that exercises `__check_auth` delegation. Those surfaces exist
-   in `Protocol-Canary`, but the exact assertion shape for this protocol
-   version has not been authored and verified here yet.
+2. **The surface that can observe it is clear.** CAP-0071-01/02 is not an XDR union change like CAP-0083/CAP-0085; the Soroban credential-shape surface that could observe it in Protocol 27 has not been authored or verified in this repository yet, so there is no confirmed observation path for this pack.
 3. **The expected result is pinned to an upstream source.** The credential
    type names and envelope type are pinned to the CAP text and the Stellar
    Foundation upgrade guide, but the exact wire representation and the exact
