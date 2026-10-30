@@ -395,10 +395,30 @@ def evaluate_asserts(asserts: object, result: object) -> list[str]:
                 problems.append(
                     f"assert[{index}] field-type: the answer has no {field_name!r} field"
                 )
-            elif json_type_name(value) != expected_type:
+            else:
+                type_matches = (
+                    isinstance(value, int) and not isinstance(value, bool)
+                    if expected_type == "integer"
+                    else json_type_name(value) == expected_type
+                )
+                if not type_matches:
+                    problems.append(
+                        f"assert[{index}] field-type: {field_name!r} is "
+                        f"{json_type_name(value)}, expected {expected_type!r}"
+                    )
+        elif kind == "field-one-of":
+            values = assertion.get("values")
+            if not present:
                 problems.append(
-                    f"assert[{index}] field-type: {field_name!r} is "
-                    f"{json_type_name(value)}, expected {expected_type!r}"
+                    f"assert[{index}] field-one-of: the answer has no {field_name!r} field"
+                )
+            elif not isinstance(values, list) or not any(
+                values_equal(value, expected) for expected in values
+            ):
+                problems.append(
+                    f"assert[{index}] field-one-of: {field_name!r} is "
+                    f"{json.dumps(value, ensure_ascii=False)}, expected one of "
+                    f"{json.dumps(values, ensure_ascii=False)}"
                 )
         elif kind == "field-equals":
             expected = assertion.get("value")

@@ -1,0 +1,21 @@
+{
+  "capturedAt": "2026-10-30T14:58:29Z",
+  "endpointHost": "soroban-testnet.stellar.org",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "getHealth"
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "result": {
+      "status": "healthy",
+      "latestLedger": 5469717,
+      "latestLedgerCloseTime": "1793372225",
+      "oldestLedger": 5348758,
+      "oldestLedgerCloseTime": "1792767377",
+      "ledgerRetentionWindow": 120960
+    }
+  }
+}

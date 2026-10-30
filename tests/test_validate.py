@@ -1158,6 +1158,50 @@ expected_type = "not-a-real-type"
 """
         report = self.run_validation({"a.toml": bad})
         self.assertTrue(any("assert[0].expected_type" in e for e in report.errors))
+
+    def test_accepts_rpc_field_one_of_and_integer_type(self) -> None:
+        good = RPC_HEADER + """
+[[assert]]
+kind = "field-one-of"
+field = "status"
+values = ["healthy", "degraded"]
+
+[[assert]]
+kind = "field-type"
+field = "latestLedger"
+expected_type = "integer"
+"""
+        report = self.run_validation({"a.toml": good})
+        self.assertEqual(report.errors, [], report.errors)
+
+    def test_rpc_field_one_of_requires_a_non_empty_values_array(self) -> None:
+        cases = (
+            ("", "requires 'values' to be an array"),
+            ("values = []", "requires at least one value"),
+            ('values = "healthy"', "requires 'values' to be an array"),
+        )
+        for values, expected in cases:
+            with self.subTest(values=values):
+                bad = RPC_HEADER + f"""
+[[assert]]
+kind = "field-one-of"
+field = "status"
+{values}
+"""
+                report = self.run_validation({"a.toml": bad})
+                self.assertTrue(any(expected in error for error in report.errors), report.errors)
+
+    def test_rpc_field_one_of_rejects_assertion_fields_from_other_kinds(self) -> None:
+        bad = RPC_HEADER + """
+[[assert]]
+kind = "field-one-of"
+field = "status"
+values = ["healthy"]
+value = "healthy"
+"""
+        report = self.run_validation({"a.toml": bad})
+        self.assertTrue(any("unexpected key(s) 'value'" in error for error in report.errors))
+
     def test_rejects_unrecognized_rpc_assert_kind(self) -> None:
         bad = VALID_RPC.replace('kind = "field-equals"', 'kind = "field-contains"')
         report = self.run_validation({"a.toml": bad})
@@ -1210,7 +1254,7 @@ field = "id"
     def test_rpc_health_and_diagnostic_methods_are_accepted(self) -> None:
         # canary-rpc parses get-health, get-version-info and get-fee-stats
         # (crates/canary-rpc/src/request.rs, read at Protocol-Canary commit
-        # 94d7c794780a7c87944c5177ff1f8eb3edec300e), so a fixture naming one
+        # cf4d7e7a5338b1513694711796236a04a0f312b2), so a fixture naming one
         # of them is a request the engine can run, not a misspelling.
         for method in ("get-health", "get-version-info", "get-fee-stats"):
             with self.subTest(method=method):

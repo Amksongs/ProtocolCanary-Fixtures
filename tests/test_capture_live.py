@@ -392,6 +392,7 @@ class CaptureLiveUnitTests(unittest.TestCase):
         result = {
             "name": "x",
             "count": 3,
+            "ratio": 3.5,
             "flag": True,
             "items": [1, 2],
         }
@@ -429,6 +430,20 @@ class CaptureLiveUnitTests(unittest.TestCase):
             ),
             [],
         )
+        self.assertEqual(
+            capture_live.evaluate_asserts(
+                [{"kind": "field-type", "field": "count", "expected_type": "integer"}],
+                result,
+            ),
+            [],
+        )
+        self.assertIn(
+            "expected 'integer'",
+            capture_live.evaluate_asserts(
+                [{"kind": "field-type", "field": "ratio", "expected_type": "integer"}],
+                result,
+            )[0],
+        )
         self.assertIn(
             "expected 'string'",
             capture_live.evaluate_asserts(
@@ -460,6 +475,28 @@ class CaptureLiveUnitTests(unittest.TestCase):
             "no 'missing' field",
             capture_live.evaluate_asserts(
                 [{"kind": "field-equals", "field": "missing", "value": "y"}], result
+            )[0],
+        )
+        # field-one-of
+        self.assertEqual(
+            capture_live.evaluate_asserts(
+                [{"kind": "field-one-of", "field": "name", "values": ["y", "x"]}],
+                result,
+            ),
+            [],
+        )
+        self.assertIn(
+            "expected one of",
+            capture_live.evaluate_asserts(
+                [{"kind": "field-one-of", "field": "name", "values": ["y", "z"]}],
+                result,
+            )[0],
+        )
+        self.assertIn(
+            "no 'missing' field",
+            capture_live.evaluate_asserts(
+                [{"kind": "field-one-of", "field": "missing", "values": ["x"]}],
+                result,
             )[0],
         )
         # field-number-range

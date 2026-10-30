@@ -22,6 +22,27 @@ discussion and diff. New entries must include that link; see
 
 ### Changed
 
+- RPC contract coverage now completes F-020 (#282): `[request]` is described
+  in the JSON Schema, `field-one-of` and the engine-supported `integer`
+  `field-type` are validated and evaluated by the live-capture verifier; the
+  engine vocabulary is pinned to Protocol-Canary commit
+  `cf4d7e7a5338b1513694711796236a04a0f312b2`. The
+  contract's `field-range` wording is represented by the engine's actual
+  `field-number-range` parser name, so the validator cannot accept a fixture
+  the engine rejects. See [issue #282](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/282).
+- Five unredacted, offline structural response vectors now cover the supported
+  live Testnet RPC methods required by F-042 (#299): `getNetwork`,
+  `getLatestLedger`, `getVersionInfo`, `getHealth` and `getFeeStats`, with
+  positive shape checks and negative mutations. See
+  [issue #299](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/299).
+- ScVal recursion vectors now cover empty Vec/Map values, nested Vec/Map/
+  Address structures, integer boundaries, malformed recursive payloads and a
+  caller-configured `stellar-xdr 28.0.1` depth boundary. The vectors explicitly
+  record that `Limits::none()` is unlimited rather than inventing a depth-8
+  protocol rule. See
+  [issue #303](https://github.com/StellarCanary/ProtocolCanary-Fixtures/issues/303).
+  ([PR #480](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/480))
+
 - Three StellarValue decode-failure boundary fixtures (#340), in the new
   `protocol-28/xdr/boundaries/` directory:
   `p28-xdr-stellar-value-boundary-truncated` (a truncation at 44 of 48 bytes,

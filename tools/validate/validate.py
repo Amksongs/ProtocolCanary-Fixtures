@@ -154,10 +154,19 @@ RPC_ASSERT_KINDS = {
     "field-type",
     "field-equals",
     "field-number-range",
+    "field-one-of",
 }
 # JSON type names accepted for RPC field-type assertions. Keep this set in
 # sync with the `expected_type` enum in schemas/fixture-v1.schema.json.
-RPC_ASSERT_TYPES = {"string", "number", "bool", "object", "array", "null"}
+RPC_ASSERT_TYPES = {
+    "string",
+    "number",
+    "integer",
+    "bool",
+    "object",
+    "array",
+    "null",
+}
 SOROBAN_EXPECT_KINDS = {"simulation-success", "simulation-error"}
 # Keys canary-soroban accepts inside a soroban fixture's [expect] table. It
 # rejects anything else outright (see the `unknown_body_keys(expect, ...)` call
@@ -337,8 +346,18 @@ SURFACE_FIELDS = {
         "expect",
     ),
 }
-# Keys a single [[assert]] table may carry (the schema's assert.items).
-RPC_ASSERT_FIELDS = ("kind", "field", "value", "expected_type")
+# Keys a single [[assert]] table may carry (the schema's assert.items). The
+# validator narrows this set by assertion kind below, matching the fields
+# each canary-rpc parser arm consumes.
+RPC_ASSERT_FIELDS = (
+    "kind",
+    "field",
+    "value",
+    "expected_type",
+    "values",
+    "min",
+    "max",
+)
 
 
 @dataclass
@@ -1480,10 +1499,19 @@ def validate_rpc_body(fx: Fixture, report: Report) -> None:
                 path,
                 f"assert[{i}].kind must be one of {sorted(RPC_ASSERT_KINDS)}, got {actual}",
             )
-        if kind == "field-number-range":
-            allowed_keys = {"kind", "field", "min", "max"}
-        else:
-            allowed_keys = set(RPC_ASSERT_FIELDS)
+        allowed_keys_by_kind = {
+            "field-exists": {"kind", "field"},
+            "field-absent": {"kind", "field"},
+            "field-type": {"kind", "field", "expected_type"},
+            "field-equals": {"kind", "field", "value"},
+            "field-number-range": {"kind", "field", "min", "max"},
+            "field-one-of": {"kind", "field", "values"},
+        }
+        allowed_keys = (
+            allowed_keys_by_kind.get(kind, set(RPC_ASSERT_FIELDS))
+            if isinstance(kind, str)
+            else set(RPC_ASSERT_FIELDS)
+        )
         unknown_assert_keys = sorted(set(a) - allowed_keys)
         if unknown_assert_keys:
             report.error(
@@ -1514,6 +1542,18 @@ def validate_rpc_body(fx: Fixture, report: Report) -> None:
                     path,
                     f"assert[{i}].expected_type must be one of {sorted(RPC_ASSERT_TYPES)}, "
                     f"got {actual}",
+                )
+        if kind == "field-one-of":
+            values = a.get("values")
+            if not isinstance(values, list):
+                report.error(
+                    path,
+                    f"assert[{i}] with kind=field-one-of requires 'values' to be an array",
+                )
+            elif not values:
+                report.error(
+                    path,
+                    f"assert[{i}] with kind=field-one-of requires at least one value",
                 )
         if kind == "field-number-range":
             has_min = "min" in a

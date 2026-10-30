@@ -82,6 +82,7 @@
     "expected_base64": { "type": "string" },
     "method": { "type": "string" },
     "assert": { "type": "array" },
+    "request": { "type": "object" },
     "source_account": { "type": "string" },
     "contract_id": { "type": "string" },
     "function": { "type": "string" },
@@ -137,7 +138,77 @@
           },
           "request": {
             "type": "object",
-            "description": "Optional parameters for the RPC call, matching canary-rpc request builder (CA-01-K)."
+            "additionalProperties": false,
+            "description": "Optional parameters for the RPC call, matching canary-rpc request builder (CA-01-K). Method-specific required and forbidden keys are enforced by tools/validate/validate.py.",
+            "properties": {
+              "keys": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                }
+              },
+              "hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "startLedger": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "endLedger": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "xdrFormat": {
+                "const": "base64"
+              },
+              "pagination": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "cursor": { "type": "string", "minLength": 1 },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50
+                  }
+                }
+              },
+              "filters": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["contract", "system", "diagnostic"]
+                    },
+                    "contractIds": {
+                      "type": "array",
+                      "maxItems": 5,
+                      "items": { "type": "string" }
+                    },
+                    "topics": {
+                      "type": "array",
+                      "maxItems": 5,
+                      "items": {
+                        "type": "array",
+                        "maxItems": 5,
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "assert": {
             "type": "array",
@@ -154,7 +225,8 @@
                     "field-absent",
                     "field-type",
                     "field-equals",
-                    "field-number-range"
+                    "field-number-range",
+                    "field-one-of"
                   ]
                 },
                 "field": { "type": "string", "minLength": 1 },
@@ -163,8 +235,13 @@
                 },
                 "expected_type": {
                   "type": "string",
-                  "enum": ["string", "number", "bool", "object", "array", "null"],
+                  "enum": ["string", "number", "integer", "bool", "object", "array", "null"],
                   "description": "JSON type names accepted for an RPC field-type assertion. Keep this enum in sync with RPC_ASSERT_TYPES in tools/validate/validate.py."
+                },
+                "values": {
+                  "type": "array",
+                  "minItems": 1,
+                  "description": "Required when kind = field-one-of; the decoded JSON value of 'field' must exactly equal one of these values."
                 },
                 "min": {
                   "type": "number",
@@ -184,6 +261,10 @@
                       { "required": ["max"] }
                     ]
                   }
+                },
+                {
+                  "if": { "properties": { "kind": { "const": "field-one-of" } } },
+                  "then": { "required": ["values"] }
                 }
               ]
             }
