@@ -1,0 +1,52 @@
+{
+  "capturedAt": "2026-10-30T14:58:29Z",
+  "endpointHost": "soroban-testnet.stellar.org",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "getFeeStats"
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "result": {
+      "sorobanInclusionFee": {
+        "max": "200",
+        "min": "100",
+        "mode": "100",
+        "p10": "100",
+        "p20": "100",
+        "p30": "100",
+        "p40": "100",
+        "p50": "100",
+        "p60": "100",
+        "p70": "100",
+        "p80": "100",
+        "p90": "100",
+        "p95": "100",
+        "p99": "200",
+        "transactionCount": "559",
+        "ledgerCount": 50
+      },
+      "inclusionFee": {
+        "max": "200",
+        "min": "100",
+        "mode": "100",
+        "p10": "100",
+        "p20": "100",
+        "p30": "100",
+        "p40": "100",
+        "p50": "100",
+        "p60": "100",
+        "p70": "100",
+        "p80": "100",
+        "p90": "133",
+        "p95": "200",
+        "p99": "200",
+        "transactionCount": "37",
+        "ledgerCount": 10
+      },
+      "latestLedger": 5469717
+    }
+  }
+}

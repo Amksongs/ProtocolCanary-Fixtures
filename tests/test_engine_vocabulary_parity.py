@@ -248,7 +248,7 @@ class VectorShapeTests(unittest.TestCase):
     def test_the_shipped_vector_is_well_formed(self) -> None:
         # load_vector raises VectorError naming the problem, so reaching
         # this point without an exception is the assertion.
-        self.assertEqual(self.vector["engineCommit"], "94d7c794780a7c87944c5177ff1f8eb3edec300e")
+        self.assertEqual(self.vector["engineCommit"], "cf4d7e7a5338b1513694711796236a04a0f312b2")
 
     def test_engine_commit_is_a_full_commit_sha(self) -> None:
         commit = self.vector["engineCommit"]
@@ -264,9 +264,9 @@ class VectorShapeTests(unittest.TestCase):
                 self.assertTrue(source["symbol"].strip())
 
     def test_contract_only_names_are_not_accepted(self) -> None:
-        # field-one-of is described by the engine's CA-01 contract but the
-        # parser does not accept it, and field-range is not parsed at all.
-        # Neither may appear as an accepted name.
+        # field-range is the stale contract spelling; the parser accepts the
+        # engine spelling field-number-range instead. It must not appear as an
+        # accepted name.
         accepted = accepted_names(self.vector)
         for name in self.vector.get("contractOnlyNotImplemented", []):
             for vocabulary, names in accepted.items():
@@ -382,15 +382,13 @@ class DriftIsDetectedTests(unittest.TestCase):
 
     def test_a_vector_claiming_a_contract_only_name_is_rejected(self) -> None:
         broken = json.loads(json.dumps(self.vector))
-        broken["rpcAssertKinds"] = sorted(
-            set(broken["rpcAssertKinds"]) | {"field-one-of"}
-        )
+        broken["rpcAssertKinds"] = sorted(set(broken["rpcAssertKinds"]) | {"field-range"})
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "engine-vocabulary.json"
             path.write_text(json.dumps(broken), encoding="utf-8")
             with self.assertRaises(VectorError) as caught:
                 load_vector(path)
-        self.assertIn("field-one-of", str(caught.exception))
+        self.assertIn("field-range", str(caught.exception))
 
     def test_a_validator_copy_without_a_constant_fails_the_parity_check(self) -> None:
         # The scratch copy of the validator is what an edit that forgets the

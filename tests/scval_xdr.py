@@ -560,80 +560,6 @@ def _read_present_flag(r: _Reader, label: str) -> bool:
     raise XdrDecodeError(f"{label} present flag must be 0 or 1, got {flag}")
 
 
-def _decode_scval(r: _Reader) -> tuple[str, Any]:
-    code = r.u32()
-    kind = CODE_TO_KIND.get(code)
-    if kind is None:
-        raise XdrDecodeError(
-            f"unsupported ScVal discriminant {code}; this codec implements "
-            f"{sorted(KIND_TO_CODE.values())}"
-        )
-
-    if kind == "bool":
-        # stellar-xdr's `impl ReadXdr for bool` is `let b = i == 1`, so every
-        # word other than 1 decodes to false instead of being rejected. This
-        # mirrors that leniency deliberately: a stricter decoder would reject
-        # payloads the reference implementation accepts, which is the exact
-        # divergence a parity suite exists to catch.
-        return kind, r.u32() == 1
-    if kind == "void":
-        return kind, None
-    if kind == "u32":
-        return kind, r.u32()
-    if kind == "i32":
-        return kind, r.i32()
-    if kind in ("u64", "timepoint", "duration"):
-        return kind, r.u64()
-    if kind == "i64":
-        return kind, r.i64()
-    if kind == "u128":
-        hi, lo = r.u64(), r.u64()
-        return kind, (hi << 64) | lo
-    if kind == "i128":
-        hi, lo = r.i64(), r.u64()
-        return kind, hi * (1 << 64) + lo
-    if kind == "u256":
-        parts = [r.u64() for _ in range(4)]
-        value = 0
-        for part in parts:
-            value = (value << 64) | part
-        return kind, value
-    if kind == "i256":
-        hi_hi = r.i64()
-        rest = [r.u64() for _ in range(3)]
-        value = hi_hi * (1 << 192)
-        for index, part in enumerate(rest):
-            value += part << (128 - 64 * index)
-        return kind, value
-    if kind == "bytes":
-        return kind, r.opaque_var()
-    if kind == "string":
-        payload = r.opaque_var()
-        try:
-            return kind, payload.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise XdrDecodeError(f"SCV_STRING payload is not valid UTF-8: {exc}") from exc
-    if kind == "symbol":
-        payload = r.opaque_var(SC_SYMBOL_LIMIT)
-        try:
-            return kind, payload.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise XdrDecodeError(f"SCV_SYMBOL payload is not valid UTF-8: {exc}") from exc
-    if kind == "vec":
-        if not _read_present_flag(r, "SCVec"):
-            return kind, None
-        count = r.u32()
-        return kind, [_decode_scval(r) for _ in range(count)]
-    if kind == "map":
-        if not _read_present_flag(r, "SCMap"):
-            return kind, None
-        count = r.u32()
-        return kind, [(_decode_scval(r), _decode_scval(r)) for _ in range(count)]
-    if kind == "address":
-        return kind, _decode_address(r)
-    raise XdrDecodeError(f"unsupported ScVal discriminant {code}")  # pragma: no cover
-
-
 def _decode_address(r: _Reader) -> dict:
     address_type = r.u32()
     if address_type == SC_ADDRESS_TYPE_ACCOUNT:
@@ -720,13 +646,26 @@ def _decode_nonce_key(r: _Reader) -> dict:
     return {"address": address, "nonce": nonce}
 
 
-def _decode_scval(r: _Reader) -> tuple[str, Any]:
+def _decode_scval(
+    r: _Reader,
+    depth: int = 0,
+    max_container_depth: int | None = None,
+) -> tuple[str, Any]:
     code = r.u32()
     kind = CODE_TO_KIND.get(code)
     if kind is None:
         raise XdrDecodeError(
             f"unsupported ScVal discriminant {code}; this codec implements "
             f"{sorted(KIND_TO_CODE.values())}"
+        )
+    if (
+        max_container_depth is not None
+        and kind in {"vec", "map"}
+        and depth >= max_container_depth
+    ):
+        raise XdrDecodeError(
+            f"ScVal {kind} nesting depth {depth + 1} exceeds the configured "
+            f"container-depth limit of {max_container_depth}"
         )
 
     if kind == "bool":
@@ -783,12 +722,20 @@ def _decode_scval(r: _Reader) -> tuple[str, Any]:
         if not _read_present_flag(r, "SCVec"):
             return kind, None
         count = r.u32()
-        return kind, [_decode_scval(r) for _ in range(count)]
+        return kind, [
+            _decode_scval(r, depth + 1, max_container_depth) for _ in range(count)
+        ]
     if kind == "map":
         if not _read_present_flag(r, "SCMap"):
             return kind, None
         count = r.u32()
-        return kind, [(_decode_scval(r), _decode_scval(r)) for _ in range(count)]
+        return kind, [
+            (
+                _decode_scval(r, depth + 1, max_container_depth),
+                _decode_scval(r, depth + 1, max_container_depth),
+            )
+            for _ in range(count)
+        ]
     if kind == "address":
         return kind, _decode_address(r)
     if kind == "error":
@@ -805,21 +752,30 @@ def _decode_scval(r: _Reader) -> tuple[str, Any]:
     raise XdrDecodeError(f"unsupported ScVal discriminant {code}")  # pragma: no cover
 
 
-def decode(data: bytes) -> tuple[str, Any]:
-    """Decode exactly one ``ScVal`` from ``data``, rejecting trailing bytes."""
+def decode(data: bytes, max_container_depth: int | None = None) -> tuple[str, Any]:
+    """Decode one ``ScVal`` and optionally enforce a container-depth limit.
+
+    ``stellar-xdr`` 28.0.1 does not impose a protocol-level ScVal nesting
+    ceiling: ``Limits::none()`` uses ``u32::MAX`` and callers choose a
+    ``Limits::depth`` value. The optional limit here is therefore a test hook
+    for reproducing a caller-configured boundary; leaving it unset preserves
+    the reference decoder's unlimited behavior.
+    """
     r = _Reader(data)
-    scval = _decode_scval(r)
+    scval = _decode_scval(r, 0, max_container_depth)
     if r.remaining:
         raise XdrDecodeError(f"{r.remaining} trailing byte(s) after a complete ScVal")
     return scval
 
 
-def decode_base64(text: str) -> tuple[str, Any]:
+def decode_base64(
+    text: str, max_container_depth: int | None = None
+) -> tuple[str, Any]:
     try:
         raw = base64.b64decode(text, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise XdrDecodeError(f"vector is not valid base64: {exc}") from exc
-    return decode(raw)
+    return decode(raw, max_container_depth)
 
 
 def encode_base64(scval: tuple[str, Any]) -> str:
