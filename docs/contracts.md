@@ -92,11 +92,16 @@ them are closed vocabularies that contributors hit first:
   `vec`/`map` containers are limited to `MAX_ARG_DEPTH = 8`, the constant in
   `crates/canary-soroban/src/builder.rs`; `void` is the only kind that may
   omit `value`.
-- **RPC `[[assert]]` assertion kinds (F-080).** `tools/validate/validate.py`
+- **RPC `[[assert]]` assertion kinds (F-080, F-020).** `tools/validate/validate.py`
   and `schemas/fixture-v1.schema.json` accept `field-exists`, `field-absent`,
-  `field-equals`, `field-type` and `field-number-range`, mirroring
-  `crates/canary-rpc/src/runner.rs` (read at Protocol-Canary commit
-  `4418690`) and contract `ca-01-rpc-requests-and-assertions.md`.
+  `field-equals`, `field-type`, `field-number-range` and `field-one-of`,
+  mirroring `crates/canary-rpc/src/runner.rs` at Protocol-Canary commit
+  `cf4d7e7a5338b1513694711796236a04a0f312b2` and contract
+  `ca-01-rpc-requests-and-assertions.md`.
+  The contract's `field-range` wording maps to the engine's actual
+  `field-number-range` parser arm; the unsupported alias is intentionally not
+  accepted. `field-type` also accepts `integer`, which means a JSON number
+  with no fractional part.
   `field-number-range` accepts `field`, and at least one of `min` and `max`
   (integers or finite floats, with `min <= max`).
 - **RPC `method` and `[request]` validation (F-052, F-017).** `tools/validate/validate.py`
@@ -104,7 +109,7 @@ them are closed vocabularies that contributors hit first:
   `get-health`, `get-version-info`, `get-fee-stats`, `get-ledger-entries`,
   `get-transaction`, `get-ledgers`, `get-transactions` and `get-events`, mirroring
   `crates/canary-rpc/src/request.rs` (read at Protocol-Canary commit
-  `94d7c794780a7c87944c5177ff1f8eb3edec300e`) and contract CA-01-K:
+  `cf4d7e7a5338b1513694711796236a04a0f312b2`) and contract CA-01-K:
   - `get-network`, `get-latest-ledger`, `get-health`, `get-version-info` and
     `get-fee-stats` take no parameters and reject a `[request]` table;
   - `get-ledger-entries` requires `keys` (an array of non-empty base64 strings, at most 50 entries) and optionally accepts `xdrFormat = "base64"`;

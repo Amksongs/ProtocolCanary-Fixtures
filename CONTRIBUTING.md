@@ -274,7 +274,7 @@ Per-surface body (everything else in the file):
 | Surface | Fields |
 |---|---|
 | `xdr` | `type` (currently `"StellarValue"`, `"ContractExecutable"` or `"ScVal"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, `expected_base64` (only for `encode-equals`) |
-| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"` \| `"get-health"` \| `"get-version-info"` \| `"get-fee-stats"` \| `"get-ledger-entries"` \| `"get-transaction"` \| `"get-ledgers"` \| `"get-transactions"` \| `"get-events"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?}`), optional `[request]` table |
+| `rpc` | `method` (`"get-network"` \| `"get-latest-ledger"` \| `"get-health"` \| `"get-version-info"` \| `"get-fee-stats"` \| `"get-ledger-entries"` \| `"get-transaction"` \| `"get-ledgers"` \| `"get-transactions"` \| `"get-events"`), one or more `[[assert]]` tables (`{kind, field, value?, expected_type?, values?, min?, max?}`), optional `[request]` table |
 | `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]` tables (`{kind, value?}`; kinds `"bool"`, `"u32"`, `"i32"`, `"u64"`, `"i64"`, `"i128"`, `"u128"`, `"i256"`, `"u256"`, `"void"`, `"duration"`, `"timepoint"`, `"symbol"`, `"string"`, `"bytes"`, `"address"`, `"vec"`, `"map"`; `void` omits `value`, `vec`/`map` nest at most 8 levels), `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
 
 ### Unknown top-level fields

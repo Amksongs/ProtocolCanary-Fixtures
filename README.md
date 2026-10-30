@@ -203,8 +203,9 @@ table.
 | `rpc` | `[[assert]].kind` | `field-exists` | The method's response contains the named `field`. |
 | `rpc` | `[[assert]].kind` | `field-absent` | The response does not contain the named `field`. |
 | `rpc` | `[[assert]].kind` | `field-equals` | The named `field` equals `value` exactly. |
-| `rpc` | `[[assert]].kind` | `field-type` | The named `field` has the JSON type named by `expected_type`. |
-| `rpc` | `[[assert]].kind` | `field-number-range` | The named `field` is a numeric value within `min` and/or `max` (engine commit `4418690`, contract `ca-01-rpc-requests-and-assertions.md`). |
+| `rpc` | `[[assert]].kind` | `field-type` | The named `field` has the JSON type named by `expected_type` (`string`, `number`, `integer`, `bool`, `object`, `array` or `null`). |
+| `rpc` | `[[assert]].kind` | `field-number-range` | The named `field` is a numeric value within `min` and/or `max` (the engine spelling of the `field-range` contract requirement). |
+| `rpc` | `[[assert]].kind` | `field-one-of` | The named `field` exactly equals one of the non-empty `values` array. |
 | `soroban` | `[expect].kind` | `simulation-success` | `simulateTransaction` succeeds with no error. |
 | `soroban` | `[expect].kind` | `simulation-error` | `simulateTransaction` fails — optionally requiring `message_contains` to appear in the error message. |
 

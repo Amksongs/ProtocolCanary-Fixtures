@@ -1,7 +1,7 @@
 {
   "description": "The engine-vocabulary vector: the exact sets of names Protocol-Canary's parsers accept, read from the engine's own source at one pinned commit (engineCommit). tools/validate/validate.py's constants and schemas/fixture-v1.schema.json's enums must agree with this file, which tests/test_engine_vocabulary_parity.py checks; the point is that every fixture the validator accepts is one the engine can parse, and every name the engine can parse is one the validator accepts, so drift becomes a failing test instead of a fixture that is accepted by one side and rejected by the other. Each list holds only names the engine's parser accepts at that commit, sorted alphabetically. To update: read the engine source file named next to each list at the new Protocol-Canary commit, rewrite the affected list, set engineCommit to that commit's full 40-character SHA, and change the matching validator constant and schema enum in the same pull request so the parity test stays green. A name that a contract document describes but the parser does not accept does not belong in a list; it belongs in contractOnlyNotImplemented.",
   "engineRepository": "https://github.com/StellarCanary/Protocol-Canary",
-  "engineCommit": "94d7c794780a7c87944c5177ff1f8eb3edec300e",
+  "engineCommit": "cf4d7e7a5338b1513694711796236a04a0f312b2",
   "xdrTypes": [
     "ContractExecutable",
     "LedgerEntry",
@@ -44,6 +44,7 @@
     "field-equals",
     "field-exists",
     "field-number-range",
+    "field-one-of",
     "field-type"
   ],
   "rpcAssertKindsSource": {
@@ -68,7 +69,6 @@
     "symbol": "enum Surface (and its FromStr impl)"
   },
   "contractOnlyNotImplemented": [
-    "field-one-of",
     "field-range"
   ],
   "engineOnlyNotYetAccepted": {

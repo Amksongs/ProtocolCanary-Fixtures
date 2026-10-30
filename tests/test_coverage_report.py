@@ -259,11 +259,13 @@ EXPECTED_EXAMPLE_REPORT = {
             "field-absent": 1,
             "field-equals": 1,
             "field-number-range": 0,
+            "field-one-of": 0,
             "field-type": 1,
         },
         "RPC_ASSERT_TYPES": {
             "array": 0,
             "bool": 0,
+            "integer": 0,
             "null": 0,
             "number": 1,
             "object": 0,
@@ -345,15 +347,17 @@ RPC_ASSERT_KINDS
   field-equals          1
   field-exists          1
   field-number-range    0  no fixture
+  field-one-of          0  no fixture
   field-type            1
 
 RPC_ASSERT_TYPES
-  array     0  no fixture
-  bool      0  no fixture
-  null      0  no fixture
-  number    1
-  object    0  no fixture
-  string    0  no fixture
+  array      0  no fixture
+  bool       0  no fixture
+  integer    0  no fixture
+  null       0  no fixture
+  number     1
+  object     0  no fixture
+  string     0  no fixture
 
 RPC_METHODS
   get-events            0  no fixture
@@ -482,7 +486,7 @@ class ExamplePackTests(unittest.TestCase):
         text = coverage_report.render_text(self.report)
         self.assertIn("  ScVal                  0  no fixture\n", text)
         self.assertIn("  encode-equals     0  no fixture\n", text)
-        self.assertIn("  string    0  no fixture\n", text)
+        self.assertIn("  string     0  no fixture\n", text)
         # A used capability carries no marker.
         self.assertIn("  xdr        3\n", text)
 
@@ -1276,6 +1280,7 @@ class MissingValidatorSectionTests(unittest.TestCase):
                 "field-equals": 0,
                 "field-exists": 0,
                 "field-number-range": 0,
+                "field-one-of": 0,
                 "field-type": 1,
             },
         )
