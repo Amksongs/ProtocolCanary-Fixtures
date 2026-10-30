@@ -27,12 +27,7 @@ official release notes — for that specific protocol version. No placeholder or
 dummy fixtures are added merely to fill this directory.
 
 Together, CAP-0071-01 and CAP-0071-02 are the protocol-version-specific
-Soroban authorization changes in Protocol 27.
-
-- [CAP-0071-01](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071-01.md)
-- [CAP-0071-02](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071-02.md)
-
-[Stellar Zipper, Protocol 27 Upgrade Guide](https://stellar.org/blog/foundation-news/stellar-zipper-protocol-27-upgrade-guide). They are **authorization
+Soroban authorization changes in Protocol 27. They are **authorization
 semantics, not new top-level XDR types**: they change the shape of existing
 `SorobanCredentials` / `SorobanAuthorizationEntry` payloads rather than
 adding a new union arm at the `ScAddress` or `StellarValue` level. As of

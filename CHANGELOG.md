@@ -18,6 +18,7 @@ discussion and diff. New entries must include that link; see
   changes, not new top-level XDR types, and no fixture has yet been verified
   against an authoritative upstream source for this repository's evidence
   standard). Tests asserting the gap live in `tests/test_pack_protocol_27.py`.
+  ([PR #480](https://github.com/StellarCanary/ProtocolCanary-Fixtures/pull/480))
 
 ### Changed
 
@@ -1030,14 +1031,6 @@ discussion and diff. New entries must include that link; see
   permissive behavior and `CONTRIBUTING.md`'s "Unknown top-level fields"
   section were updated to match.
   ([PR #316])
-
-### Changed
-- `protocol-27/` is no longer a bare placeholder: its README and
-  `docs/protocol-27.md` now explicitly enumerate CAP-0071-01 and
-  CAP-0071-02 and state why the pack is not populated, rather than leaving
-  a silent empty directory. No fixture has been added: the pack remains
-  intentionally empty until its behavior is verified against an authoritative
-  upstream source.
 
 ### Known gaps
 
